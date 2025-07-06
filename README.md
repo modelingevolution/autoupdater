@@ -49,22 +49,130 @@ services:
 
 ### Configuration
 
-Add configuration to your `appsettings.json` or environment variables:
+#### SSH Key Authentication (Recommended)
+
+For enhanced security, use SSH key-based authentication:
+
+```json
+{
+  "SshUser": "deploy",
+  "SshAuthMethod": "PrivateKey",
+  "SshKeyPath": "/data/ssh/id_rsa",
+  "Packages": [
+    {
+      "RepositoryLocation": "/data/repos/example-app",
+      "RepositoryUrl": "https://github.com/your-org/example-app.git",
+      "DockerComposeDirectory": "./",
+      "DockerAuth": "base64-encoded-username:password",
+      "DockerRegistryUrl": "https://index.docker.io/v1/"
+    }
+  ]
+}
+```
+
+#### Password Authentication (Legacy)
 
 ```json
 {
   "SshUser": "your-ssh-user",
   "SshPwd": "your-ssh-password",
+  "SshAuthMethod": "Password",
   "Packages": [
     {
       "RepositoryLocation": "/path/to/local/repo",
       "RepositoryUrl": "https://github.com/your-org/your-repo.git",
       "DockerComposeDirectory": "./",
-      "DockerIoAuth": "base64-encoded-auth"
+      "DockerAuth": "base64-encoded-username:password",
+      "DockerRegistryUrl": "https://myregistry.example.com"
     }
   ]
 }
 ```
+
+## SSH Key Setup
+
+### Automated Setup (Recommended)
+
+Use the provided installation script to automatically set up SSH keys:
+
+```bash
+# Download and run the installation script
+./install-ssh-keys.sh --user deploy --hosts "192.168.1.100,192.168.1.101"
+
+# With custom key path and passphrase protection
+./install-ssh-keys.sh --user deploy --hosts "server1,server2" --key-path ./custom/ssh --passphrase
+
+# Test configuration without making changes
+./install-ssh-keys.sh --user deploy --hosts "server1" --test-only
+```
+
+The script will:
+1. Generate SSH key pair (RSA 4096-bit by default)
+2. Install public key on target hosts
+3. Test SSH connectivity
+4. Update AutoUpdater configuration
+5. Provide setup verification
+
+### Manual Setup
+
+If you prefer manual setup:
+
+1. **Generate SSH key pair:**
+   ```bash
+   mkdir -p ./data/ssh
+   ssh-keygen -t rsa -b 4096 -f ./data/ssh/id_rsa -C "autoupdater@$(hostname)"
+   chmod 600 ./data/ssh/id_rsa
+   chmod 644 ./data/ssh/id_rsa.pub
+   ```
+
+2. **Install public key on target hosts:**
+   ```bash
+   ssh-copy-id -i ./data/ssh/id_rsa.pub deploy@your-host
+   ```
+
+3. **Test SSH connectivity:**
+   ```bash
+   ssh -i ./data/ssh/id_rsa deploy@your-host "echo 'SSH key authentication successful'"
+   ```
+
+4. **Update configuration:**
+   ```json
+   {
+     "SshUser": "deploy",
+     "SshAuthMethod": "PrivateKey",
+     "SshKeyPath": "/data/ssh/id_rsa"
+   }
+   ```
+
+### Docker Volume Mounting
+
+Ensure SSH keys are accessible in the container:
+
+```yaml
+version: '3.8'
+services:
+  autoupdater:
+    image: modelingevolution/autoupdater:latest
+    ports:
+      - "8080:8080"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./data:/data
+      - ./data/ssh:/data/ssh:ro  # Mount SSH keys read-only
+    environment:
+      - SshUser=deploy
+      - SshAuthMethod=PrivateKey
+      - SshKeyPath=/data/ssh/id_rsa
+```
+
+### SSH Authentication Methods
+
+| Method | Configuration | Use Case |
+|--------|---------------|----------|
+| `Password` | `SshUser` + `SshPwd` | Legacy, less secure |
+| `PrivateKey` | `SshUser` + `SshKeyPath` | Most secure, recommended |
+| `PrivateKeyWithPassphrase` | `SshUser` + `SshKeyPath` + `SshKeyPassphrase` | Enhanced security with passphrase |
+| `KeyWithPasswordFallback` | All of the above | Transition period, tries key first |
 
 ## Architecture
 
@@ -76,6 +184,56 @@ The AutoUpdater monitors Git repositories for new tagged versions and automatica
 - **UpdateProcessManager**: Orchestrates updates across multiple packages
 - **DockerComposeConfiguration**: Represents deployable packages with Git version control
 - **GitTagVersion**: Version management using Git tags
+
+## Custom Docker Registries
+
+The AutoUpdater supports authentication with any Docker registry:
+
+### Configuration Examples
+
+**Docker Hub (default)**:
+```json
+{
+  "DockerAuth": "base64-encoded-username:password"
+}
+```
+
+**Private Registry**:
+```json
+{
+  "DockerAuth": "base64-encoded-username:password",
+  "DockerRegistryUrl": "https://myregistry.example.com"
+}
+```
+
+**Google Container Registry**:
+```json
+{
+  "DockerAuth": "base64-encoded-_json_key:service-account-json",
+  "DockerRegistryUrl": "https://gcr.io"
+}
+```
+
+**Amazon ECR**:
+```json
+{
+  "DockerAuth": "base64-encoded-AWS:token",
+  "DockerRegistryUrl": "https://123456789.dkr.ecr.us-east-1.amazonaws.com"
+}
+```
+
+### Programmatic Configuration
+
+```csharp
+var config = new DockerComposeConfiguration
+{
+    RepositoryLocation = "/path/to/repo",
+    RepositoryUrl = "https://github.com/org/repo.git",
+    DockerAuth = Convert.ToBase64String(
+        Encoding.UTF8.GetBytes("username:password")),
+    DockerRegistryUrl = "https://myregistry.example.com"
+};
+```
 
 ## Development
 

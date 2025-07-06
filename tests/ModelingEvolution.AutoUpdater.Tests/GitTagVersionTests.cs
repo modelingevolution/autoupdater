@@ -45,6 +45,7 @@ public class GitTagVersionTests
         version2.CompareTo(version1).Should().BeGreaterThan(0);
         version2.CompareTo(version3).Should().BeLessThan(0);
         version1.CompareTo(version1).Should().Be(0);
+        version1.CompareTo(null).Should().BeGreaterThan(0);
     }
 
     [Fact]

@@ -10,9 +10,13 @@ namespace ModelingEvolution.AutoUpdater;
 
 public class UpdateHost(IConfiguration config, ILogger<UpdateHost> log) : IHostedService
 {
-    public IDictionary<string, string> Volumes { get; private set; }
+    private readonly GlobalSshConfiguration _sshConfig = new();
+    
+    public IDictionary<string, string> Volumes { get; private set; } = new Dictionary<string, string>();
     public ILogger Log => log;
-    public static async Task<ContainerListResponse> GetContainer(string imageName = "modelingevolution/autoupdater")
+    
+    public GlobalSshConfiguration SshConfig => _sshConfig;
+    public static async Task<ContainerListResponse?> GetContainer(string imageName = "modelingevolution/autoupdater")
     {
         using var config = new DockerClientConfiguration(new Uri("unix:///var/run/docker.sock"));
         using var client = config.CreateClient();
@@ -88,18 +92,31 @@ public class UpdateHost(IConfiguration config, ILogger<UpdateHost> log) : IHoste
     {
         try
         {
+            // Initialize SSH configuration from appsettings
+            config.GetSection("").Bind(_sshConfig);
+            
+            // Log configuration (without sensitive values)
+            log.LogInformation("=== AutoUpdater Configuration ===");
+            log.LogInformation("SSH Configuration: {SshConfig}", _sshConfig.GetSafeConfigurationSummary());
+            
             var cid = (await GetContainer())?.ID;
             if (cid != null)
             {
                 this.Volumes = await GetVolumeMappings(cid);
-                log.LogInformation($"Docker volume mapping configured [{this.Volumes.Count}].");
+                log.LogInformation("Docker volume mapping configured [{Count}]. Mappings: {Mappings}", 
+                    this.Volumes.Count, 
+                    string.Join(", ", this.Volumes.Select(kvp => $"{kvp.Key}->{kvp.Value}")));
             }
             else
                 log.LogInformation("Docker volume mapping is disabled.");
-            await InvokeSsh("echo \"Hello\";");
+            
+            // Test SSH connectivity
+            await InvokeSsh("echo \"AutoUpdater SSH connectivity test successful\"");
+            log.LogInformation("=== AutoUpdater Startup Complete ===");
         }
         catch (Exception ex) {
-            log.LogError(ex, $"Cannot start {nameof(UpdateHost)}.");
+            log.LogError(ex, "Cannot start {ServiceName}", nameof(UpdateHost));
+            throw;
         }
     }
 
@@ -113,25 +130,43 @@ public class UpdateHost(IConfiguration config, ILogger<UpdateHost> log) : IHoste
     //const string HostAddress = "pi-200";
     internal async Task<String> InvokeSsh(string command, string? dockerComposeFolder = null, Action? onExecuted = null)
     {
-        var usr = config.GetValue<string>("SshUser") ?? throw new ArgumentException("Ssh user cannot be null");
-        var pwd = config.GetValue<string>("SshPwd") ?? throw new ArgumentException("Ssh password cannot be null");
-        using (var client = new SshClient(HostAddress, usr, pwd))
+        if (string.IsNullOrEmpty(_sshConfig.SshUser))
+            throw new InvalidOperationException("SSH user is not configured. Set SshUser in configuration.");
+
+        // Create SSH configuration for the host
+        var sshConfig = _sshConfig.ToSshConfiguration(HostAddress);
+        
+        // Create SSH connection manager
+        using var sshManager = new SshConnectionManager(sshConfig, log);
+        
+        try
         {
-                
-            client.ServerIdentificationReceived += (s, e) => e.ToSuccess();
-            client.HostKeyReceived += (sender, e) => {
-                e.CanTrust = true;
-            };
-            client.Connect();
-
-            if (dockerComposeFolder != null)
-                command = $"cd {dockerComposeFolder}; " + command;
-            using SshCommand cmd = client.RunCommand(command);
-
+            // Create and connect SSH client
+            using var client = await sshManager.CreateConnectionAsync();
+            
+            // Execute command
+            var result = await sshManager.ExecuteCommandAsync(command, dockerComposeFolder);
+            
+            // Call completion callback
             onExecuted?.Invoke();
-            log.LogInformation($"Ssh: {command}, results: {cmd.Result}");
-            return cmd.Result;
-
+            
+            if (result.IsSuccess)
+            {
+                log.LogInformation("SSH command executed successfully: {Command}", command);
+                log.LogDebug("SSH command output: {Output}", result.Output);
+            }
+            else
+            {
+                log.LogWarning("SSH command failed with exit code {ExitCode}: {Command}. Error: {Error}", 
+                    result.ExitCode, command, result.Error);
+            }
+            
+            return result.Output;
+        }
+        catch (Exception ex)
+        {
+            log.LogError(ex, "SSH command execution failed: {Command}", command);
+            throw;
         }
     }
 }

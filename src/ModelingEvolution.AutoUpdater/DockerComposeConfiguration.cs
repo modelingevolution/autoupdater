@@ -10,29 +10,35 @@ namespace ModelingEvolution.AutoUpdater
 {
     public record DockerComposeConfiguration : IDisposable
     {
-        public string RepositoryLocation { get; init; } 
-        public string RepositoryUrl { get; init; }
+        public string RepositoryLocation { get; init; } = string.Empty;
+        public string RepositoryUrl { get; init; } = string.Empty;
         public string DockerComposeDirectory { get; init; } = "./";
-        private string? _dockerIoPat;
-        public string? DockerIoAuth
-        {
-            get => DockerAuths.FirstOrDefault(x=>x.Registry == "https://index.docker.io/v1/")?.Base64; 
-            init
-            {
-                if (value != null)
-                {
-                    DockerAuths.Add(new DockerRegistryPat("https://index.docker.io/v1/", value));
-                }
-            }
-        }
-        public DockerComposeConfiguration(string repositoryLocation, string repositoryUrl, string dockerComposeDirectory = "./", string? dockerIoAuth = null)
+        public string? DockerAuth { get; init; }
+        public string? DockerRegistryUrl { get; init; }
+        public DockerComposeConfiguration(string repositoryLocation, string repositoryUrl, string dockerComposeDirectory = "./", string? dockerAuth = null, string? dockerRegistryUrl = null)
         {
             this.RepositoryLocation = repositoryLocation;
             this.RepositoryUrl = repositoryUrl;
             this.DockerComposeDirectory = dockerComposeDirectory;
-            this.DockerIoAuth = dockerIoAuth;   
+            this.DockerAuth = dockerAuth;
+            this.DockerRegistryUrl = dockerRegistryUrl;
+            
+            // Add to DockerAuths if provided
+            if (!string.IsNullOrEmpty(dockerAuth))
+            {
+                var registry = dockerRegistryUrl ?? "https://index.docker.io/v1/";
+                DockerAuths.Add(new DockerRegistryPat(registry, dockerAuth));
+            }
         }
-        public DockerComposeConfiguration() {}
+        public DockerComposeConfiguration() 
+        {
+            // Initialize DockerAuths from properties if set
+            if (!string.IsNullOrEmpty(DockerAuth))
+            {
+                var registry = DockerRegistryUrl ?? "https://index.docker.io/v1/";
+                DockerAuths.Add(new DockerRegistryPat(registry, DockerAuth));
+            }
+        }
         
         public string ComposeFolderPath => Path.Combine(RepositoryLocation, DockerComposeDirectory);
         public string MergerName { get; init; } = "pi-admin";
@@ -63,8 +69,8 @@ namespace ModelingEvolution.AutoUpdater
             return false;
         }
 
-        private ICompositeService _svc;
-        internal ICompositeService Service
+        private ICompositeService? _svc;
+        internal ICompositeService? Service
         {
             get
             {
@@ -84,7 +90,7 @@ namespace ModelingEvolution.AutoUpdater
                 return _svc;
             }
         }
-        private ObservableCollection<IContainerInfo> _containers;
+        private ObservableCollection<IContainerInfo>? _containers;
         //public async IEnumerable<IContainerInfo> Containers(UpdateHost host)
         //{
         //    _containers ??= new();

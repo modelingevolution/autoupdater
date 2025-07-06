@@ -70,24 +70,98 @@ jobs:
         path: './TestResults/*.trx'
         reporter: dotnet-trx
         
-    - name: Prepare GitHub Pages
+    - name: Prepare Jekyll site
       if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
       run: |
-        mkdir -p ./public
-        cp -r ./TestResults/CoverageReport/* ./public/
-        cp ./TestResults/*.html ./public/ || true
-        echo "<h1>ModelingEvolution AutoUpdater Test Results</h1>" > ./public/index.html
-        echo "<ul>" >> ./public/index.html
-        echo "<li><a href='index.html'>Coverage Report</a></li>" >> ./public/index.html
-        echo "<li><a href='test-results.html'>Test Results</a></li>" >> ./public/index.html
-        echo "</ul>" >> ./public/index.html
-        echo "<p>Generated on $(date)</p>" >> ./public/index.html
+        mkdir -p ./docs
+        
+        # Create Jekyll config
+        cat > ./docs/_config.yml << EOF
+        title: ModelingEvolution AutoUpdater
+        description: Test Results and Code Coverage
+        theme: jekyll-theme-minimal
+        plugins:
+          - jekyll-relative-links
+        EOF
+        
+        # Create layout
+        mkdir -p ./docs/_layouts
+        cat > ./docs/_layouts/default.html << 'EOF'
+        <!DOCTYPE html>
+        <html lang="en">
+        <head>
+          <meta charset="UTF-8">
+          <meta name="viewport" content="width=device-width, initial-scale=1.0">
+          <title>{{ page.title }} - {{ site.title }}</title>
+          <link rel="stylesheet" href="{{ '/assets/css/style.css' | relative_url }}">
+        </head>
+        <body>
+          <header>
+            <h1>{{ site.title }}</h1>
+            <p>{{ site.description }}</p>
+            <nav>
+              <a href="{{ '/' | relative_url }}">Home</a> |
+              <a href="{{ '/coverage/' | relative_url }}">Coverage Report</a> |
+              <a href="{{ '/test-results.html' | relative_url }}">Test Results</a>
+            </nav>
+          </header>
+          <main>
+            {{ content }}
+          </main>
+          <footer>
+            <p>Generated on {{ site.time | date: "%Y-%m-%d %H:%M:%S" }}</p>
+          </footer>
+        </body>
+        </html>
+        EOF
+        
+        # Create index page
+        cat > ./docs/index.md << EOF
+        ---
+        layout: default
+        title: Test Results Dashboard
+        ---
+        
+        # Test Results Dashboard
+        
+        ## Latest Build Status
+        
+        ![CI](https://github.com/modelingevolution/autoupdater/actions/workflows/ci.yml/badge.svg)
+        ![Tests](https://github.com/modelingevolution/autoupdater/actions/workflows/test-results.yml/badge.svg)
+        
+        ## Quick Links
+        
+        - [Code Coverage Report](./coverage/)
+        - [Test Results](./test-results.html)
+        
+        ## Summary
+        
+        Generated on: $(date)
+        
+        ### Test Statistics
+        - Total Tests: $(grep -o 'total="[^"]*"' ./TestResults/*.trx | head -1 | sed 's/total="//;s/"//')
+        - Passed: $(grep -o 'passed="[^"]*"' ./TestResults/*.trx | head -1 | sed 's/passed="//;s/"//')
+        - Failed: $(grep -o 'failed="[^"]*"' ./TestResults/*.trx | head -1 | sed 's/failed="//;s/"//')
+        EOF
+        
+        # Copy coverage report
+        cp -r ./TestResults/CoverageReport ./docs/coverage
+        cp ./TestResults/*.html ./docs/ || true
+        
+    - name: Setup Pages
+      if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
+      uses: actions/configure-pages@v4
+      
+    - name: Build with Jekyll
+      if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
+      uses: actions/jekyll-build-pages@v1
+      with:
+        source: ./docs
+        destination: ./_site
         
     - name: Upload Pages artifact
       if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
       uses: actions/upload-pages-artifact@v3
-      with:
-        path: ./public
 
   deploy:
     if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'

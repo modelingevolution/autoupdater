@@ -17,8 +17,9 @@ public record GitTagVersion(string FriendlyName, System.Version Version) : IComp
         return false;
     }
 
-    public int CompareTo(GitTagVersion other)
+    public int CompareTo(GitTagVersion? other)
     {
+        if (other is null) return 1;
         return this.Version.CompareTo(other.Version);
     }
     public override string ToString()

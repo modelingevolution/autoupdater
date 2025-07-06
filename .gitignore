@@ -10,3 +10,9 @@
 /src/ModelingEvolution.AutoUpdater.Host/obj
 /tests/ModelingEvolution.AutoUpdater.Tests/bin/Debug/net9.0
 /tests/ModelingEvolution.AutoUpdater.Tests/obj
+
+# Jekyll build output
+_site/
+.jekyll-cache/
+.sass-cache/
+docs/.jekyll-metadata

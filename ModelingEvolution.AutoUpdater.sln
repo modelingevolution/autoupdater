@@ -15,7 +15,9 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ModelingEvolution.AutoUpdat
 EndProject
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Solution Items", "Solution Items", "{8EC462FD-D22E-90A8-E5CE-7E832BA40C5D}"
 	ProjectSection(SolutionItems) = preProject
+		flow.md = flow.md
 		README.md = README.md
+		ssh.md = ssh.md
 	EndProjectSection
 EndProject
 Global
@@ -44,5 +46,8 @@ Global
 		{43D2055C-DC3B-45EC-B2F5-471A4C20980B} = {82540DA9-3953-4832-BA2D-734BEE188CFB}
 		{E817CDDC-40EB-413B-AB1F-653986F71FD1} = {82540DA9-3953-4832-BA2D-734BEE188CFB}
 		{7C5BFD99-1455-456C-ACC7-8823BF9E3667} = {94D91150-547E-4A98-9E0C-0D1A16B15C21}
+	EndGlobalSection
+	GlobalSection(ExtensibilityGlobals) = postSolution
+		SolutionGuid = {B0B356BF-70E3-435A-A378-436BCCF14D17}
 	EndGlobalSection
 EndGlobal
