@@ -1,0 +1,12 @@
+﻿################################################################################
+# This .gitignore file was automatically created by Microsoft(R) Visual Studio.
+################################################################################
+
+/.vs/ModelingEvolution.AutoUpdater/CopilotIndices/17.14.670.39694
+/.vs/ModelingEvolution.AutoUpdater
+/src/ModelingEvolution.AutoUpdater/bin/Debug
+/src/ModelingEvolution.AutoUpdater/obj
+/src/ModelingEvolution.AutoUpdater.Host/bin/Debug/net9.0
+/src/ModelingEvolution.AutoUpdater.Host/obj
+/tests/ModelingEvolution.AutoUpdater.Tests/bin/Debug/net9.0
+/tests/ModelingEvolution.AutoUpdater.Tests/obj
