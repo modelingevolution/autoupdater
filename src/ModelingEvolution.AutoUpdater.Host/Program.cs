@@ -23,7 +23,7 @@ namespace ModelingEvolution.AutoUpdater.Host
             var builder = WebApplication.CreateBuilder(args);
             Configure(builder.Configuration, args);
 
-            // Add services to the container.
+            // Add services to the container. 
             builder.Services
                 .AddMudServices()
                 .AddAutoUpdater()
