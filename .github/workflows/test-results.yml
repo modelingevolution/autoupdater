@@ -2,9 +2,9 @@ name: Test Results and Coverage
 
 on:
   push:
-    branches: [ main, develop ]
+    branches: [ '**' ]
   pull_request:
-    branches: [ main ]
+    branches: [ main, master ]
 
 permissions:
   contents: read
@@ -69,7 +69,7 @@ jobs:
         reporter: dotnet-trx
         
     - name: Prepare GitHub Pages
-      if: github.ref == 'refs/heads/main'
+      if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
       run: |
         mkdir -p ./public
         cp -r ./TestResults/CoverageReport/* ./public/
@@ -82,13 +82,13 @@ jobs:
         echo "<p>Generated on $(date)</p>" >> ./public/index.html
         
     - name: Upload Pages artifact
-      if: github.ref == 'refs/heads/main'
+      if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
       uses: actions/upload-pages-artifact@v3
       with:
         path: ./public
 
   deploy:
-    if: github.ref == 'refs/heads/main'
+    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
