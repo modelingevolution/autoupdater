@@ -19,9 +19,7 @@ jobs:
         include:
           - runner: ubuntu-latest
             platform: linux/amd64
-          # ARM64 runners are currently in beta for public repos
-          # If not available, this will fail and only AMD64 will be built
-          - runner: ubuntu-latest-arm64
+          - runner: ubuntu-24.04-arm
             platform: linux/arm64
     runs-on: ${{ matrix.runner }}
     permissions:
