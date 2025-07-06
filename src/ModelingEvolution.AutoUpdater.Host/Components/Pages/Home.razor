@@ -1,0 +1,75 @@
+﻿@page "/"
+@using ModelingEvolution.AutoUpdater
+@using ModelingEvolution.NetworkManager
+@inject DockerComposeConfigurationRepository repo
+@inject UpdateProcessManager mgm
+@inject UpdateHost host
+<PageTitle>Home</PageTitle>
+
+<MudStack>
+    <ObservableForEach ItemSource="repo.GetPackages()">
+        <MudPaper Class="pa-4" Elevation="2">
+            <MudField Label="Name">@context.FriendlyName</MudField>
+            <MudField Label="Current version">@context.CurrentVersion</MudField>
+            @if (@context.IsUpgradeAvailable())
+            {
+                <MudField Label="Available upgrade:">@context.AvailableUpgrade()</MudField>
+            } else
+            {
+                <MudText Color="Color.Info">You have the latest version.</MudText>
+            }
+
+        </MudPaper>
+    </ObservableForEach>
+</MudStack>
+
+<MudButton Variant="Variant.Filled" Size="Size.Large" Class="ma-4" OnClick="@OnClick">Update all</MudButton>
+
+ <MudPaper Class="pa-4" Elevation="2">
+    <MudSwitch Label="VPN Connection Support Status" @bind-Value="IsVpnEnabled" Color="Color.Success" />
+ </MudPaper>
+
+
+@code {
+    private bool _isUpdateAvailable;
+    private bool _isVpnEnabled;
+
+    private bool IsVpnEnabled
+    {
+        get => _isVpnEnabled;
+        set
+        {
+            if (value == _isVpnEnabled) return;
+            _isVpnEnabled = value;
+
+            if (value)
+                Task.Run(async () =>
+                {
+                    await using var client = await NetworkManagerClient.Create();
+                    await client.ActivateConnection("wg0");
+                    _isVpnEnabled = await client.IsConnectionActive("wg0");
+                    await this.InvokeAsync(this.StateHasChanged);
+                });
+            else
+                Task.Run(async () =>
+                {
+                    await using var client = await NetworkManagerClient.Create();
+                    await client.DisableConnection("wg0");
+                    _isVpnEnabled = await client.IsConnectionActive("wg0");
+                    await this.InvokeAsync(this.StateHasChanged);
+                });
+
+        }
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        await using var client = await NetworkManagerClient.Create();
+        _isVpnEnabled = await client.IsConnectionActive("wg0");
+    }
+
+    private async Task OnClick(MouseEventArgs e)
+    {
+        await mgm.UpdateAll();
+    }
+}

@@ -1,0 +1,36 @@
+version: '3.8'
+
+services:
+  autoupdater:
+    image: modelingevolution/autoupdater:latest
+    container_name: autoupdater
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    volumes:
+      # Mount Docker socket for container management
+      - /var/run/docker.sock:/var/run/docker.sock
+      # Data volume for persistent storage
+      - ./data:/data
+      # SSH keys for authentication (optional)
+      - ~/.ssh:/root/.ssh:ro
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Production
+      - ASPNETCORE_URLS=http://+:8080
+      # SSH Configuration
+      - SshUser=${SSH_USER:-deploy}
+      - SshPwd=${SSH_PASSWORD}
+      # Optional: Override default host address
+      - HostAddress=${HOST_ADDRESS:-172.17.0.1}
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    networks:
+      - autoupdater-network
+
+networks:
+  autoupdater-network:
+    driver: bridge

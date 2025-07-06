@@ -1,0 +1,88 @@
+# Multi-architecture Dockerfile for ModelingEvolution.AutoUpdater
+# Supports linux/amd64 and linux/arm64
+
+# Base runtime image with Docker and Docker Compose
+FROM mcr.microsoft.com/dotnet/aspnet:9.0 AS base
+
+# Install required packages
+RUN apt-get update && apt-get install -y \
+    ssh-client \
+    wget \
+    curl \
+    git \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+# Docker and Docker Compose versions
+ENV DOCKER_VERSION=25.0.5
+ENV DOCKER_COMPOSE_VERSION=2.29.1
+
+# Install Docker CLI (multi-arch aware)
+RUN set -eux; \
+    ARCH=$(dpkg --print-architecture); \
+    case "$ARCH" in \
+        amd64) DOCKER_ARCH="x86_64" ;; \
+        arm64) DOCKER_ARCH="aarch64" ;; \
+        *) echo "Unsupported architecture: $ARCH"; exit 1 ;; \
+    esac; \
+    curl -fsSL "https://download.docker.com/linux/static/stable/${DOCKER_ARCH}/docker-${DOCKER_VERSION}.tgz" -o docker.tgz; \
+    tar xzvf docker.tgz --strip-components=1 -C /usr/local/bin docker/docker; \
+    rm docker.tgz; \
+    docker --version
+
+# Install Docker Compose (multi-arch aware)
+RUN set -eux; \
+    ARCH=$(dpkg --print-architecture); \
+    case "$ARCH" in \
+        amd64) COMPOSE_ARCH="x86_64" ;; \
+        arm64) COMPOSE_ARCH="aarch64" ;; \
+        *) echo "Unsupported architecture: $ARCH"; exit 1 ;; \
+    esac; \
+    curl -SL "https://github.com/docker/compose/releases/download/v${DOCKER_COMPOSE_VERSION}/docker-compose-linux-${COMPOSE_ARCH}" -o /usr/local/bin/docker-compose; \
+    chmod +x /usr/local/bin/docker-compose; \
+    docker-compose --version
+
+WORKDIR /app
+EXPOSE 8080
+VOLUME ["/data"]
+
+# Build stage
+FROM mcr.microsoft.com/dotnet/sdk:9.0 AS build
+ARG BUILD_CONFIGURATION=Release
+WORKDIR /src
+
+# Copy project files for dependency restoration
+COPY ["src/ModelingEvolution.AutoUpdater.Host/ModelingEvolution.AutoUpdater.Host.csproj", "src/ModelingEvolution.AutoUpdater.Host/"]
+COPY ["src/ModelingEvolution.AutoUpdater/ModelingEvolution.AutoUpdater.csproj", "src/ModelingEvolution.AutoUpdater/"]
+
+# Restore dependencies
+RUN dotnet restore "src/ModelingEvolution.AutoUpdater.Host/ModelingEvolution.AutoUpdater.Host.csproj"
+
+# Copy all source code
+COPY . .
+
+# Build the application
+WORKDIR "/src/src/ModelingEvolution.AutoUpdater.Host"
+ENV DOCKER_BUILD=true
+RUN dotnet build "ModelingEvolution.AutoUpdater.Host.csproj" -c $BUILD_CONFIGURATION -o /app/build
+
+# Publish stage
+FROM build AS publish
+ARG BUILD_CONFIGURATION=Release
+ENV DOCKER_BUILD=true
+RUN dotnet publish "ModelingEvolution.AutoUpdater.Host.csproj" -c $BUILD_CONFIGURATION -o /app/publish /p:UseAppHost=false
+
+# Final stage
+FROM base AS final
+WORKDIR /app
+COPY --from=publish /app/publish .
+
+# Set environment variables
+ENV ASPNETCORE_URLS=http://+:8080
+ENV ASPNETCORE_ENVIRONMENT=Production
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+    CMD curl -f http://localhost:8080/health || exit 1
+
+ENTRYPOINT ["dotnet", "ModelingEvolution.AutoUpdater.Host.dll"]
