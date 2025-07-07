@@ -36,6 +36,12 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "VersionApp", "examples\test
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ModelingEvolution.AutoUpdater.IntegrationTests", "tests\ModelingEvolution.AutoUpdater.IntegrationTests\ModelingEvolution.AutoUpdater.IntegrationTests.csproj", "{CE00013E-7412-1DBB-C596-CE232B756754}"
 EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "scripts", "scripts", "{D840FEFE-D78D-4F1C-8178-8F4AFC7D8D69}"
+	ProjectSection(SolutionItems) = preProject
+		create-deploy-user.sh = create-deploy-user.sh
+		install-ssh-keys.sh = install-ssh-keys.sh
+	EndProjectSection
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU

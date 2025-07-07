@@ -21,6 +21,45 @@ View the latest test results and coverage reports at: [https://modelingevolution
 - **Blazor UI**: Web-based management interface for monitoring and controlling updates
 - **Background Services**: Hosted services for continuous monitoring and updating
 
+## 🚀 Quick Start (Empty Project)
+
+### Method 1: Using the Startup Script (Recommended)
+```bash
+# Clone the repository
+git clone https://github.com/modelingevolution/autoupdater.git
+cd autoupdater
+
+# Run the startup script (automatically sets up everything)
+./start.sh
+```
+
+### Method 2: Manual Docker Compose
+```bash
+# Set required environment variable
+export SSH_USER=deploy
+
+# Create minimal configuration
+mkdir -p data
+cp data/appsettings.example.json data/appsettings.json
+
+# Start the services
+docker-compose up --build
+```
+
+### Method 3: Using .env File
+```bash
+# Copy example environment file
+cp .env.example .env
+
+# Edit .env file with your settings
+nano .env
+
+# Start the services
+docker-compose up --build
+```
+
+**🎉 The AutoUpdater will be available at: http://localhost:8080**
+
 ## Installation
 
 ### Docker Image
@@ -28,7 +67,7 @@ View the latest test results and coverage reports at: [https://modelingevolution
 docker pull modelingevolution/autoupdater:latest
 ```
 
-## Quick Start
+## Configuration
 
 ### Docker Compose
 

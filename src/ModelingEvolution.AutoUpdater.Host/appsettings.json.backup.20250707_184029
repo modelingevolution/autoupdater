@@ -8,7 +8,7 @@
   "AllowedHosts": "*",
   "SshUser": "deploy",
   "SshAuthMethod": "PrivateKey",
-  "SshKeyPath": "./data/ssh/id_rsa",
+  "SshKeyPath": "/data/ssh/id_rsa",
   "Packages": [
     {
       "RepositoryLocation": "/data/repos/example-app",

@@ -93,10 +93,32 @@ public class UpdateHost(IConfiguration config, ILogger<UpdateHost> log) : IHoste
         try
         {
             // Initialize SSH configuration from appsettings
-            config.GetSection("").Bind(_sshConfig);
+            // Use individual GetValue calls to properly handle environment variables and JSON config
+            _sshConfig.SshUser = config.GetValue<string>("SshUser");
+            _sshConfig.SshPwd = config.GetValue<string>("SshPwd");
+            _sshConfig.SshKeyPath = config.GetValue<string>("SshKeyPath");
+            _sshConfig.SshKeyPassphrase = config.GetValue<string>("SshKeyPassphrase");
+            
+            // Parse enum values safely
+            if (Enum.TryParse<SshAuthMethod>(config.GetValue<string>("SshAuthMethod"), true, out var authMethod))
+            {
+                _sshConfig.SshAuthMethod = authMethod;
+            }
+            
+            // Parse integer values with defaults
+            _sshConfig.SshPort = config.GetValue<int?>("SshPort") ?? 22;
+            _sshConfig.SshTimeoutSeconds = config.GetValue<int?>("SshTimeoutSeconds") ?? 30;
+            _sshConfig.SshKeepAliveSeconds = config.GetValue<int?>("SshKeepAliveSeconds") ?? 30;
+            
+            // Parse boolean values with defaults
+            _sshConfig.SshEnableCompression = config.GetValue<bool?>("SshEnableCompression") ?? true;
+            
+            // Initialize host address from configuration with fallback
+            _hostAddress = config.GetValue<string>("HostAddress") ?? "172.17.0.1";
             
             // Log configuration (without sensitive values)
             log.LogInformation("=== AutoUpdater Configuration ===");
+            log.LogInformation("Host Address: {HostAddress}", _hostAddress);
             log.LogInformation("SSH Configuration: {SshConfig}", _sshConfig.GetSafeConfigurationSummary());
             
             var cid = (await GetContainer())?.ID;
@@ -124,17 +146,14 @@ public class UpdateHost(IConfiguration config, ILogger<UpdateHost> log) : IHoste
     {
         return Task.CompletedTask;
     }
-    //const string HostAddress = "host.docker.internal";
-    const string HostAddress = "172.17.0.1";
-
-    //const string HostAddress = "pi-200";
+    private string _hostAddress = "172.17.0.1";
     internal async Task<String> InvokeSsh(string command, string? dockerComposeFolder = null, Action? onExecuted = null)
     {
         if (string.IsNullOrEmpty(_sshConfig.SshUser))
             throw new InvalidOperationException("SSH user is not configured. Set SshUser in configuration.");
 
         // Create SSH configuration for the host
-        var sshConfig = _sshConfig.ToSshConfiguration(HostAddress);
+        var sshConfig = _sshConfig.ToSshConfiguration(_hostAddress);
         
         // Create SSH connection manager
         using var sshManager = new SshConnectionManager(sshConfig, log);
