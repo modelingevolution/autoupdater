@@ -10,6 +10,9 @@ EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ModelingEvolution.AutoUpdater.Host", "src\ModelingEvolution.AutoUpdater.Host\ModelingEvolution.AutoUpdater.Host.csproj", "{E817CDDC-40EB-413B-AB1F-653986F71FD1}"
 EndProject
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "tests", "tests", "{94D91150-547E-4A98-9E0C-0D1A16B15C21}"
+	ProjectSection(SolutionItems) = preProject
+		TESTING.md = TESTING.md
+	EndProjectSection
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ModelingEvolution.AutoUpdater.Tests", "tests\ModelingEvolution.AutoUpdater.Tests\ModelingEvolution.AutoUpdater.Tests.csproj", "{7C5BFD99-1455-456C-ACC7-8823BF9E3667}"
 EndProject
@@ -19,6 +22,19 @@ Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Solution Items", "Solution 
 		README.md = README.md
 		ssh.md = ssh.md
 	EndProjectSection
+EndProject
+Project("{E53339B2-1760-4266-BCC7-CA923CBCF16C}") = "docker-compose", "docker-compose.dcproj", "{81DDED9D-158B-E303-5F62-77A2896D2A5A}"
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "examples", "examples", "{02EA681E-C7D8-13C7-8484-4AC65E1B71E8}"
+	ProjectSection(SolutionItems) = preProject
+		examples\compose\docker-compose.yml = examples\compose\docker-compose.yml
+		examples\compose\README.md = examples\compose\README.md
+		examples\test-update-flow.sh = examples\test-update-flow.sh
+	EndProjectSection
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "VersionApp", "examples\testproject\src\VersionApp.csproj", "{073D5CA2-37B1-2BEB-0CCD-6FB86954811F}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ModelingEvolution.AutoUpdater.IntegrationTests", "tests\ModelingEvolution.AutoUpdater.IntegrationTests\ModelingEvolution.AutoUpdater.IntegrationTests.csproj", "{CE00013E-7412-1DBB-C596-CE232B756754}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
@@ -38,6 +54,18 @@ Global
 		{7C5BFD99-1455-456C-ACC7-8823BF9E3667}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{7C5BFD99-1455-456C-ACC7-8823BF9E3667}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{7C5BFD99-1455-456C-ACC7-8823BF9E3667}.Release|Any CPU.Build.0 = Release|Any CPU
+		{81DDED9D-158B-E303-5F62-77A2896D2A5A}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{81DDED9D-158B-E303-5F62-77A2896D2A5A}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{81DDED9D-158B-E303-5F62-77A2896D2A5A}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{81DDED9D-158B-E303-5F62-77A2896D2A5A}.Release|Any CPU.Build.0 = Release|Any CPU
+		{073D5CA2-37B1-2BEB-0CCD-6FB86954811F}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{073D5CA2-37B1-2BEB-0CCD-6FB86954811F}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{073D5CA2-37B1-2BEB-0CCD-6FB86954811F}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{073D5CA2-37B1-2BEB-0CCD-6FB86954811F}.Release|Any CPU.Build.0 = Release|Any CPU
+		{CE00013E-7412-1DBB-C596-CE232B756754}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{CE00013E-7412-1DBB-C596-CE232B756754}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{CE00013E-7412-1DBB-C596-CE232B756754}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{CE00013E-7412-1DBB-C596-CE232B756754}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
@@ -46,6 +74,8 @@ Global
 		{43D2055C-DC3B-45EC-B2F5-471A4C20980B} = {82540DA9-3953-4832-BA2D-734BEE188CFB}
 		{E817CDDC-40EB-413B-AB1F-653986F71FD1} = {82540DA9-3953-4832-BA2D-734BEE188CFB}
 		{7C5BFD99-1455-456C-ACC7-8823BF9E3667} = {94D91150-547E-4A98-9E0C-0D1A16B15C21}
+		{073D5CA2-37B1-2BEB-0CCD-6FB86954811F} = {02EA681E-C7D8-13C7-8484-4AC65E1B71E8}
+		{CE00013E-7412-1DBB-C596-CE232B756754} = {94D91150-547E-4A98-9E0C-0D1A16B15C21}
 	EndGlobalSection
 	GlobalSection(ExtensibilityGlobals) = postSolution
 		SolutionGuid = {B0B356BF-70E3-435A-A378-436BCCF14D17}

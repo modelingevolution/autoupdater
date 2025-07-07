@@ -1,8 +1,9 @@
-version: '3.8'
-
 services:
-  autoupdater:
+  modelingevolution.autoupdater.host:
     image: modelingevolution/autoupdater:latest
+    build:
+      context: .
+      dockerfile: src/ModelingEvolution.AutoUpdater.Host/Dockerfile
     container_name: autoupdater
     restart: unless-stopped
     ports:

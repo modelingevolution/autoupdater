@@ -18,7 +18,7 @@ public class UpdateHost(IConfiguration config, ILogger<UpdateHost> log) : IHoste
     public GlobalSshConfiguration SshConfig => _sshConfig;
     public static async Task<ContainerListResponse?> GetContainer(string imageName = "modelingevolution/autoupdater")
     {
-        using var config = new DockerClientConfiguration(new Uri("unix:///var/run/docker.sock"));
+        using var config = new DockerClientConfiguration();
         using var client = config.CreateClient();
         var filters = new Dictionary<string, IDictionary<string, bool>> { { "status", new Dictionary<string, bool> { { "running", true } } } };
 

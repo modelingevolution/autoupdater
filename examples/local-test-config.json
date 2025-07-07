@@ -1,0 +1,20 @@
+{
+  "Logging": {
+    "LogLevel": {
+      "Default": "Information",
+      "Microsoft.AspNetCore": "Warning",
+      "ModelingEvolution.AutoUpdater": "Debug"
+    }
+  },
+  "AllowedHosts": "*",
+  "SshUser": "deploy",
+  "SshAuthMethod": "Password",
+  "SshPwd": "password",
+  "Packages": [
+    {
+      "RepositoryLocation": "./examples/compose",
+      "RepositoryUrl": "https://github.com/modelingevolution/version-app-compose.git",
+      "DockerComposeDirectory": "./"
+    }
+  ]
+}
