@@ -1,0 +1,80 @@
+@using ModelingEvolution.NetworkManager
+@inject IConfiguration Configuration
+@inject ILogger<VpnSwitch> Logger
+
+<MudPaper Class="pa-4" Elevation="2">
+    <MudSwitch Label="VPN Connection Support Status" @bind-Value="IsVpnEnabled" Color="Color.Success" />
+</MudPaper>
+
+@code {
+    private bool _isVpnEnabled;
+    private bool _isVpnDisabled;
+
+    private bool IsVpnEnabled
+    {
+        get => _isVpnEnabled;
+        set
+        {
+            if (value == _isVpnEnabled || _isVpnDisabled) return;
+            _isVpnEnabled = value;
+
+            if (value)
+                Task.Run(async () =>
+                {
+                    try
+                    {
+                        await using var client = await NetworkManagerClient.Create();
+                        await client.ActivateConnection("wg0");
+                        _isVpnEnabled = await client.IsConnectionActive("wg0");
+                        await this.InvokeAsync(this.StateHasChanged);
+                    }
+                    catch (Exception ex)
+                    {
+                        Logger.LogError(ex, "Failed to activate VPN connection");
+                        _isVpnEnabled = false;
+                        await this.InvokeAsync(this.StateHasChanged);
+                    }
+                });
+            else
+                Task.Run(async () =>
+                {
+                    try
+                    {
+                        await using var client = await NetworkManagerClient.Create();
+                        await client.DisableConnection("wg0");
+                        _isVpnEnabled = await client.IsConnectionActive("wg0");
+                        await this.InvokeAsync(this.StateHasChanged);
+                    }
+                    catch (Exception ex)
+                    {
+                        Logger.LogError(ex, "Failed to disable VPN connection");
+                        await this.InvokeAsync(this.StateHasChanged);
+                    }
+                });
+        }
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        // Check if VPN is disabled in configuration
+        _isVpnDisabled = Configuration.GetValue<bool>("DisableVpn", false);
+        
+        if (_isVpnDisabled)
+        {
+            Logger.LogInformation("VPN functionality is disabled via configuration");
+            return;
+        }
+
+        try
+        {
+            await using var client = await NetworkManagerClient.Create();
+            _isVpnEnabled = await client.IsConnectionActive("wg0");
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Failed to initialize VPN status - VPN functionality will be disabled");
+            _isVpnDisabled = true;
+            _isVpnEnabled = false;
+        }
+    }
+}

@@ -1,0 +1,34 @@
+services:
+  modelingevolution.autoupdater.host:
+    container_name: autoupdater-test
+    # Override the data volume to use test configuration
+    volumes:
+      # Keep all existing volumes from base docker-compose.yml
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ~/.ssh:/root/.ssh:ro
+      - /var/run/dbus:/var/run/dbus:ro
+      - /etc/NetworkManager:/etc/NetworkManager:ro
+      - /usr/share/dbus-1:/usr/share/dbus-1:ro
+      # Override data directory with test config
+      - ./tests/ModelingEvolution.AutoUpdater.IntegrationTests/config:/data
+      # SSH keys should be available in the data directory
+      - ./data/ssh:/data/ssh:ro
+      # Repositories directory for git clones
+      - ./tests/ModelingEvolution.AutoUpdater.IntegrationTests/config/repositories:/data/repositories
+    environment:
+      # Override environment for testing
+      - ASPNETCORE_ENVIRONMENT=Test
+      - ASPNETCORE_URLS=http://+:8080
+      - SshUser=deploy
+      - HostAddress=host.docker.internal
+      - DBUS_SYSTEM_BUS_ADDRESS=unix:path=/var/run/dbus/system_bus_socket
+    # Use different port to avoid conflicts
+    ports:
+      - "8090:8080"
+    # Test-specific health check
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s

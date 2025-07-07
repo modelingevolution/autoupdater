@@ -31,6 +31,7 @@ public class Program
             .AddAutoUpdater()
             .AddApplicationServices()
             .AddApiServices()
+            .AddOpenApi()
             .AddRazorComponents()
             .AddInteractiveServerComponents();
 
@@ -38,7 +39,8 @@ public class Program
 
         // Configure pipeline and endpoints
         app.ConfigurePipeline()
-           .MapEndpoints();
+           .MapEndpoints()
+           .MapOpenApi();
 
         app.Run();
     }

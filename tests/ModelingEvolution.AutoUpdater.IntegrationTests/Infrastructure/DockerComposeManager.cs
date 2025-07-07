@@ -1,4 +1,5 @@
 using CliWrap;
+using CliWrap.Exceptions;
 using Microsoft.Extensions.Logging;
 using System.Text;
 
@@ -11,10 +12,19 @@ public class DockerComposeManager : IDisposable
 {
     private readonly ILogger<DockerComposeManager> _logger;
     private readonly List<string> _activeServices = new();
+    private readonly string? _projectName;
 
-    public DockerComposeManager(ILogger<DockerComposeManager> logger)
+    public DockerComposeManager(ILogger<DockerComposeManager> logger, string? projectName = null)
     {
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+        _projectName = projectName;
+    }
+
+    // Constructor overload for project-based management
+    public DockerComposeManager(string projectName, ILogger logger)
+    {
+        _logger = new LoggerAdapter<DockerComposeManager>(logger);
+        _projectName = projectName;
     }
 
     /// <summary>
@@ -353,6 +363,198 @@ public class DockerComposeManager : IDisposable
         }
 
         return services;
+    }
+
+    /// <summary>
+    /// Starts services using docker-compose up with project name
+    /// </summary>
+    public async Task UpAsync(
+        string[] composeFiles,
+        bool detached = true,
+        bool build = false,
+        CancellationToken cancellationToken = default)
+    {
+        if (composeFiles == null || composeFiles.Length == 0)
+            throw new ArgumentException("At least one compose file must be specified", nameof(composeFiles));
+
+        _logger.LogInformation("Starting Docker Compose with project {ProjectName}", _projectName);
+
+        var args = new List<string> { "compose" };
+        
+        if (!string.IsNullOrEmpty(_projectName))
+        {
+            args.AddRange(new[] { "-p", _projectName });
+        }
+
+        // Find common directory for all compose files
+        var workingDir = Path.GetDirectoryName(composeFiles[0]) ?? Directory.GetCurrentDirectory();
+        
+        foreach (var file in composeFiles)
+        {
+            // Use relative path from working directory
+            var relativePath = Path.GetRelativePath(workingDir, file);
+            args.AddRange(new[] { "-f", relativePath });
+        }
+
+        args.Add("up");
+
+        if (detached)
+        {
+            args.Add("-d");
+        }
+
+        if (build)
+        {
+            args.Add("--build");
+        }
+
+        var stdOutBuffer = new StringBuilder();
+        var stdErrBuffer = new StringBuilder();
+
+        try
+        {
+            var result = await Cli.Wrap("docker")
+                .WithArguments(args)
+                .WithWorkingDirectory(workingDir)
+                .WithStandardOutputPipe(PipeTarget.ToStringBuilder(stdOutBuffer))
+                .WithStandardErrorPipe(PipeTarget.ToStringBuilder(stdErrBuffer))
+                .WithValidation(CommandResultValidation.ZeroExitCode)
+                .ExecuteAsync(cancellationToken);
+        }
+        catch (CommandExecutionException ex)
+        {
+            _logger.LogError("Docker Compose up failed with exit code {ExitCode}. Error: {Error}", 
+                ex.ExitCode, stdErrBuffer.ToString());
+            throw;
+        }
+
+        _logger.LogInformation("Successfully started Docker Compose project {ProjectName}", _projectName);
+    }
+
+    /// <summary>
+    /// Stops services using docker-compose down with project name
+    /// </summary>
+    public async Task DownAsync(
+        bool removeVolumes = false,
+        bool removeImages = false,
+        CancellationToken cancellationToken = default)
+    {
+        _logger.LogInformation("Stopping Docker Compose project {ProjectName}", _projectName);
+
+        var args = new List<string> { "compose" };
+        
+        if (!string.IsNullOrEmpty(_projectName))
+        {
+            args.AddRange(new[] { "-p", _projectName });
+        }
+
+        args.Add("down");
+
+        if (removeVolumes)
+        {
+            args.Add("-v");
+        }
+
+        if (removeImages)
+        {
+            args.Add("--rmi");
+            args.Add("local");
+        }
+
+        try
+        {
+            var result = await Cli.Wrap("docker")
+                .WithArguments(args)
+                .WithValidation(CommandResultValidation.None)
+                .ExecuteAsync(cancellationToken);
+
+            if (result.ExitCode == 0)
+            {
+                _logger.LogInformation("Successfully stopped Docker Compose project {ProjectName}", _projectName);
+            }
+            else
+            {
+                _logger.LogWarning("Docker Compose down returned exit code {ExitCode} for project {ProjectName}", 
+                    result.ExitCode, _projectName);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error stopping Docker Compose project {ProjectName}", _projectName);
+        }
+    }
+
+    /// <summary>
+    /// Waits for a service to be healthy in the project
+    /// </summary>
+    public async Task WaitForServiceHealthyAsync(
+        string serviceName,
+        TimeSpan timeout,
+        CancellationToken cancellationToken = default)
+    {
+        _logger.LogInformation("Waiting for service {ServiceName} in project {ProjectName} to become healthy (timeout: {Timeout})", 
+            serviceName, _projectName, timeout);
+
+        var startTime = DateTime.UtcNow;
+        var healthCheckInterval = TimeSpan.FromSeconds(2);
+
+        while (DateTime.UtcNow - startTime < timeout)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            try
+            {
+                var health = await GetServiceHealthAsync(serviceName, cancellationToken);
+                
+                if (health == "healthy")
+                {
+                    _logger.LogInformation("Service {ServiceName} is healthy", serviceName);
+                    return;
+                }
+
+                _logger.LogDebug("Service {ServiceName} health: {Health}", serviceName, health);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogDebug(ex, "Error checking service health for {ServiceName}", serviceName);
+            }
+
+            await Task.Delay(healthCheckInterval, cancellationToken);
+        }
+
+        throw new TimeoutException($"Service {serviceName} did not become healthy within {timeout}");
+    }
+
+    /// <summary>
+    /// Gets the health status of a specific service
+    /// </summary>
+    private async Task<string> GetServiceHealthAsync(
+        string serviceName,
+        CancellationToken cancellationToken = default)
+    {
+        var args = new List<string> { "inspect" };
+        
+        if (!string.IsNullOrEmpty(_projectName))
+        {
+            args.Add($"{_projectName}-{serviceName}-1");
+        }
+        else
+        {
+            args.Add(serviceName);
+        }
+
+        args.Add("--format");
+        args.Add("{{.State.Health.Status}}");
+
+        var stdOutBuffer = new StringBuilder();
+
+        var result = await Cli.Wrap("docker")
+            .WithArguments(args)
+            .WithStandardOutputPipe(PipeTarget.ToStringBuilder(stdOutBuffer))
+            .WithValidation(CommandResultValidation.None)
+            .ExecuteAsync(cancellationToken);
+
+        return stdOutBuffer.ToString().Trim();
     }
 
     public void Dispose()

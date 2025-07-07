@@ -35,6 +35,23 @@ public static class AutoUpdaterEndpoints
             .WithSummary("Trigger updates for all packages")
             .WithDescription("Initiates update processes for all packages with available upgrades")
             .Produces<UpdateAllResponse>();
+
+        // Health check endpoint
+        app.MapGet("/health", () => Results.Ok(new { status = "healthy", timestamp = DateTime.UtcNow }))
+            .WithName("Health")
+            .WithSummary("Health check endpoint")
+            .WithDescription("Returns the health status of the application")
+            .Produces<object>();
+
+        // Debug endpoint without dependencies
+        group.MapGet("/debug", () => 
+        {
+            return Results.Ok(new { message = "Debug endpoint working", timestamp = DateTime.UtcNow });
+        })
+            .WithName("Debug")
+            .WithSummary("Debug endpoint without dependencies")
+            .WithDescription("Returns debug info without dependencies")
+            .Produces<object>();
     }
 
     private static async Task<IResult> GetPackagesAsync(
@@ -43,7 +60,9 @@ public static class AutoUpdaterEndpoints
     {
         try
         {
+            logger.LogDebug("GetPackagesAsync endpoint called");
             var response = await service.GetPackagesAsync();
+            logger.LogDebug("GetPackagesAsync completed successfully");
             return Results.Ok(response);
         }
         catch (Exception ex)
