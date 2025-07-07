@@ -1,0 +1,6 @@
+[submodule "examples/testproject"]
+	path = examples/testproject
+	url = https://github.com/modelingevolution/version-app.git
+[submodule "examples/compose"]
+	path = examples/compose
+	url = https://github.com/modelingevolution/version-app-compose.git
