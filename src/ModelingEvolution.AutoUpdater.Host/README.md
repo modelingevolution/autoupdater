@@ -1,8 +1,8 @@
-# EventPi AutoUpdater Host - Requirements
+# ModelingEvolution AutoUpdater Host - Requirements
 
 ## Overview
 
-EventPi AutoUpdater Host is a web-based application management system that provides automated deployment and version management for Docker Compose applications. It bridges Git repository version control with containerized application deployment, offering a modern web interface for monitoring and controlling updates across multiple applications.
+ModelingEvolution AutoUpdater Host is a web-based application management system that provides automated deployment and version management for Docker Compose applications. It bridges Git repository version control with containerized application deployment, offering a modern web interface for monitoring and controlling updates across multiple applications.
 
 ## Core Functionality
 

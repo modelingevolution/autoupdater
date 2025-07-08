@@ -5,7 +5,16 @@
 [![Test Results](https://github.com/modelingevolution/autoupdater/actions/workflows/test-results.yml/badge.svg)](https://github.com/modelingevolution/autoupdater/actions/workflows/test-results.yml)
 [![Docker Hub](https://img.shields.io/docker/v/modelingevolution/autoupdater?label=Docker%20Hub)](https://hub.docker.com/r/modelingevolution/autoupdater)
 
-A comprehensive Docker-based auto-updater for IoT devices and containerized applications. Supports self-updating containers, git-based configuration management, and system updates via SSH.
+A Docker-based auto-updater for containerized applications with Git-based version management and SSH deployment.
+
+## Production Deployment
+
+```bash
+wget https://raw.githubusercontent.com/modelingevolution/autoupdater-compose/main/installation.sh
+sudo ./installation.sh rocket-welder https://github.com/modelingevolution/rocketwelder-compose.git POC-400
+```
+
+See [autoupdater-compose](https://github.com/modelingevolution/autoupdater-compose) for production setup.
 
 ## 📊 Test Results and Coverage
 
@@ -39,8 +48,7 @@ cd autoupdater
 export SSH_USER=deploy
 
 # Create minimal configuration
-mkdir -p data
-cp data/appsettings.example.json data/appsettings.json
+cp appsettings.example.json appsettings.json
 
 # Start the services
 docker-compose up --build
@@ -81,14 +89,54 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - ./data:/data
+      - ./appsettings.json:/app/appsettings.json:ro  # Configuration mapping
     environment:
       - SshUser=deploy
-      - SshPwd=password
+      - SshAuthMethod=PrivateKey
+      - SshKeyPath=/data/ssh/id_rsa
 ```
 
 ### Configuration
 
-#### SSH Key Authentication (Recommended)
+The AutoUpdater configuration is mapped through Docker Compose. Create an `appsettings.json` file in the root directory (not in the data folder). 
+
+#### Configuration Structure
+
+The configuration supports two package arrays:
+- **StdPackages**: Contains the autoupdater itself and system-critical packages
+- **Packages**: Contains application packages to be managed
+
+This separation ensures the autoupdater can update itself independently from the applications it manages.
+
+#### Production Configuration
+
+For production deployments, use `appsettings.Production.json`:
+
+```json
+{
+  "SshUser": "deploy",
+  "SshAuthMethod": "PrivateKey",
+  "SshKeyPath": "/data/ssh/id_rsa",
+  "StdPackages": [
+    {
+      "RepositoryLocation": "/data/repositories/autoupdater-compose",
+      "RepositoryUrl": "https://github.com/modelingevolution/autoupdater-compose.git",
+      "DockerComposeDirectory": "./"
+    }
+  ],
+  "Packages": [
+    {
+      "RepositoryLocation": "/data/repositories/your-app-compose",
+      "RepositoryUrl": "https://github.com/your-org/your-app-compose.git",
+      "DockerComposeDirectory": "./"
+    }
+  ]
+}
+```
+
+The default configuration monitors the AutoUpdater itself for updates, ensuring the updater stays up-to-date automatically.
+
+#### SSH Key Authentication (Default)
 
 For enhanced security, use SSH key-based authentication:
 
@@ -109,7 +157,7 @@ For enhanced security, use SSH key-based authentication:
 }
 ```
 
-#### Password Authentication (Legacy)
+#### Password Authentication (Not Recommended)
 
 ```json
 {
@@ -208,8 +256,8 @@ services:
 
 | Method | Configuration | Use Case |
 |--------|---------------|----------|
-| `Password` | `SshUser` + `SshPwd` | Legacy, less secure |
-| `PrivateKey` | `SshUser` + `SshKeyPath` | Most secure, recommended |
+| `Password` | `SshUser` + `SshPwd` | Not recommended, less secure |
+| `PrivateKey` | `SshUser` + `SshKeyPath` | Default, most secure |
 | `PrivateKeyWithPassphrase` | `SshUser` + `SshKeyPath` + `SshKeyPassphrase` | Enhanced security with passphrase |
 | `KeyWithPasswordFallback` | All of the above | Transition period, tries key first |
 

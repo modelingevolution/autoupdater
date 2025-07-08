@@ -65,7 +65,7 @@ docker images | grep versionapp
 docker run -d -p 8080:8080 \
   -v /var/run/docker.sock:/var/run/docker.sock \
   -v $(pwd)/examples:/data/repos \
-  -v $(pwd)/examples/local-test-config.json:/data/appsettings.json:ro \
+  -v $(pwd)/examples/local-test-config.json:/app/appsettings.json:ro \
   modelingevolution/autoupdater:latest
 
 # Option B: Use integration test environment

@@ -28,7 +28,7 @@ public class SshConnectionManager : IDisposable
         if (_disposed)
             throw new ObjectDisposedException(nameof(SshConnectionManager));
 
-        _logger.LogDebug("Creating SSH connection to {Host}:{Port} with user {User} using {AuthMethod}",
+        _logger.LogInformation("Creating SSH connection to {Host}:{Port} with user {User} using {AuthMethod}",
             _config.Host, _config.Port, _config.User, _config.AuthMethod);
 
         var connectionInfo = _config.AuthMethod switch
