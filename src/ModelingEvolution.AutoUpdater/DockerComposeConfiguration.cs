@@ -324,7 +324,7 @@ namespace ModelingEvolution.AutoUpdater
                         string stateFile = Path.Combine(ComposeFolderPath, "deployment.state.json");
                         await File.WriteAllTextAsync(stateFile, JsonSerializer.Serialize(st));
                     }
-                    else throw new UpdateFailedException(logContent);
+                    else throw new UpdateFailedException("Update failed: " + logContent);
                 }
                 else throw new UpdateFailedException("Update failed: " + x.Error);
 
