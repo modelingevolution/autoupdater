@@ -116,24 +116,29 @@ public class UpdateHost(IConfiguration config, ILogger<UpdateHost> log) : IHoste
             // Initialize host address from configuration with fallback
             _hostAddress = config.GetValue<string>("HostAddress") ?? "172.17.0.1";
             
+            
+            
             // Log configuration (without sensitive values)
             log.LogInformation("=== AutoUpdater Configuration ===");
             log.LogInformation("Host Address: {HostAddress}", _hostAddress);
             log.LogInformation("SSH Configuration: {SshConfig}", _sshConfig.GetSafeConfigurationSummary());
-            
+
+
             var cid = (await GetContainer())?.ID;
             if (cid != null)
             {
                 this.Volumes = await GetVolumeMappings(cid);
-                log.LogInformation("Docker volume mapping configured [{Count}]. Mappings: {Mappings}", 
-                    this.Volumes.Count, 
+                log.LogInformation("Docker volume mapping configured [{Count}]. Mappings: {Mappings}",
+                    this.Volumes.Count,
                     string.Join(", ", this.Volumes.Select(kvp => $"{kvp.Key}->{kvp.Value}")));
             }
             else
                 log.LogInformation("Docker volume mapping is disabled.");
-            
+
             // Test SSH connectivity
             await InvokeSsh("echo \"AutoUpdater SSH connectivity test successful\"");
+
+
             log.LogInformation("=== AutoUpdater Startup Complete ===");
         }
         catch (Exception ex) {
@@ -147,7 +152,7 @@ public class UpdateHost(IConfiguration config, ILogger<UpdateHost> log) : IHoste
         return Task.CompletedTask;
     }
     private string _hostAddress = "172.17.0.1";
-    internal async Task<String> InvokeSsh(string command, string? dockerComposeFolder = null, Action? onExecuted = null)
+    internal async Task<String> InvokeSsh(string command, string? dockerComposeFolder = null, Func<SshCommandResult,Task>? onExecuted = null)
     {
         if (string.IsNullOrEmpty(_sshConfig.SshUser))
             throw new InvalidOperationException("SSH user is not configured. Set SshUser in configuration.");
@@ -167,7 +172,8 @@ public class UpdateHost(IConfiguration config, ILogger<UpdateHost> log) : IHoste
             var result = await sshManager.ExecuteCommandAsync(command, dockerComposeFolder);
             
             // Call completion callback
-            onExecuted?.Invoke();
+            if(onExecuted != null)
+                await onExecuted.Invoke(result);
             
             if (result.IsSuccess)
             {
@@ -185,6 +191,21 @@ public class UpdateHost(IConfiguration config, ILogger<UpdateHost> log) : IHoste
         catch (Exception ex)
         {
             log.LogError(ex, "SSH command execution failed: {Command}", command);
+            throw;
+        }
+    }
+
+    public async Task<string> ReadHostFileContent(string logFile)
+    {
+        try
+        {
+            var command = $"cat {logFile}";
+            var result = await InvokeSsh(command);
+            return result;
+        }
+        catch (Exception ex)
+        {
+            Log.LogError(ex, "Failed to read host file content: {LogFile}", logFile);
             throw;
         }
     }

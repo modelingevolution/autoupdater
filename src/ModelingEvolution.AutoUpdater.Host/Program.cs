@@ -14,15 +14,16 @@ public class Program
             .AddJsonFile("appsettings.json", optional: false, reloadOnChange: true)
             .AddJsonFile($"appsettings.{Environment.GetEnvironmentVariable("ASPNETCORE_ENVIRONMENT")}.json", optional: true)
             .AddJsonFile($"appsettings.override.json", optional: true)
-            .AddJsonFile($"/data/appsettings.json", optional: true, true)
             .AddEnvironmentVariables()
-            .AddCommandLine(args)
-            .Build();
+            .AddCommandLine(args);
     }
 
     public static void Main(string[] args)
     {
         var builder = WebApplication.CreateBuilder(args);
+        
+        // Apply custom configuration
+        builder.Configuration.Sources.Clear();
         Configure(builder.Configuration, args);
 
         // Configure services

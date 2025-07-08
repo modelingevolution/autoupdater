@@ -55,7 +55,7 @@ public class AutoUpdaterService
         }
 
         var currentVersion = config.CurrentVersion;
-        var availableVersions = config.AvailableVersions();
+        var availableVersions = config.AvailableVersions(_logger);
         var latestVersion = availableVersions.OrderByDescending(v => v).FirstOrDefault();
 
         GitTagVersion? currentVersionParsed = null;
@@ -126,7 +126,7 @@ public class AutoUpdaterService
             try
             {
                 var currentVersion = config.CurrentVersion;
-                var availableVersions = config.AvailableVersions();
+                var availableVersions = config.AvailableVersions(_logger);
                 var latestVersion = availableVersions.OrderByDescending(v => v).FirstOrDefault();
 
                 GitTagVersion? currentVersionParsed = null;

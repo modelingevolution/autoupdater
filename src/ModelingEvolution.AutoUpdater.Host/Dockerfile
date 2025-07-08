@@ -62,4 +62,7 @@ RUN dotnet publish "./ModelingEvolution.AutoUpdater.Host.csproj" -c $BUILD_CONFI
 FROM base AS final
 WORKDIR /app
 COPY --from=publish /app/publish .
+# Configure git to trust repository directories
+RUN git config --global --add safe.directory /data/repositories/*
+RUN git config --global --add safe.directory '*'
 ENTRYPOINT ["dotnet", "ModelingEvolution.AutoUpdater.Host.dll"]

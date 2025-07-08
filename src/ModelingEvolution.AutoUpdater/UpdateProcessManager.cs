@@ -9,8 +9,9 @@ public class UpdateProcessManager(DockerComposeConfigurationRepository repo, Upd
     public async Task UpdateAll()
     {
         _logger.LogInformation("Starting update process for all packages");
-        
-        foreach(var i in repo.GetPackages())
+
+        var packages = repo.GetPackages().ToArray();
+        foreach(var i in packages)
         {
             try
             {

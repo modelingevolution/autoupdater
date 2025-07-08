@@ -1,5 +1,6 @@
 ﻿@page "/"
 @using ModelingEvolution.AutoUpdater
+@using ModelingEvolution.AutoUpdater.Host.Components.Shared
 @inject DockerComposeConfigurationRepository repo
 @inject UpdateProcessManager mgm
 @inject UpdateHost host
@@ -11,14 +12,15 @@
         <MudPaper Class="pa-4" Elevation="2">
             <MudField Label="Name">@context.FriendlyName</MudField>
             <MudField Label="Current version">@context.CurrentVersion</MudField>
-            @if (@context.IsUpgradeAvailable())
+            @if (@context.IsUpgradeAvailable(host.Log))
             {
-                <MudField Label="Available upgrade:">@context.AvailableUpgrade()</MudField>
+                <MudField Label="Available upgrade:">@context.AvailableUpgrade(host.Log)</MudField>
             } else
             {
                 <MudText Color="Color.Info">You have the latest version.</MudText>
+               
             }
-
+            <MudText Color="Color.Error">@_lastError</MudText>
         </MudPaper>
     </ObservableForEach>
 </MudStack>
@@ -32,9 +34,17 @@
 
 @code {
     private bool _isUpdateAvailable;
-
+    private string _lastError = string.Empty;
     private async Task OnClick(MouseEventArgs e)
     {
-        await mgm.UpdateAll();
+        try
+        {
+            _lastError = string.Empty;
+            await mgm.UpdateAll();
+        }
+        catch (UpdateFailedException ex)
+        {
+            _lastError = ex.Message;
+        }
     }
 }

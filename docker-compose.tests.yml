@@ -20,9 +20,9 @@ services:
       - ASPNETCORE_ENVIRONMENT=Test
       - ASPNETCORE_URLS=http://+:8080
       - SshUser=deploy
-      - HostAddress=host.docker.internal
+      - HostAddress=127.0.0.1
       - DBUS_SYSTEM_BUS_ADDRESS=unix:path=/var/run/dbus/system_bus_socket
-    # Use different port to avoid conflicts
+    # Use test port to avoid conflicts with production
     ports:
       - "8090:8080"
     # Test-specific health check
@@ -32,3 +32,14 @@ services:
       timeout: 3s
       retries: 10
       start_period: 10s
+    # Required capabilities from base docker-compose.yml
+    cap_add:
+      - NET_ADMIN
+      - SYS_MODULE
+    # Use the same network as base
+    networks:
+      - autoupdater-network
+
+networks:
+  autoupdater-network:
+    driver: bridge
