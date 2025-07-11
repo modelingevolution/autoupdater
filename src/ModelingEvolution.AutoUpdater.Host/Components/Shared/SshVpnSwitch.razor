@@ -1,0 +1,208 @@
+@using ModelingEvolution.AutoUpdater.Host.Services.VPN
+@inject ISshVpnService SshVpnService
+@inject ILogger<SshVpnSwitch> Logger
+@implements IDisposable
+
+<MudPaper Class="pa-4" Elevation="2">
+    <MudGrid>
+        <MudItem xs="6">
+            <MudSwitch Label="SSH VPN Connection" 
+                      @bind-Value="IsVpnEnabled" 
+                      Color="Color.Success" 
+                      Disabled="_isLoading || _hasError" />
+        </MudItem>
+        <MudItem xs="6" Class="d-flex justify-end">
+            @if (_isLoading)
+            {
+                <MudProgressCircular Size="Size.Small" Indeterminate="true" />
+            }
+            else if (_hasError)
+            {
+                <MudTooltip Text="@_errorMessage">
+                    <MudIcon Icon="@Icons.Material.Filled.Error" Color="Color.Error" />
+                </MudTooltip>
+            }
+            else if (_vpnStatus != null)
+            {
+                <MudTooltip Text="@GetStatusTooltip()">
+                    <MudIcon Icon="@GetStatusIcon()" Color="@GetStatusColor()" />
+                </MudTooltip>
+            }
+        </MudItem>
+    </MudGrid>
+    
+    @if (_vpnStatus != null && _vpnStatus.IsActive)
+    {
+        <MudDivider Class="my-2" />
+        <MudGrid>
+            <MudItem xs="6" sm="4">
+                <MudText Typo="Typo.caption">Interface</MudText>
+                <MudText Typo="Typo.body2">@_vpnStatus.InterfaceName</MudText>
+            </MudItem>
+            <MudItem xs="6" sm="4">
+                <MudText Typo="Typo.caption">Local Address</MudText>
+                <MudText Typo="Typo.body2">@(_vpnStatus.LocalAddress ?? "N/A")</MudText>
+            </MudItem>
+            <MudItem xs="12" sm="4">
+                <MudText Typo="Typo.caption">Remote Endpoint</MudText>
+                <MudText Typo="Typo.body2">@(_vpnStatus.RemoteEndpoint ?? "N/A")</MudText>
+            </MudItem>
+            @if (!string.IsNullOrEmpty(_vpnStatus.LastHandshake))
+            {
+                <MudItem xs="6">
+                    <MudText Typo="Typo.caption">Last Handshake</MudText>
+                    <MudText Typo="Typo.body2">@_vpnStatus.LastHandshake</MudText>
+                </MudItem>
+            }
+            <MudItem xs="6">
+                <MudText Typo="Typo.caption">Transfer</MudText>
+                <MudText Typo="Typo.body2">↓ @FormatBytes(_vpnStatus.BytesReceived) / ↑ @FormatBytes(_vpnStatus.BytesSent)</MudText>
+            </MudItem>
+        </MudGrid>
+    }
+</MudPaper>
+
+@code {
+    private bool _isVpnEnabled;
+    private bool _isLoading;
+    private bool _hasError;
+    private string? _errorMessage;
+    private VpnStatus? _vpnStatus;
+    private Timer? _statusTimer;
+
+    private bool IsVpnEnabled
+    {
+        get => _isVpnEnabled;
+        set
+        {
+            if (value == _isVpnEnabled || _isLoading) return;
+            
+            Task.Run(async () =>
+            {
+                await InvokeAsync(() =>
+                {
+                    _isLoading = true;
+                    _hasError = false;
+                    _errorMessage = null;
+                    StateHasChanged();
+                });
+
+                try
+                {
+                    bool success;
+                    if (value)
+                    {
+                        Logger.LogInformation("Starting VPN connection via SSH");
+                        success = await SshVpnService.StartVpnAsync();
+                    }
+                    else
+                    {
+                        Logger.LogInformation("Stopping VPN connection via SSH");
+                        success = await SshVpnService.StopVpnAsync();
+                    }
+
+                    if (success)
+                    {
+                        _isVpnEnabled = value;
+                        await UpdateVpnStatus();
+                    }
+                    else
+                    {
+                        _hasError = true;
+                        _errorMessage = value ? "Failed to start VPN connection" : "Failed to stop VPN connection";
+                        Logger.LogError(_errorMessage);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _hasError = true;
+                    _errorMessage = ex.Message;
+                    Logger.LogError(ex, "Error changing VPN state");
+                }
+                finally
+                {
+                    await InvokeAsync(() =>
+                    {
+                        _isLoading = false;
+                        StateHasChanged();
+                    });
+                }
+            });
+        }
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        await UpdateVpnStatus();
+        
+        // Start periodic status updates
+        _statusTimer = new Timer(async _ => await UpdateVpnStatus(), null, TimeSpan.Zero, TimeSpan.FromSeconds(30));
+    }
+
+    private async Task UpdateVpnStatus()
+    {
+        try
+        {
+            _vpnStatus = await SshVpnService.GetVpnStatusAsync();
+            _isVpnEnabled = _vpnStatus.IsActive;
+            _hasError = !string.IsNullOrEmpty(_vpnStatus.ErrorMessage);
+            _errorMessage = _vpnStatus.ErrorMessage;
+            
+            await InvokeAsync(StateHasChanged);
+        }
+        catch (Exception ex)
+        {
+            _hasError = true;
+            _errorMessage = ex.Message;
+            Logger.LogError(ex, "Failed to update VPN status");
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
+    private string GetStatusIcon()
+    {
+        if (_vpnStatus?.IsActive == true)
+        {
+            return Icons.Material.Filled.VpnKey;
+        }
+        return Icons.Material.Filled.VpnKeyOff;
+    }
+
+    private Color GetStatusColor()
+    {
+        if (_vpnStatus?.IsActive == true)
+        {
+            return Color.Success;
+        }
+        return Color.Default;
+    }
+
+    private string GetStatusTooltip()
+    {
+        if (_vpnStatus?.IsActive == true)
+        {
+            return $"VPN Active - {_vpnStatus.LocalAddress} → {_vpnStatus.RemoteEndpoint}";
+        }
+        return "VPN Inactive";
+    }
+
+    private static string FormatBytes(long bytes)
+    {
+        string[] suffixes = { "B", "KB", "MB", "GB", "TB" };
+        int suffixIndex = 0;
+        double value = bytes;
+
+        while (value >= 1024 && suffixIndex < suffixes.Length - 1)
+        {
+            value /= 1024;
+            suffixIndex++;
+        }
+
+        return $"{value:F1} {suffixes[suffixIndex]}";
+    }
+
+    public void Dispose()
+    {
+        _statusTimer?.Dispose();
+    }
+}

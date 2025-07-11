@@ -114,7 +114,7 @@ public class UpdateHost(IConfiguration config, ILogger<UpdateHost> log) : IHoste
             _sshConfig.SshEnableCompression = config.GetValue<bool?>("SshEnableCompression") ?? true;
             
             // Initialize host address from configuration with fallback
-            _hostAddress = config.GetValue<string>("HostAddress") ?? "172.17.0.1";
+            _hostAddress = config.GetValue<string>("SshHost")  ?? config.GetValue<string>("HostAddress") ?? "172.17.0.1";
             
             
             

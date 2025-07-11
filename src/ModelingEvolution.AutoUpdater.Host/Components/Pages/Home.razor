@@ -27,10 +27,7 @@
 
 <MudButton Variant="Variant.Filled" Size="Size.Large" Class="ma-4" OnClick="@OnClick">Update all</MudButton>
 
-@if (!Configuration.GetValue<bool>("DisableVpn", false))
-{
-    <VpnSwitch />
-}
+<VpnControl />
 
 @code {
     private bool _isUpdateAvailable;

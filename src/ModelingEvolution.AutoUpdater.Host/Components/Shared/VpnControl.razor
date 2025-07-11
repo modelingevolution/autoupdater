@@ -1,0 +1,78 @@
+@using ModelingEvolution.AutoUpdater.Host.Services.VPN
+@using ModelingEvolution.NetworkManager
+@inject IConfiguration Configuration
+@inject ISshVpnService SshVpnService
+@inject ILogger<VpnControl> Logger
+
+<MudStack Spacing="3">
+    @if (_vpnProvider == VpnProvider.Wireguard)
+    {
+        @if (_vpnProviderAccess == VpnProviderAccess.Ssh)
+        {
+            <!-- SSH VPN Switch -->
+            <MudText Typo="Typo.h5">Support Vpn Connection</MudText>
+            <MudText Typo="Typo.body1">Vpn is used to support AI & Video Processing remotely by RocketWelder.</MudText>
+            <SshVpnSwitch />
+            
+            <!-- SSH VPN Status Display -->
+            <VpnStatusDisplay />
+        }
+        else if (_vpnProviderAccess == VpnProviderAccess.NetworkManager)
+        {
+            <!-- NetworkManager VPN Switch -->
+            <VpnSwitch />
+        }
+    }
+    else if (_vpnProvider == VpnProvider.None)
+    {
+        <MudAlert Severity="Severity.Info" Class="ma-2">
+            <strong>VPN Disabled:</strong> VPN support functionality is disabled in configuration (VpnProvider: None)
+        </MudAlert>
+    }
+    else
+    {
+        <MudAlert Severity="Severity.Warning" Class="ma-2">
+            <strong>Unsupported VPN Provider:</strong> @_vpnProvider
+        </MudAlert>
+    }
+    
+    @if (_vpnProviderAccess == VpnProviderAccess.None)
+    {
+        <MudAlert Severity="Severity.Info" Class="ma-2">
+            <strong>VPN support Disabled:</strong> No VPN access method configured (VpnProviderAccess: None)
+        </MudAlert>
+    }
+</MudStack>
+
+@code {
+    private VpnProviderAccess _vpnProviderAccess = VpnProviderAccess.None;
+    private VpnProvider _vpnProvider = VpnProvider.None;
+
+    protected override void OnInitialized()
+    {
+        // Parse configuration values
+        var vpnProviderAccessStr = Configuration.GetValue<string>("VpnProviderAccess", "None");
+        var vpnProviderStr = Configuration.GetValue<string>("VpnProvider", "None");
+        
+        if (Enum.TryParse<VpnProviderAccess>(vpnProviderAccessStr, true, out var providerAccess))
+        {
+            _vpnProviderAccess = providerAccess;
+        }
+        else
+        {
+            Logger.LogWarning("Invalid VpnProviderAccess configuration: {Value}. Using None.", vpnProviderAccessStr);
+        }
+        
+        if (Enum.TryParse<VpnProvider>(vpnProviderStr, true, out var provider))
+        {
+            _vpnProvider = provider;
+        }
+        else
+        {
+            Logger.LogWarning("Invalid VpnProvider configuration: {Value}. Using None.", vpnProviderStr);
+        }
+        
+        Logger.LogInformation("VPN Configuration: Provider={Provider}, Access={Access}", 
+            _vpnProvider, _vpnProviderAccess);
+    }
+}

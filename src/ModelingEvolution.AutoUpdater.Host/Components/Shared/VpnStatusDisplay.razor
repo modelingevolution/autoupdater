@@ -1,0 +1,277 @@
+@using ModelingEvolution.AutoUpdater.Host.Services.VPN
+@inject ISshVpnService SshVpnService
+@inject ILogger<VpnStatusDisplay> Logger
+@implements IDisposable
+
+<MudCard Elevation="2">
+    <MudCardHeader>
+        <CardHeaderContent>
+            <div class="d-flex align-center">
+                <MudIcon Icon="@GetConnectionIcon()" Color="@GetConnectionColor()" Class="mr-3" />
+                <MudText Typo="Typo.h6">VPN Connection Status</MudText>
+                @if (_isLoading)
+                {
+                    <MudProgressCircular Size="Size.Small" Indeterminate="true" Class="ml-auto" />
+                }
+                else
+                {
+                    <MudIconButton Icon="@Icons.Material.Filled.Refresh" 
+                                   Color="Color.Default" 
+                                   Size="Size.Small" 
+                                   Class="ml-auto"
+                                   OnClick="RefreshStatus" />
+                }
+            </div>
+        </CardHeaderContent>
+    </MudCardHeader>
+
+    <MudCardContent>
+        @if (_hasError)
+        {
+            <MudAlert Severity="Severity.Error" Class="mb-3">
+                <strong>Error:</strong> @_errorMessage
+            </MudAlert>
+        }
+
+        @if (_vpnStatus != null)
+        {
+            <MudGrid>
+                <!-- Connection Status -->
+                <MudItem xs="12" sm="6" md="3">
+                    <MudTextField Label="Status" 
+                                  Value="@(_vpnStatus.IsActive ? "Connected" : "Disconnected")" 
+                                  ReadOnly="true"
+                                  Adornment="Adornment.Start"
+                                  AdornmentIcon="@GetConnectionIcon()"
+                                  AdornmentColor="@GetConnectionColor()" />
+                </MudItem>
+
+                <!-- Interface -->
+                <MudItem xs="12" sm="6" md="3">
+                    <MudTextField Label="Interface" 
+                                  Value="@_vpnStatus.InterfaceName" 
+                                  ReadOnly="true" />
+                </MudItem>
+
+                <!-- Local Address -->
+                <MudItem xs="12" sm="6" md="3">
+                    <MudTextField Label="Local Address" 
+                                  Value="@(_vpnStatus.LocalAddress ?? "N/A")" 
+                                  ReadOnly="true" />
+                </MudItem>
+
+                <!-- Remote Endpoint -->
+                <MudItem xs="12" sm="6" md="3">
+                    <MudTextField Label="Remote Endpoint" 
+                                  Value="@(_vpnStatus.RemoteEndpoint ?? "N/A")" 
+                                  ReadOnly="true" />
+                </MudItem>
+
+                @if (_vpnStatus.IsActive)
+                {
+                    <!-- Last Handshake -->
+                    <MudItem xs="12" sm="6" md="4">
+                        <MudTextField Label="Last Handshake" 
+                                      Value="@GetLastHandshakeText()" 
+                                      ReadOnly="true" />
+                    </MudItem>
+
+                    <!-- Data Received -->
+                    <MudItem xs="12" sm="6" md="4">
+                        <MudTextField Label="Data Received" 
+                                      Value="@FormatBytes(_vpnStatus.BytesReceived)" 
+                                      ReadOnly="true"
+                                      Adornment="Adornment.Start"
+                                      AdornmentIcon="@Icons.Material.Filled.CloudDownload" />
+                    </MudItem>
+
+                    <!-- Data Sent -->
+                    <MudItem xs="12" sm="6" md="4">
+                        <MudTextField Label="Data Sent" 
+                                      Value="@FormatBytes(_vpnStatus.BytesSent)" 
+                                      ReadOnly="true"
+                                      Adornment="Adornment.Start"
+                                      AdornmentIcon="@Icons.Material.Filled.CloudUpload" />
+                    </MudItem>
+                }
+            </MudGrid>
+
+            @if (_vpnStatus.IsActive)
+            {
+                <MudDivider Class="my-4" />
+                
+                <!-- Connection Health Indicators -->
+                <MudText Typo="Typo.subtitle2" Class="mb-2">Connection Health</MudText>
+                <MudGrid>
+                    <MudItem xs="6" sm="4">
+                        <MudChip Icon="@Icons.Material.Filled.Speed" 
+                                 Color="@(!string.IsNullOrEmpty(_vpnStatus.LastHandshake) && IsHandshakeRecent() ? Color.Success : Color.Warning)"
+                                 Text="@(!string.IsNullOrEmpty(_vpnStatus.LastHandshake) && IsHandshakeRecent() ? "Active" : "Stale")"
+                                 Size="Size.Small" 
+                                 T="string" />
+                    </MudItem>
+                    <MudItem xs="6" sm="4">
+                        <MudChip Icon="@Icons.Material.Filled.Security" 
+                                 Color="@(_vpnStatus.IsActive ? Color.Success : Color.Default)"
+                                 Text="@(_vpnStatus.IsActive ? "Encrypted" : "No Encryption")"
+                                 Size="Size.Small" 
+                                 T="string" />
+                    </MudItem>
+                    <MudItem xs="6" sm="4">
+                        <MudChip Icon="@Icons.Material.Filled.Router" 
+                                 Color="@(!string.IsNullOrEmpty(_vpnStatus.RemoteEndpoint) ? Color.Success : Color.Default)"
+                                 Text="@(!string.IsNullOrEmpty(_vpnStatus.RemoteEndpoint) ? "Connected" : "No Route")"
+                                 Size="Size.Small" 
+                                 T="string" />
+                    </MudItem>
+                </MudGrid>
+            }
+        }
+        else if (!_isLoading)
+        {
+            <MudText Color="Color.Secondary">No VPN status available</MudText>
+        }
+    </MudCardContent>
+
+    <MudCardActions>
+        <MudText Typo="Typo.caption" Color="Color.Secondary" Class="ml-2">
+            Last updated: @(_lastUpdate?.ToString("HH:mm:ss") ?? "Never")
+        </MudText>
+        <div class="ml-auto">
+            <MudSwitch Label="Auto Refresh" 
+                       @bind-Value="_autoRefresh" 
+                       Color="Color.Primary" 
+                       Size="Size.Small" />
+        </div>
+    </MudCardActions>
+</MudCard>
+
+@code {
+    private ModelingEvolution.AutoUpdater.Host.Services.VPN.VpnStatus? _vpnStatus;
+    private bool _isLoading;
+    private bool _hasError;
+    private string? _errorMessage;
+    private DateTime? _lastUpdate;
+    private Timer? _refreshTimer;
+    private bool _autoRefresh = true;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await RefreshStatus();
+        StartAutoRefresh();
+    }
+
+    private async Task RefreshStatus()
+    {
+        _isLoading = true;
+        _hasError = false;
+        _errorMessage = null;
+        this.InvokeAsync(StateHasChanged);
+
+        try
+        {
+            _vpnStatus = await SshVpnService.GetVpnStatusAsync();
+            _lastUpdate = DateTime.Now;
+            
+            Logger.LogDebug("VPN status refreshed: Active={IsActive}, LocalAddress={LocalAddress}", 
+                _vpnStatus.IsActive, _vpnStatus.LocalAddress);
+
+            if (!string.IsNullOrEmpty(_vpnStatus.ErrorMessage))
+            {
+                _hasError = true;
+                _errorMessage = _vpnStatus.ErrorMessage;
+            }
+        }
+        catch (Exception ex)
+        {
+            _hasError = true;
+            _errorMessage = ex.Message;
+            Logger.LogError(ex, "Failed to refresh VPN status");
+        }
+        finally
+        {
+            _isLoading = false;
+            this.InvokeAsync(StateHasChanged);
+        }
+    }
+
+    private void StartAutoRefresh()
+    {
+        _refreshTimer?.Dispose();
+        if (_autoRefresh)
+        {
+            _refreshTimer = new Timer(async _ => await RefreshStatus(), null, TimeSpan.Zero, TimeSpan.FromSeconds(30));
+        }
+    }
+
+    private string GetConnectionIcon()
+    {
+        if (_vpnStatus?.IsActive == true)
+            return Icons.Material.Filled.VpnKey;
+        return Icons.Material.Filled.VpnKeyOff;
+    }
+
+    private Color GetConnectionColor()
+    {
+        if (_hasError)
+            return Color.Error;
+        if (_vpnStatus?.IsActive == true)
+            return Color.Success;
+        return Color.Default;
+    }
+
+    private string GetLastHandshakeText()
+    {
+        if (string.IsNullOrEmpty(_vpnStatus?.LastHandshake))
+            return "Never";
+
+        return _vpnStatus.LastHandshake;
+    }
+
+    private bool IsHandshakeRecent()
+    {
+        if (string.IsNullOrEmpty(_vpnStatus?.LastHandshake))
+            return false;
+        
+        // For string-based handshake, consider recent if it doesn't contain "never" or "(none)"
+        var handshake = _vpnStatus.LastHandshake.ToLowerInvariant();
+        return !handshake.Contains("never") && !handshake.Contains("(none)");
+    }
+
+    private static string FormatBytes(long bytes)
+    {
+        if (bytes == 0) return "0 B";
+        
+        string[] suffixes = { "B", "KB", "MB", "GB", "TB" };
+        int suffixIndex = 0;
+        double value = bytes;
+
+        while (value >= 1024 && suffixIndex < suffixes.Length - 1)
+        {
+            value /= 1024;
+            suffixIndex++;
+        }
+
+        return $"{value:F1} {suffixes[suffixIndex]}";
+    }
+
+    public void Dispose()
+    {
+        _refreshTimer?.Dispose();
+    }
+
+    // Property to control auto-refresh from outside
+    private bool AutoRefresh
+    {
+        get => _autoRefresh;
+        set
+        {
+            if (_autoRefresh != value)
+            {
+                _autoRefresh = value;
+                StartAutoRefresh();
+                StateHasChanged();
+            }
+        }
+    }
+}

@@ -4,6 +4,7 @@
     &lt;Project Location="D:\source\modelingevolution\autoupdater\tests\ModelingEvolution.AutoUpdater.Tests" Presentation="&amp;lt;tests&amp;gt;\&amp;lt;ModelingEvolution.AutoUpdater.Tests&amp;gt;" /&gt;&#xD;
     &lt;TestAncestor&gt;&#xD;
       &lt;TestId&gt;xUnit::CE00013E-7412-1DBB-C596-CE232B756754::net9.0::ModelingEvolution.AutoUpdater.IntegrationTests.AutoUpdaterHealthTests&lt;/TestId&gt;&#xD;
+      &lt;TestId&gt;xUnit::CE00013E-7412-1DBB-C596-CE232B756754::net9.0::ModelingEvolution.AutoUpdater.IntegrationTests.SshVpnIntegrationTests.GetVpnStatusAsync_ShouldReturnValidStatus&lt;/TestId&gt;&#xD;
     &lt;/TestAncestor&gt;&#xD;
   &lt;/Or&gt;&#xD;
 &lt;/SessionState&gt;</s:String></wpf:ResourceDictionary>
