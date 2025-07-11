@@ -23,3 +23,5 @@ docs/.jekyll-metadata
 /tests/ModelingEvolution.AutoUpdater.IntegrationTests/bin/Debug/net9.0
 /tests/ModelingEvolution.AutoUpdater.IntegrationTests/obj
 /data
+/src/ModelingEvolution.AutoUpdater.Host/bin/Release/net9.0
+/src/ModelingEvolution.AutoUpdater/bin/Release/net9.0
