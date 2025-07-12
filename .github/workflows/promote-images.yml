@@ -43,12 +43,7 @@ jobs:
         
         echo "🔄 Promoting preview to production tags..."
         
-        # Get the preview manifest digest
-        echo "Getting preview image digest..."
-        PREVIEW_DIGEST=$(docker buildx imagetools inspect ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:preview --format '{{.Manifest.Digest}}')
-        echo "Preview digest: $PREVIEW_DIGEST"
-        
-        # Create manifest list for each production tag using the preview digest
+        # Create manifest list for each production tag using the preview reference
         echo "Creating production tags..."
         TAGS_JSON='${{ steps.meta.outputs.json }}'
         echo "$TAGS_JSON" | jq -r '.tags[]' | while read tag; do
@@ -56,7 +51,7 @@ jobs:
             echo "Creating tag: $tag"
             docker buildx imagetools create \
               --tag "$tag" \
-              "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@$PREVIEW_DIGEST"
+              "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:preview"
           fi
         done
         
