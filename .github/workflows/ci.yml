@@ -20,7 +20,18 @@ jobs:
         
     - name: Run Unit Tests Only
       run: |
-        # Build and test only unit tests, avoiding solution file issues
+        # Build and test only unit tests, avoiding solution file issues and generate Allure results
         dotnet test tests/ModelingEvolution.AutoUpdater.Tests/ \
           --configuration Release \
-          --logger "console;verbosity=normal"
+          --logger "console;verbosity=normal" \
+          --results-directory ./allure-results
+      env:
+        ALLURE_RESULTS_DIR: ./allure-results
+        
+    - name: Upload Allure results
+      uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: allure-results-autoupdater
+        path: ./allure-results
+        retention-days: 30
