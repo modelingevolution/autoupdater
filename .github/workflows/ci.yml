@@ -23,3 +23,10 @@ jobs:
       
     - name: Build
       run: dotnet build --no-restore --configuration Release
+      
+    - name: Run Unit Tests Only
+      run: |
+        # Only run unit tests, exclude integration tests
+        dotnet test tests/ModelingEvolution.AutoUpdater.Tests/ \
+          --no-build --configuration Release \
+          --logger "console;verbosity=normal"
