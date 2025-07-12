@@ -18,15 +18,17 @@ jobs:
       with:
         dotnet-version: 9.0.x
         
+    - name: Create Allure results directory
+      run: mkdir -p ./allure-results
+        
     - name: Run Unit Tests Only
       run: |
         # Build and test only unit tests, avoiding solution file issues and generate Allure results
         dotnet test tests/ModelingEvolution.AutoUpdater.Tests/ \
           --configuration Release \
-          --logger "console;verbosity=normal" \
-          --results-directory ./allure-results
+          --logger "console;verbosity=normal"
       env:
-        ALLURE_RESULTS_DIR: ./allure-results
+        ALLURE_RESULTS_DIRECTORY: ./allure-results
         
     - name: Upload Allure results
       uses: actions/upload-artifact@v4
