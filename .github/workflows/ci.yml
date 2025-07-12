@@ -18,15 +18,9 @@ jobs:
       with:
         dotnet-version: 9.0.x
         
-    - name: Restore dependencies
-      run: dotnet restore ModelingEvolution.AutoUpdater.sln
-      
-    - name: Build
-      run: dotnet build ModelingEvolution.AutoUpdater.sln --no-restore --configuration Release
-      
     - name: Run Unit Tests Only
       run: |
-        # Only run unit tests, exclude integration tests
+        # Build and test only unit tests, avoiding solution file issues
         dotnet test tests/ModelingEvolution.AutoUpdater.Tests/ \
-          --no-build --configuration Release \
+          --configuration Release \
           --logger "console;verbosity=normal"
