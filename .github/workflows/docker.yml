@@ -2,9 +2,9 @@ name: Docker Build and Push
 
 on:
   push:
-    branches: [ main ]
+    branches: [ master ]
   pull_request:
-    branches: [ main ]
+    branches: [ master ]
 
 env:
   REGISTRY: docker.io
@@ -45,7 +45,7 @@ jobs:
       with:
         images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
         tags: |
-          type=raw,value=preview,enable=${{ github.ref == 'refs/heads/main' }}
+          type=raw,value=preview,enable=${{ github.ref == 'refs/heads/master' }}
           type=ref,event=branch
           type=ref,event=pr
 
@@ -105,7 +105,7 @@ jobs:
       with:
         images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
         tags: |
-          type=raw,value=preview,enable=${{ github.ref == 'refs/heads/main' }}
+          type=raw,value=preview,enable=${{ github.ref == 'refs/heads/master' }}
           type=ref,event=branch
           type=ref,event=pr
           
