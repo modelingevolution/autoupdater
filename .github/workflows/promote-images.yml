@@ -1,0 +1,65 @@
+name: Promote Docker Images to Production
+
+on:
+  push:
+    tags: [ 'v*' ]
+
+env:
+  REGISTRY: docker.io
+  IMAGE_NAME: modelingevolution/autoupdater
+
+jobs:
+  promote:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    
+    steps:
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+    
+    - name: Log in to Docker Hub
+      uses: docker/login-action@v3
+      with:
+        registry: ${{ env.REGISTRY }}
+        username: ${{ secrets.DOCKER_USERNAME }}
+        password: ${{ secrets.DOCKER_PASSWORD }}
+    
+    - name: Extract version metadata
+      id: meta
+      uses: docker/metadata-action@v5
+      with:
+        images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+        tags: |
+          type=semver,pattern={{version}}
+          type=semver,pattern={{major}}.{{minor}}
+          type=semver,pattern={{major}}
+          type=raw,value=latest
+    
+    - name: Promote preview to production tags
+      run: |
+        set -e
+        
+        echo "🔄 Promoting preview to production tags..."
+        
+        # Get the preview manifest digest
+        echo "Getting preview image digest..."
+        PREVIEW_DIGEST=$(docker buildx imagetools inspect ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:preview --format '{{.Manifest.Digest}}')
+        echo "Preview digest: $PREVIEW_DIGEST"
+        
+        # Create manifest list for each production tag using the preview digest
+        echo "Creating production tags..."
+        TAGS_JSON='${{ steps.meta.outputs.json }}'
+        echo "$TAGS_JSON" | jq -r '.tags[]' | while read tag; do
+          if [[ -n "$tag" && "$tag" != *":-"* ]]; then
+            echo "Creating tag: $tag"
+            docker buildx imagetools create \
+              --tag "$tag" \
+              "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@$PREVIEW_DIGEST"
+          fi
+        done
+        
+        echo "✅ Promotion completed successfully"
+        echo "Production tags created:"
+        echo "$TAGS_JSON" | jq -r '.tags[]'
