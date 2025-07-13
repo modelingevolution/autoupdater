@@ -1,4 +1,5 @@
 using ModelingEvolution.AutoUpdater.Host.Features.AutoUpdater.Models;
+using System.Text.Json;
 
 namespace ModelingEvolution.AutoUpdater.Host.Features.AutoUpdater;
 
@@ -25,11 +26,17 @@ public class AutoUpdaterService
     {
         var packages = new List<PackageStatus>();
         
+        // Get Docker Compose status via SSH
+        var composeStatusMap = await GetDockerComposeStatusAsync();
+        
         foreach (var config in _repository.GetPackages())
         {
             var packageName = Path.GetFileName(config.RepositoryLocation);
             var currentVersion = config.CurrentVersion;
             var lastChecked = DateTime.UtcNow; // In production, this would be tracked
+            
+            // Determine status from Docker Compose status
+            var status = GetPackageStatus(packageName, composeStatusMap);
             
             packages.Add(new PackageStatus
             {
@@ -37,11 +44,95 @@ public class AutoUpdaterService
                 RepositoryUrl = config.RepositoryUrl,
                 CurrentVersion = currentVersion ?? "unknown",
                 LastChecked = lastChecked,
-                Status = "running" // In production, check actual container status
+                Status = status
             });
         }
 
         return new PackagesResponse { Packages = packages };
+    }
+
+    private async Task<Dictionary<string, ComposeProjectStatus>> GetDockerComposeStatusAsync()
+    {
+        try
+        {
+            var command = "sudo docker-compose ls --format json";
+            var output = await _updateHost.InvokeSsh(command);
+            
+            if (string.IsNullOrWhiteSpace(output))
+            {
+                _logger.LogWarning("No output from docker-compose ls command");
+                return new Dictionary<string, ComposeProjectStatus>();
+            }
+
+            var composeProjects = JsonSerializer.Deserialize<ComposeProject[]>(output, new JsonSerializerOptions
+            {
+                PropertyNameCaseInsensitive = true
+            });
+
+            if (composeProjects == null)
+            {
+                _logger.LogWarning("Failed to deserialize docker-compose ls output");
+                return new Dictionary<string, ComposeProjectStatus>();
+            }
+
+            var statusMap = new Dictionary<string, ComposeProjectStatus>();
+            foreach (var project in composeProjects)
+            {
+                statusMap[project.Name] = new ComposeProjectStatus
+                {
+                    Status = project.Status,
+                    ConfigFiles = project.ConfigFiles,
+                    RunningServices = project.Status.ToLowerInvariant().Contains("running") ? 1 : 0,
+                    TotalServices = 1 // This is approximate, would need additional parsing for exact count
+                };
+            }
+
+            _logger.LogDebug("Retrieved status for {Count} compose projects", statusMap.Count);
+            return statusMap;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to get Docker Compose status via SSH");
+            return new Dictionary<string, ComposeProjectStatus>();
+        }
+    }
+
+    private string GetPackageStatus(string packageName, Dictionary<string, ComposeProjectStatus> composeStatusMap)
+    {
+        // Try exact match first
+        if (composeStatusMap.TryGetValue(packageName, out var exactMatch))
+        {
+            return MapComposeStatusToPackageStatus(exactMatch.Status);
+        }
+
+        // Try partial match (in case of naming differences)
+        var partialMatch = composeStatusMap.FirstOrDefault(kvp => 
+            kvp.Key.Contains(packageName, StringComparison.OrdinalIgnoreCase) ||
+            packageName.Contains(kvp.Key, StringComparison.OrdinalIgnoreCase));
+
+        if (!partialMatch.Equals(default(KeyValuePair<string, ComposeProjectStatus>)))
+        {
+            _logger.LogDebug("Found partial match for package {PackageName}: {ComposeName}", 
+                packageName, partialMatch.Key);
+            return MapComposeStatusToPackageStatus(partialMatch.Value.Status);
+        }
+
+        // No match found - package might not be deployed or not running
+        _logger.LogDebug("No Docker Compose project found for package {PackageName}", packageName);
+        return "not-deployed";
+    }
+
+    private string MapComposeStatusToPackageStatus(string composeStatus)
+    {
+        return composeStatus.ToLowerInvariant() switch
+        {
+            var status when status.Contains("running") => "running",
+            var status when status.Contains("exited") => "stopped",
+            var status when status.Contains("paused") => "paused",
+            var status when status.Contains("restarting") => "restarting",
+            var status when status.Contains("dead") => "failed",
+            _ => "unknown"
+        };
     }
 
     public async Task<UpgradeStatusResponse> GetUpgradeStatusAsync(string packageName)

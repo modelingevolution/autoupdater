@@ -152,7 +152,7 @@ public class UpdateHost(IConfiguration config, ILogger<UpdateHost> log) : IHoste
         return Task.CompletedTask;
     }
     private string _hostAddress = "172.17.0.1";
-    internal async Task<String> InvokeSsh(string command, string? dockerComposeFolder = null, Func<SshCommandResult,Task>? onExecuted = null)
+    public async Task<String> InvokeSsh(string command, string? dockerComposeFolder = null, Func<SshCommandResult,Task>? onExecuted = null)
     {
         if (string.IsNullOrEmpty(_sshConfig.SshUser))
             throw new InvalidOperationException("SSH user is not configured. Set SshUser in configuration.");

@@ -50,3 +50,19 @@ public record UpdateAllResponse
     public List<UpdateInfo> UpdatesStarted { get; init; } = new();
     public List<SkippedPackage> Skipped { get; init; } = new();
 }
+
+// Models for Docker Compose status checking
+public record ComposeProject
+{
+    public string Name { get; init; } = string.Empty;
+    public string Status { get; init; } = string.Empty;
+    public string ConfigFiles { get; init; } = string.Empty;
+}
+
+public record ComposeProjectStatus
+{
+    public string Status { get; init; } = string.Empty;
+    public string ConfigFiles { get; init; } = string.Empty;
+    public int RunningServices { get; init; }
+    public int TotalServices { get; init; }
+}
