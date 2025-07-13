@@ -29,3 +29,4 @@ docs/.jekyll-metadata
 # Temporary build artifacts
 src/ModelingEvolution.AutoUpdater.Host/examples/
 tests/ModelingEvolution.AutoUpdater.IntegrationTests/config/repositories/
+examples/testproject
