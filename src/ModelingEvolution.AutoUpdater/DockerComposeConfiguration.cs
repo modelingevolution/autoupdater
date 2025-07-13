@@ -255,6 +255,194 @@ namespace ModelingEvolution.AutoUpdater
                    (path.Length == 2 || path[2] == '\\' || path[2] == '/');
         }
 
+        private string[] GetDockerComposeFilesForArchitecture(string composeFolderPath, UpdateHost host)
+        {
+            var allFiles = Directory.GetFiles(composeFolderPath, "docker-compose*.yml")
+                .OrderBy(x => x.Length)
+                .ToList();
+
+            // Base docker-compose.yml must exist
+            var baseFile = allFiles.FirstOrDefault(f => Path.GetFileName(f) == "docker-compose.yml");
+            if (baseFile == null)
+            {
+                throw new FileNotFoundException("docker-compose.yml not found in " + composeFolderPath);
+            }
+
+            var selectedFiles = new List<string> { baseFile };
+
+            // Try to detect architecture and add appropriate override file
+            var architecture = DetectArchitecture(host);
+            string archOverrideFileName = $"docker-compose.{architecture}.yml";
+            var archOverrideFile = allFiles.FirstOrDefault(f => 
+                string.Equals(Path.GetFileName(f), archOverrideFileName, StringComparison.OrdinalIgnoreCase));
+
+            if (archOverrideFile != null)
+            {
+                selectedFiles.Add(archOverrideFile);
+                host.Log.LogInformation("Using architecture-specific compose file: {FileName}", archOverrideFileName);
+            }
+            else
+            {
+                host.Log.LogInformation("No architecture-specific compose file found for {Architecture}, using base file only", architecture);
+            }
+
+            return selectedFiles.ToArray();
+        }
+
+        private string DetectArchitecture(UpdateHost host)
+        {
+            try
+            {
+                // Try to detect architecture via SSH command
+                var archOutput = host.InvokeSsh("uname -m").Result;
+                if (!string.IsNullOrWhiteSpace(archOutput))
+                {
+                    var arch = archOutput.Trim().ToLowerInvariant();
+                    return arch switch
+                    {
+                        "x86_64" or "amd64" => "x64",
+                        "aarch64" or "arm64" => "arm64",
+                        _ => "x64" // Default to x64 for unknown architectures
+                    };
+                }
+            }
+            catch (Exception ex)
+            {
+                host.Log.LogWarning(ex, "Failed to detect architecture via SSH, defaulting to x64");
+            }
+
+            return "x64"; // Default fallback
+        }
+
+        private async Task ExecuteMigrationScripts(UpdateHost host, string? previousVersion, string currentVersion)
+        {
+            try
+            {
+                // Find all migration scripts in the compose folder
+                var migrationScripts = Directory.GetFiles(ComposeFolderPath, "host-*.sh")
+                    .Select(file => new
+                    {
+                        FilePath = file,
+                        FileName = Path.GetFileName(file),
+                        Version = ExtractVersionFromScript(Path.GetFileName(file))
+                    })
+                    .Where(script => script.Version != null)
+                    .ToList();
+
+                if (!migrationScripts.Any())
+                {
+                    host.Log.LogDebug("No migration scripts found in {ComposeFolderPath}", ComposeFolderPath);
+                    return;
+                }
+
+                // Parse version bounds
+                System.Version? previousVer = null;
+                if (!string.IsNullOrEmpty(previousVersion) && GitTagVersion.TryParse(previousVersion, out var prevGitVersion))
+                {
+                    previousVer = prevGitVersion.Version;
+                }
+
+                if (!GitTagVersion.TryParse(currentVersion, out var currentGitVersion) || currentGitVersion.Version == null)
+                {
+                    host.Log.LogWarning("Failed to parse current version {CurrentVersion} for migration scripts", currentVersion);
+                    return;
+                }
+
+                var currentVer = currentGitVersion.Version;
+
+                // Filter scripts to execute (between previousVersion and currentVersion)
+                var scriptsToExecute = migrationScripts
+                    .Where(script => 
+                    {
+                        var scriptVer = script.Version!;
+                        bool afterPrevious = previousVer == null || scriptVer > previousVer;
+                        bool beforeOrAtCurrent = scriptVer <= currentVer;
+                        return afterPrevious && beforeOrAtCurrent;
+                    })
+                    .OrderBy(script => script.Version)
+                    .ToList();
+
+                if (!scriptsToExecute.Any())
+                {
+                    host.Log.LogDebug("No migration scripts to execute between {PreviousVersion} and {CurrentVersion}", 
+                        previousVersion ?? "initial", currentVersion);
+                    return;
+                }
+
+                host.Log.LogInformation("Executing {Count} migration scripts between {PreviousVersion} and {CurrentVersion}",
+                    scriptsToExecute.Count, previousVersion ?? "initial", currentVersion);
+
+                // Execute scripts in version order
+                foreach (var script in scriptsToExecute)
+                {
+                    await ExecuteSingleMigrationScript(host, script.FileName, script.Version.ToString());
+                }
+
+                host.Log.LogInformation("Successfully executed all migration scripts");
+            }
+            catch (Exception ex)
+            {
+                host.Log.LogError(ex, "Failed to execute migration scripts");
+                throw new UpdateFailedException($"Migration script execution failed: {ex.Message}", ex);
+            }
+        }
+
+        private System.Version? ExtractVersionFromScript(string fileName)
+        {
+            // Expected format: host-1.2.3.sh
+            if (!fileName.StartsWith("host-") || !fileName.EndsWith(".sh"))
+                return null;
+
+            var versionPart = fileName.Substring(5, fileName.Length - 8); // Remove "host-" and ".sh"
+            
+            if (System.Version.TryParse(versionPart, out var version))
+                return version;
+
+            return null;
+        }
+
+        private async Task ExecuteSingleMigrationScript(UpdateHost host, string scriptFileName, string scriptVersion)
+        {
+            try
+            {
+                host.Log.LogInformation("Executing migration script: {ScriptFileName} (version {ScriptVersion})", scriptFileName, scriptVersion);
+
+                var dockerComposeFolder = GetHostDockerComposeFolder(ComposeFolderPath, host.Volumes);
+                var scriptPath = Path.Combine(dockerComposeFolder ?? ComposeFolderPath, scriptFileName).Replace('\\', '/');
+                
+                // Make script executable and run it
+                var chmodCommand = $"chmod +x \"{scriptPath}\"";
+                var executeCommand = $"\"{scriptPath}\"";
+
+                // Make executable
+                await host.InvokeSsh(chmodCommand, dockerComposeFolder);
+
+                // Execute script
+                await host.InvokeSsh(executeCommand, dockerComposeFolder, async (result) =>
+                {
+                    if (result.IsSuccess)
+                    {
+                        host.Log.LogInformation("Migration script {ScriptFileName} completed successfully", scriptFileName);
+                        if (!string.IsNullOrWhiteSpace(result.Output))
+                        {
+                            host.Log.LogDebug("Script output: {Output}", result.Output);
+                        }
+                    }
+                    else
+                    {
+                        host.Log.LogError("Migration script {ScriptFileName} failed with exit code {ExitCode}: {Error}", 
+                            scriptFileName, result.ExitCode, result.Error);
+                        throw new UpdateFailedException($"Migration script {scriptFileName} failed: {result.Error}");
+                    }
+                });
+            }
+            catch (Exception ex)
+            {
+                host.Log.LogError(ex, "Failed to execute migration script {ScriptFileName}", scriptFileName);
+                throw;
+            }
+        }
+
         private string? GetHostDockerComposeFolder(string pathInContainer, IDictionary<string, string>? volumeMapping)
         {
             if (volumeMapping == null)
@@ -283,7 +471,11 @@ namespace ModelingEvolution.AutoUpdater
             if ((CurrentVersion != null && CurrentVersion == latest) || latest.Version == null)
                 return;
 
+            var previousVersion = CurrentVersion;
             Checkout(latest, host.Log);
+
+            // Execute migration scripts between previous and current version
+            await ExecuteMigrationScripts(host, previousVersion, latest.FriendlyName);
 
             // we need to find update container in docker and examine volume mappings.
 
@@ -292,8 +484,7 @@ namespace ModelingEvolution.AutoUpdater
             string logFile =
                 $"docker_compose_up_d_{n.Year}{n.Month}{n.Day}_{n.Hour}{n.Minute}{n.Second}.{n.Millisecond}.log";
 
-            string[] dockerComposeFiles = Directory.GetFiles(ComposeFolderPath, "docker-compose*.yml")
-                .OrderBy(x => x.Length).ToArray();
+            string[] dockerComposeFiles = GetDockerComposeFilesForArchitecture(ComposeFolderPath, host);
             string arg = string.Join(' ', dockerComposeFiles.Select(x => $"-f {Path.GetFileName(x)}"));
 
             string cmd = $"docker compose {arg} up -d > /tmp/{logFile} 2>&1";

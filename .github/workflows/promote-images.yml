@@ -37,13 +37,19 @@ jobs:
           type=semver,pattern={{major}}
           type=raw,value=latest
     
-    - name: Promote preview to production tags
+    - name: Promote commit image to production tags
       run: |
         set -e
         
-        echo "🔄 Promoting preview to production tags..."
+        echo "🔄 Promoting commit image to production tags..."
         
-        # Create manifest list for each production tag using the preview reference
+        # Extract commit SHA from the tag
+        COMMIT_SHA="${{ github.sha }}"
+        SOURCE_TAG="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${COMMIT_SHA}"
+        
+        echo "Source image: $SOURCE_TAG"
+        
+        # Create manifest list for each production tag using the commit reference
         echo "Creating production tags..."
         TAGS_JSON='${{ steps.meta.outputs.json }}'
         echo "$TAGS_JSON" | jq -r '.tags[]' | while read tag; do
@@ -51,7 +57,7 @@ jobs:
             echo "Creating tag: $tag"
             docker buildx imagetools create \
               --tag "$tag" \
-              "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:preview"
+              "$SOURCE_TAG"
           fi
         done
         
