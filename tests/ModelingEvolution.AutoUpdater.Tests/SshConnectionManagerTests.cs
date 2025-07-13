@@ -1,24 +1,19 @@
 using FluentAssertions;
 using Microsoft.Extensions.Logging;
 using ModelingEvolution.AutoUpdater;
-using Moq;
+using NSubstitute;
 
 namespace ModelingEvolution.AutoUpdater.Tests;
 
 public class SshConnectionManagerTests
 {
-    private readonly Mock<ILogger<SshConnectionManager>> _mockLogger;
-
-    public SshConnectionManagerTests()
-    {
-        _mockLogger = new Mock<ILogger<SshConnectionManager>>();
-    }
+    private readonly ILogger<SshConnectionManager> _logger = Substitute.For<ILogger<SshConnectionManager>>();
 
     [Fact]
     public void Constructor_WithNullConfig_ShouldThrowArgumentNullException()
     {
         // Act & Assert
-        var act = () => new SshConnectionManager(null!, _mockLogger.Object);
+        var act = () => new SshConnectionManager(null!, _logger);
         act.Should().Throw<ArgumentNullException>().WithParameterName("config");
     }
 
@@ -45,7 +40,7 @@ public class SshConnectionManagerTests
         };
 
         // Act & Assert
-        var act = () => new SshConnectionManager(config, _mockLogger.Object);
+        var act = () => new SshConnectionManager(config, _logger);
         act.Should().NotThrow();
     }
 
@@ -59,7 +54,7 @@ public class SshConnectionManagerTests
             User = "test-user",
             Password = "test-password"
         };
-        var manager = new SshConnectionManager(config, _mockLogger.Object);
+        var manager = new SshConnectionManager(config, _logger);
         manager.Dispose();
 
         // Act & Assert
@@ -82,7 +77,7 @@ public class SshConnectionManagerTests
             AuthMethod = authMethod,
             KeyPath = keyPath
         };
-        var manager = new SshConnectionManager(config, _mockLogger.Object);
+        var manager = new SshConnectionManager(config, _logger);
 
         // Act & Assert
         var act = async () => await manager.CreateConnectionAsync();
@@ -101,7 +96,7 @@ public class SshConnectionManagerTests
             AuthMethod = SshAuthMethod.PrivateKeyWithPassphrase,
             KeyPath = "/path/to/key"
         };
-        var manager = new SshConnectionManager(config, _mockLogger.Object);
+        var manager = new SshConnectionManager(config, _logger);
 
         // Act & Assert
         var act = async () => await manager.CreateConnectionAsync();
@@ -162,7 +157,7 @@ public class SshConnectionManagerTests
             User = "test-user",
             Password = "test-password"
         };
-        var manager = new SshConnectionManager(config, _mockLogger.Object);
+        var manager = new SshConnectionManager(config, _logger);
 
         // Act & Assert
         var act = async () => await manager.ExecuteCommandAsync("echo test");
@@ -175,7 +170,7 @@ public class SshConnectionManagerTests
     {
         // Arrange
         var config = new SshConfiguration();
-        var manager = new SshConnectionManager(config, _mockLogger.Object);
+        var manager = new SshConnectionManager(config, _logger);
 
         // Act & Assert
         var act = () => manager.Dispose();
@@ -187,7 +182,7 @@ public class SshConnectionManagerTests
     {
         // Arrange
         var config = new SshConfiguration();
-        var manager = new SshConnectionManager(config, _mockLogger.Object);
+        var manager = new SshConnectionManager(config, _logger);
 
         // Act & Assert
         var act = () =>

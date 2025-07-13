@@ -46,6 +46,13 @@ Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "scripts", "scripts", "{D840
 		install-ssh-keys.sh = install-ssh-keys.sh
 	EndProjectSection
 EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "docs", "docs", "{CA494032-C537-4FBC-8B08-60BC6CB7BA2D}"
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "features", "features", "{EA54CA73-FB29-478D-8F97-E6482A4BBEF4}"
+	ProjectSection(SolutionItems) = preProject
+		docs\features\autoupdater-refactoring.md = docs\features\autoupdater-refactoring.md
+	EndProjectSection
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -86,6 +93,7 @@ Global
 		{7C5BFD99-1455-456C-ACC7-8823BF9E3667} = {94D91150-547E-4A98-9E0C-0D1A16B15C21}
 		{073D5CA2-37B1-2BEB-0CCD-6FB86954811F} = {02EA681E-C7D8-13C7-8484-4AC65E1B71E8}
 		{CE00013E-7412-1DBB-C596-CE232B756754} = {94D91150-547E-4A98-9E0C-0D1A16B15C21}
+		{EA54CA73-FB29-478D-8F97-E6482A4BBEF4} = {CA494032-C537-4FBC-8B08-60BC6CB7BA2D}
 	EndGlobalSection
 	GlobalSection(ExtensibilityGlobals) = postSolution
 		SolutionGuid = {B0B356BF-70E3-435A-A378-436BCCF14D17}
