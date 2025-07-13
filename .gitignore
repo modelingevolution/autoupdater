@@ -25,3 +25,7 @@ docs/.jekyll-metadata
 /data
 /src/ModelingEvolution.AutoUpdater.Host/bin/Release/net9.0
 /src/ModelingEvolution.AutoUpdater/bin/Release/net9.0
+
+# Temporary build artifacts
+src/ModelingEvolution.AutoUpdater.Host/examples/
+tests/ModelingEvolution.AutoUpdater.IntegrationTests/config/repositories/
