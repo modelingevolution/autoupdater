@@ -30,3 +30,4 @@ docs/.jekyll-metadata
 src/ModelingEvolution.AutoUpdater.Host/examples/
 tests/ModelingEvolution.AutoUpdater.IntegrationTests/config/repositories/
 examples/testproject
+/allure-results
