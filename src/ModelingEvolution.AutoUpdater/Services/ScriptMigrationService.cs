@@ -1,0 +1,299 @@
+using Microsoft.Extensions.Logging;
+using ModelingEvolution.AutoUpdater.Models;
+using System;
+using System.Collections.Generic;
+using System.IO;
+using System.Linq;
+using System.Text.RegularExpressions;
+using System.Threading.Tasks;
+
+namespace ModelingEvolution.AutoUpdater.Services
+{
+    /// <summary>
+    /// Implementation of script migration service
+    /// </summary>
+    public class ScriptMigrationService : IScriptMigrationService
+    {
+        private readonly ISshService _sshService;
+        private readonly ILogger<ScriptMigrationService> _logger;
+        private static readonly Regex ScriptNamePattern = new(@"^(up|down)-(\d+\.\d+\.\d+(?:\.\d+)?)\.sh$", RegexOptions.Compiled);
+
+        public ScriptMigrationService(ISshService sshService, ILogger<ScriptMigrationService> logger)
+        {
+            _sshService = sshService ?? throw new ArgumentNullException(nameof(sshService));
+            _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+        }
+
+        public async Task<IEnumerable<MigrationScript>> DiscoverScriptsAsync(string directoryPath)
+        {
+            try
+            {
+                _logger.LogDebug("Discovering migration scripts in directory {DirectoryPath}", directoryPath);
+
+                if (string.IsNullOrWhiteSpace(directoryPath) || !Directory.Exists(directoryPath))
+                {
+                    _logger.LogWarning("Directory {DirectoryPath} does not exist or is invalid", directoryPath);
+                    return Enumerable.Empty<MigrationScript>();
+                }
+
+                var scripts = new List<MigrationScript>();
+                var scriptFiles = Directory.GetFiles(directoryPath, "*-*.sh", SearchOption.TopDirectoryOnly);
+
+                foreach (var scriptFile in scriptFiles)
+                {
+                    var fileName = Path.GetFileName(scriptFile);
+                    var match = ScriptNamePattern.Match(fileName);
+
+                    if (match.Success)
+                    {
+                        var directionStr = match.Groups[1].Value;
+                        var versionStr = match.Groups[2].Value;
+                        
+                        if (Version.TryParse(versionStr, out var version) &&
+                            Enum.TryParse<MigrationDirection>(directionStr, true, out var direction))
+                        {
+                            var isExecutable = await IsExecutableAsync(scriptFile);
+                            var script = new MigrationScript(fileName, scriptFile, version, direction, isExecutable);
+                            scripts.Add(script);
+                            
+                            _logger.LogDebug("Discovered migration script: {FileName} (v{Version}, {Direction}, executable: {IsExecutable})", 
+                                fileName, version, direction, isExecutable);
+                        }
+                        else
+                        {
+                            _logger.LogWarning("Script file {FileName} has invalid version or direction", fileName);
+                        }
+                    }
+                    else
+                    {
+                        _logger.LogWarning("Script file {FileName} does not match expected naming pattern (up-X.Y.Z.sh or down-X.Y.Z.sh)", fileName);
+                    }
+                }
+
+                _logger.LogInformation("Discovered {Count} migration scripts in {DirectoryPath}", scripts.Count, directoryPath);
+                return scripts.OrderBy(s => s.Version);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to discover migration scripts in {DirectoryPath}", directoryPath);
+                return Enumerable.Empty<MigrationScript>();
+            }
+        }
+
+        public async Task<IEnumerable<MigrationScript>> FilterScriptsForMigrationAsync(
+            IEnumerable<MigrationScript> allScripts, 
+            string? fromVersion, 
+            string targetVersion)
+        {
+            try
+            {
+                _logger.LogDebug("Filtering migration scripts from {FromVersion} to {TargetVersion}", 
+                    fromVersion ?? "initial", targetVersion);
+
+                if (!Version.TryParse(targetVersion, out var target))
+                {
+                    _logger.LogError("Invalid target version format: {TargetVersion}", targetVersion);
+                    return Enumerable.Empty<MigrationScript>();
+                }
+
+                Version? from = null;
+                if (!string.IsNullOrEmpty(fromVersion) && !Version.TryParse(fromVersion, out from))
+                {
+                    _logger.LogError("Invalid from version format: {FromVersion}", fromVersion);
+                    return Enumerable.Empty<MigrationScript>();
+                }
+
+                List<MigrationScript> filteredScripts;
+
+                if (from == null || target > from)
+                {
+                    // Forward migration: use UP scripts
+                    _logger.LogDebug("Forward migration detected, using UP scripts");
+                    filteredScripts = allScripts.Where(script =>
+                    {
+                        // Only UP scripts
+                        if (script.Direction != MigrationDirection.Up)
+                            return false;
+
+                        // Script version must be <= target version
+                        if (script.Version > target)
+                            return false;
+
+                        // If we have a from version, script version must be > from version
+                        if (from != null && script.Version <= from)
+                            return false;
+
+                        // Only include executable scripts
+                        return script.IsExecutable;
+                    }).OrderBy(s => s.Version).ToList();
+                }
+                else if (target < from)
+                {
+                    // Rollback migration: use DOWN scripts
+                    _logger.LogDebug("Rollback migration detected, using DOWN scripts");
+                    filteredScripts = allScripts.Where(script =>
+                    {
+                        // Only DOWN scripts
+                        if (script.Direction != MigrationDirection.Down)
+                            return false;
+
+                        // For rollback, we need down scripts for versions > target and <= from
+                        if (script.Version <= target || script.Version > from)
+                            return false;
+
+                        // Only include executable scripts
+                        return script.IsExecutable;
+                    }).OrderByDescending(s => s.Version).ToList(); // Execute in reverse order for rollback
+                }
+                else
+                {
+                    // Same version, no migration needed
+                    _logger.LogDebug("Target version equals current version, no migration needed");
+                    filteredScripts = new List<MigrationScript>();
+                }
+
+                _logger.LogInformation("Filtered {Count} migration scripts for execution", filteredScripts.Count);
+                
+                foreach (var script in filteredScripts)
+                {
+                    _logger.LogDebug("Will execute: {FileName} (v{Version}, {Direction})", 
+                        script.FileName, script.Version, script.Direction);
+                }
+
+                return filteredScripts;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to filter migration scripts");
+                return Enumerable.Empty<MigrationScript>();
+            }
+        }
+
+        public async Task ExecuteScriptsAsync(IEnumerable<MigrationScript> scripts, string workingDirectory)
+        {
+            try
+            {
+                var scriptList = scripts.ToList();
+                _logger.LogInformation("Executing {Count} migration scripts in {WorkingDirectory}", 
+                    scriptList.Count, workingDirectory);
+
+                foreach (var script in scriptList)
+                {
+                    await ExecuteScriptAsync(script, workingDirectory);
+                }
+
+                _logger.LogInformation("All migration scripts executed successfully");
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to execute migration scripts");
+                throw;
+            }
+        }
+
+        private async Task ExecuteScriptAsync(MigrationScript script, string workingDirectory)
+        {
+            try
+            {
+                _logger.LogInformation("Executing {Direction} migration script: {FileName} (v{Version})", 
+                    script.Direction, script.FileName, script.Version);
+
+                if (!script.IsExecutable)
+                {
+                    throw new InvalidOperationException($"Script {script.FileName} is not executable");
+                }
+
+                // Make script executable if it isn't already
+                await _sshService.MakeExecutableAsync(script.FilePath);
+
+                // Execute the script
+                var executeCommand = $"bash \"{script.FilePath}\"";
+                var result = await _sshService.ExecuteCommandAsync(executeCommand, workingDirectory);
+                
+                if (!result.IsSuccess)
+                {
+                    throw new InvalidOperationException($"Script execution failed with exit code {result.ExitCode}: {result.Error}");
+                }
+
+                _logger.LogInformation("{Direction} migration script {FileName} executed successfully", 
+                    script.Direction, script.FileName);
+                _logger.LogDebug("Script output: {Output}", result.Output);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to execute {Direction} migration script {FileName}", 
+                    script.Direction, script.FileName);
+                throw new InvalidOperationException($"Migration script {script.FileName} failed: {ex.Message}", ex);
+            }
+        }
+
+        public async Task<bool> ValidateScriptAsync(string scriptPath)
+        {
+            try
+            {
+                _logger.LogDebug("Validating script: {ScriptPath}", scriptPath);
+
+                if (string.IsNullOrWhiteSpace(scriptPath))
+                {
+                    _logger.LogWarning("Script path is null or empty");
+                    return false;
+                }
+
+                var fileName = Path.GetFileName(scriptPath);
+                var match = ScriptNamePattern.Match(fileName);
+
+                if (!match.Success)
+                {
+                    _logger.LogWarning("Script {FileName} does not match expected naming pattern (up-X.Y.Z.sh or down-X.Y.Z.sh)", fileName);
+                    return false;
+                }
+
+                var directionStr = match.Groups[1].Value;
+                var versionStr = match.Groups[2].Value;
+
+                if (!Enum.TryParse<MigrationDirection>(directionStr, true, out _))
+                {
+                    _logger.LogWarning("Script {FileName} has invalid direction format", fileName);
+                    return false;
+                }
+
+                if (!Version.TryParse(versionStr, out _))
+                {
+                    _logger.LogWarning("Script {FileName} has invalid version format", fileName);
+                    return false;
+                }
+
+                var isExecutable = await IsExecutableAsync(scriptPath);
+                if (!isExecutable)
+                {
+                    _logger.LogWarning("Script {ScriptPath} is not executable", scriptPath);
+                    return false;
+                }
+
+                _logger.LogDebug("Script {ScriptPath} is valid", scriptPath);
+                return true;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to validate script: {ScriptPath}", scriptPath);
+                return false;
+            }
+        }
+
+        private async Task<bool> IsExecutableAsync(string filePath)
+        {
+            try
+            {
+                // Check if file exists and has execute permissions
+                var command = $"test -x \"{filePath}\" && echo 'true' || echo 'false'";
+                var result = await _sshService.ExecuteCommandAsync(command, Path.GetDirectoryName(filePath));
+                return result.Output.Trim().Equals("true", StringComparison.OrdinalIgnoreCase);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to check if file {FilePath} is executable, assuming false", filePath);
+                return false;
+            }
+        }
+    }
+}

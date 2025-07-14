@@ -1,4 +1,6 @@
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
+using ModelingEvolution.AutoUpdater.Services;
 using Renci.SshNet;
 using Renci.SshNet.Common;
 
@@ -7,7 +9,7 @@ namespace ModelingEvolution.AutoUpdater;
 /// <summary>
 /// Manages SSH connections with support for multiple authentication methods
 /// </summary>
-public class SshConnectionManager : IDisposable
+public class SshConnectionManager : ISshConnectionManager, IDisposable
 {
     private readonly SshConfiguration _config;
     private readonly ILogger _logger;
@@ -18,6 +20,44 @@ public class SshConnectionManager : IDisposable
     {
         _config = config ?? throw new ArgumentNullException(nameof(config));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+        
+    }
+
+    /// <summary>
+    /// Creates an SshConnectionManager from IConfiguration and ILoggerFactory
+    /// </summary>
+    /// <param name="configuration">The configuration containing SSH settings</param>
+    /// <param name="loggerFactory">The logger factory for creating loggers</param>
+    /// <param name="hostOverride">Optional host override. If not provided, uses Host from configuration or throws if missing</param>
+    /// <returns>A configured SshConnectionManager instance</returns>
+    public static SshConnectionManager CreateFromConfiguration(IConfiguration configuration, ILoggerFactory loggerFactory, string? hostOverride = null)
+    {
+        var globalConfig = new GlobalSshConfiguration();
+        configuration.Bind(globalConfig);
+        
+        var logger = loggerFactory.CreateLogger<SshConnectionManager>();
+        
+        // Determine the host to connect to
+        string host;
+        if (!string.IsNullOrEmpty(hostOverride))
+        {
+            host = hostOverride;
+        }
+        else
+        {
+            host = configuration.GetValue<string>("Host") ?? string.Empty;
+            if (string.IsNullOrEmpty(host))
+            {
+                throw new InvalidOperationException("SSH Host must be provided either in configuration or as hostOverride parameter");
+            }
+        }
+        
+        var sshConfig = globalConfig.ToSshConfiguration(host);
+        
+        logger.LogDebug("Creating SshConnectionManager with configuration: {Config}", 
+            sshConfig.GetSafeConfigurationSummary());
+        
+        return new SshConnectionManager(sshConfig, logger);
     }
 
     /// <summary>
@@ -62,39 +102,73 @@ public class SshConnectionManager : IDisposable
     }
 
     /// <summary>
-    /// Executes a command via SSH and returns the result
+    /// Creates an SSH service instance for the configured host
     /// </summary>
-    public async Task<SshCommandResult> ExecuteCommandAsync(string command, string? workingDirectory = null)
+    public async Task<ISshService> CreateSshServiceAsync()
     {
-        if (_client == null || !_client.IsConnected)
-            throw new InvalidOperationException("SSH client is not connected. Call CreateConnectionAsync first.");
+        var sshClient = await CreateConnectionAsync();
+        var scpClient = await CreateScpConnectionAsync();
+        var logger = _logger as ILogger<SshService> ?? 
+                    new LoggerFactory().CreateLogger<SshService>();
+        
+        return new SshService(sshClient, scpClient, logger);
+    }
 
-        var fullCommand = workingDirectory != null ? $"cd {workingDirectory} && {command}" : command;
-        
-        _logger.LogDebug("Executing SSH command: {Command}", command);
-        
-        using var sshCommand = _client.CreateCommand(fullCommand);
-        var result = await Task.Run(() => sshCommand.Execute());
-        
-        var commandResult = new SshCommandResult
+    /// <summary>
+    /// Tests SSH connectivity to the configured host
+    /// </summary>
+    public async Task<bool> TestConnectivityAsync()
+    {
+        try
         {
-            Command = command,
-            ExitCode = sshCommand.ExitStatus ?? 0,
-            Output = sshCommand.Result,
-            Error = sshCommand.Error
+            using var testClient = await CreateConnectionAsync();
+            return testClient.IsConnected;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "SSH connectivity test failed");
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Creates and connects SCP client based on configuration
+    /// </summary>
+    private async Task<ScpClient> CreateScpConnectionAsync()
+    {
+        if (_disposed)
+            throw new ObjectDisposedException(nameof(SshConnectionManager));
+
+        _logger.LogInformation("Creating SCP connection to {Host}:{Port} with user {User} using {AuthMethod}",
+            _config.Host, _config.Port, _config.User, _config.AuthMethod);
+
+        var connectionInfo = _config.AuthMethod switch
+        {
+            SshAuthMethod.Password => CreatePasswordAuth(),
+            SshAuthMethod.PrivateKey => CreateKeyAuth(),
+            SshAuthMethod.PrivateKeyWithPassphrase => CreateKeyAuthWithPassphrase(),
+            SshAuthMethod.KeyWithPasswordFallback => CreateKeyAuthWithFallback(),
+            _ => throw new NotSupportedException($"SSH auth method {_config.AuthMethod} is not supported")
         };
 
-        if (sshCommand.ExitStatus == 0)
-        {
-            _logger.LogDebug("SSH command completed successfully: {Command}", command);
-        }
-        else
-        {
-            _logger.LogWarning("SSH command failed with exit code {ExitCode}: {Command}. Error: {Error}", 
-                sshCommand.ExitStatus, command, sshCommand.Error);
-        }
+        var scpClient = new ScpClient(connectionInfo);
+        
+        // Configure client settings
+        scpClient.KeepAliveInterval = _config.KeepAliveInterval;
+        scpClient.ConnectionInfo.Timeout = _config.Timeout;
 
-        return commandResult;
+        try
+        {
+            await ConnectWithRetryAsync(scpClient);
+            _logger.LogInformation("Successfully connected SCP client to {Host}:{Port}", _config.Host, _config.Port);
+            return scpClient;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to connect SCP client to {Host}:{Port}", _config.Host, _config.Port);
+            scpClient?.Dispose();
+            throw;
+        }
     }
 
     private ConnectionInfo CreatePasswordAuth()
@@ -209,6 +283,30 @@ public class SshConnectionManager : IDisposable
         await Task.Run(() => client.Connect());
     }
 
+    private async Task ConnectWithRetryAsync(ScpClient client)
+    {
+        const int maxRetries = 3;
+        const int retryDelayMs = 1000;
+
+        for (int attempt = 1; attempt <= maxRetries; attempt++)
+        {
+            try
+            {
+                await Task.Run(() => client.Connect());
+                return;
+            }
+            catch (Exception ex) when (attempt < maxRetries)
+            {
+                _logger.LogWarning(ex, "SCP connection attempt {Attempt} failed, retrying in {DelayMs}ms", 
+                    attempt, retryDelayMs);
+                await Task.Delay(retryDelayMs);
+            }
+        }
+
+        // Final attempt without catching exception
+        await Task.Run(() => client.Connect());
+    }
+
     public void Dispose()
     {
         if (!_disposed)
@@ -222,27 +320,47 @@ public class SshConnectionManager : IDisposable
 /// <summary>
 /// Result of SSH command execution
 /// </summary>
-public class SshCommandResult
+public record SshCommandResult
 {
+    public static SshCommandResult Failed(string command, int exitCode, string output, string error)
+    {
+        return new SshCommandResult
+        {
+            Command = command,
+            ExitCode = exitCode,
+            Output = output,
+            Error = error
+        };
+    }
+
+    public SshCommandResult()
+    {
+        
+    }
+    public SshCommandResult(string command, string output)
+    {
+        this.Command = command;
+        this.Output = output;
+    }
     /// <summary>
     /// The command that was executed
     /// </summary>
-    public string Command { get; set; } = string.Empty;
+    public string Command { get; init; } = string.Empty;
     
     /// <summary>
     /// Exit code of the command
     /// </summary>
-    public int ExitCode { get; set; }
+    public int ExitCode { get; init; }
     
     /// <summary>
     /// Standard output of the command
     /// </summary>
-    public string Output { get; set; } = string.Empty;
+    public string Output { get; init; } = string.Empty;
     
     /// <summary>
     /// Standard error of the command
     /// </summary>
-    public string Error { get; set; } = string.Empty;
+    public string Error { get; init; } = string.Empty;
     
     /// <summary>
     /// Whether the command succeeded (exit code 0)

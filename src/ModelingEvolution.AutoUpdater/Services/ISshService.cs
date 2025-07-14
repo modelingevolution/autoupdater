@@ -5,7 +5,7 @@ namespace ModelingEvolution.AutoUpdater.Services
     /// <summary>
     /// Service for SSH command execution and file operations
     /// </summary>
-    public interface ISshService
+    public interface ISshService : IDisposable
     {
         /// <summary>
         /// Executes a command via SSH
@@ -40,15 +40,27 @@ namespace ModelingEvolution.AutoUpdater.Services
         /// </summary>
         /// <returns>The architecture string (e.g., "x64", "arm64")</returns>
         Task<string> GetArchitectureAsync();
+
+        /// <summary>
+        /// Checks if a file exists on the remote host
+        /// </summary>
+        /// <param name="filePath">The path to the file to check</param>
+        /// <returns>True if the file exists, false otherwise</returns>
+        Task<bool> FileExistsAsync(string filePath);
+
+        /// <summary>
+        /// Checks if a directory exists on the remote host
+        /// </summary>
+        /// <param name="directoryPath">The path to the directory to check</param>
+        /// <returns>True if the directory exists, false otherwise</returns>
+        Task<bool> DirectoryExistsAsync(string directoryPath);
+
+        /// <summary>
+        /// Creates a directory on the remote host
+        /// </summary>
+        /// <param name="directoryPath">The path to the directory to create</param>
+        Task CreateDirectoryAsync(string directoryPath);
     }
 
-    /// <summary>
-    /// Result of an SSH command execution
-    /// </summary>
-    public record SshCommandResult(
-        bool IsSuccess,
-        int ExitCode,
-        string Output,
-        string Error
-    );
+    
 }

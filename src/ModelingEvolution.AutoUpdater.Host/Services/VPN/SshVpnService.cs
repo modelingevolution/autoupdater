@@ -1,40 +1,27 @@
 using ModelingEvolution.AutoUpdater;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using ModelingEvolution.AutoUpdater.Extensions;
+using ModelingEvolution.AutoUpdater.Services;
 
 namespace ModelingEvolution.AutoUpdater.Host.Services.VPN;
 
 public class SshVpnService : ISshVpnService
 {
     private readonly ILogger<SshVpnService> _logger;
+    private readonly ISshConnectionManager _ssh;
     private readonly SshVpnConfiguration _sshVpnConfig;
-    private readonly SshConfiguration _sshConfig;
+    
 
     public SshVpnService(
         ILogger<SshVpnService> logger,
-        IConfiguration configuration)
+        IConfiguration configuration, ISshConnectionManager ssh)
     {
         _logger = logger;
+        _ssh = ssh;
         _sshVpnConfig = configuration.GetSection("SshVpn").Get<SshVpnConfiguration>() 
-            ?? new SshVpnConfiguration();
+                        ?? new SshVpnConfiguration();
         
-        // Build SSH configuration from root settings
-        var sshHost = configuration.GetValue<string>("SshHost");
-        var sshUser = configuration.GetValue<string>("SshUser", "deploy");
-        var authMethod = configuration.GetValue<string>("SshAuthMethod", "PrivateKey");
-        var keyPath = configuration.GetValue<string>("SshKeyPath", "/data/ssh/id_rsa");
-        
-        if (string.IsNullOrEmpty(sshHost))
-            throw new InvalidOperationException("SshHost configuration is required for SSH VPN");
-        
-        _sshConfig = new SshConfiguration
-        {
-            Host = sshHost,
-            User = sshUser,
-            AuthMethod = Enum.Parse<SshAuthMethod>(authMethod, true),
-            KeyPath = keyPath,
-            Timeout = TimeSpan.FromSeconds(30)
-        };
     }
 
     public async Task<bool> IsVpnActiveAsync(CancellationToken cancellationToken = default)
@@ -167,9 +154,9 @@ public class SshVpnService : ISshVpnService
         
         _logger.LogDebug("Executing VPN command: {Command}", command);
         
-        using var sshManager = new SshConnectionManager(_sshConfig, _logger);
-        await sshManager.CreateConnectionAsync();
-        return await sshManager.ExecuteCommandAsync(command);
+        
+        using var client = await _ssh.CreateSshServiceAsync();
+        return await client.ExecuteCommandAsync(command);
     }
 
     private VpnJsonResponse? ParseJsonResponse(string jsonOutput)

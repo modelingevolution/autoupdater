@@ -31,7 +31,7 @@ public class SshVpnIntegrationTests
         });
         
         var logger = loggerFactory.CreateLogger<SshVpnService>();
-        _sshVpnService = new SshVpnService(logger, configuration);
+        _sshVpnService = new SshVpnService(logger, configuration, SshConnectionManager.CreateFromConfiguration(configuration, loggerFactory));
     }
 
     [Fact]

@@ -1,6 +1,7 @@
 using FluentAssertions;
 using Microsoft.Extensions.Logging;
 using ModelingEvolution.AutoUpdater;
+using ModelingEvolution.AutoUpdater.Extensions;
 using NSubstitute;
 
 namespace ModelingEvolution.AutoUpdater.Tests;
@@ -161,8 +162,7 @@ public class SshConnectionManagerTests
 
         // Act & Assert
         var act = async () => await manager.ExecuteCommandAsync("echo test");
-        await act.Should().ThrowAsync<InvalidOperationException>()
-            .WithMessage("SSH client is not connected. Call CreateConnectionAsync first.");
+        await act.Should().ThrowAsync<System.Net.Sockets.SocketException>();
     }
 
     [Fact]

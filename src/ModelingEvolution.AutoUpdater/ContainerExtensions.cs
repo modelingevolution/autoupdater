@@ -1,4 +1,7 @@
-﻿using Microsoft.Extensions.DependencyInjection;
+﻿using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
+using ModelingEvolution.AutoUpdater.Services;
 
 namespace ModelingEvolution.AutoUpdater
 {
@@ -6,10 +9,23 @@ namespace ModelingEvolution.AutoUpdater
     {
         public static IServiceCollection AddAutoUpdater(this IServiceCollection container)
         {
-            container.AddSingleton<UpdateProcessManager>();
-            container.AddSingleton<UpdateHost>();
+            // Register core services
+            container.AddSingleton<UpdateService>();
             container.AddSingleton<DockerComposeConfigurationRepository>();
+
+            // Register the new refactored services
+            container.AddSingleton<IGitService, GitService>();
+            container.AddSingleton<IScriptMigrationService, ScriptMigrationService>();
+            
+            // Register SshConnectionManager using the static factory method
+            container.AddSingleton<ISshConnectionManager, SshConnectionManager>();
+            container.AddSingleton<IDockerComposeService, DockerComposeService>();
+            container.AddSingleton<IDeploymentStateProvider, DeploymentStateProvider>();
+
+            // Register UpdateHost - it depends on the services above
+            container.AddSingleton<UpdateHost>();
             container.AddHostedService(sp => sp.GetRequiredService<UpdateHost>());
+            
             return container;
         }
 

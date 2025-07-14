@@ -37,12 +37,6 @@ namespace ModelingEvolution.AutoUpdater.Services
         /// <returns>Collection of available versions ordered by semantic version</returns>
         Task<IEnumerable<GitTagVersion>> GetAvailableVersionsAsync(string repositoryPath);
 
-        /// <summary>
-        /// Gets the current version of the repository (from deployment.state.json)
-        /// </summary>
-        /// <param name="repositoryPath">The local path of the Git repository</param>
-        /// <returns>The current deployed version, or null if not found</returns>
-        Task<string?> GetCurrentVersionAsync(string repositoryPath);
 
         /// <summary>
         /// Checks if the specified path is a Git repository

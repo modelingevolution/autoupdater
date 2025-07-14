@@ -1,8 +1,9 @@
 ﻿@page "/"
 @using ModelingEvolution.AutoUpdater
+@using ModelingEvolution.AutoUpdater.Extensions
 @using ModelingEvolution.AutoUpdater.Host.Components.Shared
 @inject DockerComposeConfigurationRepository repo
-@inject UpdateProcessManager mgm
+@inject UpdateService updateService
 @inject UpdateHost host
 @inject IConfiguration Configuration
 <PageTitle>Home</PageTitle>
@@ -37,7 +38,7 @@
         try
         {
             _lastError = string.Empty;
-            await mgm.UpdateAll();
+            await updateService.UpdateAllAsync();
         }
         catch (UpdateFailedException ex)
         {

@@ -16,6 +16,15 @@ public record GitTagVersion(string FriendlyName, System.Version Version) : IComp
         p = null;
         return false;
     }
+    public static bool operator>(GitTagVersion a, GitTagVersion b)
+    {
+        return a.Version > b.Version;
+    }
+
+    public static bool operator <(GitTagVersion a, GitTagVersion b)
+    {
+        return a.Version < b.Version;
+    }
 
     public int CompareTo(GitTagVersion? other)
     {

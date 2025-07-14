@@ -6,6 +6,7 @@ using ModelingEvolution.AutoUpdater.Services;
 using NSubstitute;
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Threading.Tasks;
 using Xunit;
 
@@ -15,8 +16,9 @@ namespace ModelingEvolution.AutoUpdater.Tests.Services
     {
         private readonly IGitService _gitService = Substitute.For<IGitService>();
         private readonly IScriptMigrationService _scriptService = Substitute.For<IScriptMigrationService>();
-        private readonly ISshService _sshService = Substitute.For<ISshService>();
+        private readonly ISshConnectionManager _sshConnectionManager = Substitute.For<ISshConnectionManager>();
         private readonly IDockerComposeService _dockerService = Substitute.For<IDockerComposeService>();
+        private readonly IDeploymentStateProvider _deploymentStateProvider = Substitute.For<IDeploymentStateProvider>();
         private readonly ILogger<UpdateHost> _logger = Substitute.For<ILogger<UpdateHost>>();
 
         [Fact]
@@ -24,14 +26,14 @@ namespace ModelingEvolution.AutoUpdater.Tests.Services
         {
             // Arrange
             var config = CreateTestConfiguration();
-            _gitService.GetCurrentVersionAsync(Arg.Any<string>())
+            _deploymentStateProvider.GetCurrentVersionAsync(Arg.Any<string>())
                       .Returns("1.0.0");
             _gitService.GetAvailableVersionsAsync(Arg.Any<string>())
                       .Returns(new[] { new GitTagVersion("1.1.0", new Version(1, 1, 0)) });
 
             var migrationScripts = new[]
             {
-                new MigrationScript("host-1.0.1.sh", "/path/host-1.0.1.sh", new Version(1, 0, 1), true)
+                new MigrationScript("up-1.0.1.sh", "/path/up-1.0.1.sh", new Version(1, 0, 1), MigrationDirection.Up, true)
             };
 
             _scriptService.DiscoverScriptsAsync(Arg.Any<string>())
@@ -39,13 +41,14 @@ namespace ModelingEvolution.AutoUpdater.Tests.Services
             _scriptService.FilterScriptsForMigrationAsync(Arg.Any<IEnumerable<MigrationScript>>(), "1.0.0", "1.1.0")
                          .Returns(migrationScripts);
 
-            _sshService.GetArchitectureAsync()
-                      .Returns("x64");
+            var mockSshService = Substitute.For<ISshService>();
+            mockSshService.GetArchitectureAsync().Returns("x64");
+            _sshConnectionManager.CreateSshServiceAsync().Returns(mockSshService);
 
             _dockerService.GetComposeFilesForArchitectureAsync(Arg.Any<string>(), "x64")
                          .Returns(new[] { "docker-compose.yml", "docker-compose.x64.yml" });
 
-            var updateHost = new UpdateHost(_gitService, _scriptService, _sshService, _dockerService, _logger);
+            var updateHost = new UpdateHost(_gitService, _scriptService, _sshConnectionManager, _dockerService, _deploymentStateProvider, _logger);
 
             // Act
             var result = await updateHost.UpdateAsync(config);
@@ -53,7 +56,7 @@ namespace ModelingEvolution.AutoUpdater.Tests.Services
             // Assert
             result.Success.Should().BeTrue();
             result.ExecutedScripts.Should().HaveCount(1);
-            result.ExecutedScripts.Should().Contain("host-1.0.1.sh");
+            result.ExecutedScripts.Should().Contain("up-1.0.1.sh");
             
             await _scriptService.Received(1).ExecuteScriptsAsync(migrationScripts, Arg.Any<string>());
             await _dockerService.Received(1).StartServicesAsync(Arg.Any<string[]>(), Arg.Any<string>());
@@ -64,12 +67,12 @@ namespace ModelingEvolution.AutoUpdater.Tests.Services
         {
             // Arrange
             var config = CreateTestConfiguration();
-            _gitService.GetCurrentVersionAsync(Arg.Any<string>())
+            _deploymentStateProvider.GetCurrentVersionAsync(Arg.Any<string>())
                       .Returns("1.0.0");
             _gitService.GetAvailableVersionsAsync(Arg.Any<string>())
                       .Returns(new[] { new GitTagVersion("1.0.0", new Version(1, 0, 0)) });
 
-            var updateHost = new UpdateHost(_gitService, _scriptService, _sshService, _dockerService, _logger);
+            var updateHost = new UpdateHost(_gitService, _scriptService, _sshConnectionManager, _dockerService, _deploymentStateProvider, _logger);
 
             // Act
             var result = await updateHost.UpdateAsync(config);
@@ -87,14 +90,14 @@ namespace ModelingEvolution.AutoUpdater.Tests.Services
         {
             // Arrange
             var config = CreateTestConfiguration();
-            _gitService.GetCurrentVersionAsync(Arg.Any<string>())
+            _deploymentStateProvider.GetCurrentVersionAsync(Arg.Any<string>())
                       .Returns("1.0.0");
             _gitService.GetAvailableVersionsAsync(Arg.Any<string>())
                       .Returns(new[] { new GitTagVersion("1.1.0", new Version(1, 1, 0)) });
 
             var migrationScripts = new[]
             {
-                new MigrationScript("host-1.0.1.sh", "/path/host-1.0.1.sh", new Version(1, 0, 1), true)
+                new MigrationScript("up-1.0.1.sh", "/path/up-1.0.1.sh", new Version(1, 0, 1), MigrationDirection.Up, true)
             };
 
             _scriptService.DiscoverScriptsAsync(Arg.Any<string>())
@@ -104,10 +107,11 @@ namespace ModelingEvolution.AutoUpdater.Tests.Services
             _scriptService.When(x => x.ExecuteScriptsAsync(Arg.Any<IEnumerable<MigrationScript>>(), Arg.Any<string>()))
                          .Do(x => throw new Exception("Script execution failed"));
 
-            _sshService.GetArchitectureAsync()
-                      .Returns("x64");
+            var mockSshService2 = Substitute.For<ISshService>();
+            mockSshService2.GetArchitectureAsync().Returns("x64");
+            _sshConnectionManager.CreateSshServiceAsync().Returns(mockSshService2);
 
-            var updateHost = new UpdateHost(_gitService, _scriptService, _sshService, _dockerService, _logger);
+            var updateHost = new UpdateHost(_gitService, _scriptService, _sshConnectionManager, _dockerService, _deploymentStateProvider, _logger);
 
             // Act
             var result = await updateHost.UpdateAsync(config);
@@ -121,9 +125,10 @@ namespace ModelingEvolution.AutoUpdater.Tests.Services
 
         private static DockerComposeConfiguration CreateTestConfiguration()
         {
+            var tempDir = Path.GetTempPath();
             return new DockerComposeConfiguration
             {
-                RepositoryLocation = "/test/repo",
+                RepositoryLocation = Path.Combine(tempDir, "test-repo"),
                 RepositoryUrl = "https://github.com/test/repo.git",
                 DockerComposeDirectory = "./"
             };

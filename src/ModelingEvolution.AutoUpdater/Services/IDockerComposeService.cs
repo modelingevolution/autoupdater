@@ -43,5 +43,12 @@ namespace ModelingEvolution.AutoUpdater.Services
         /// <param name="composeFiles">The compose files to pull images for</param>
         /// <param name="workingDirectory">The working directory for the compose command</param>
         Task PullImagesAsync(string[] composeFiles, string workingDirectory);
+
+        /// <summary>
+        /// Gets volume mappings for the specified container
+        /// </summary>
+        /// <param name="containerId">The container ID to get volume mappings for</param>
+        /// <returns>Dictionary of host path to container path mappings</returns>
+        Task<IDictionary<string, string>> GetVolumeMappingsAsync(string containerId);
     }
 }

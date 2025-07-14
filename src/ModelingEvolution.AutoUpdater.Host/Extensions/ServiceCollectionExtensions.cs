@@ -1,5 +1,6 @@
 using ModelingEvolution.AutoUpdater.Host.Features.AutoUpdater;
 using ModelingEvolution.AutoUpdater.Host.Services.VPN;
+using ModelingEvolution.AutoUpdater.Services;
 
 namespace ModelingEvolution.AutoUpdater.Host.Extensions;
 
@@ -7,14 +8,7 @@ public static class ServiceCollectionExtensions
 {
     public static IServiceCollection AddApplicationServices(this IServiceCollection services)
     {
-        services.AddSingleton<AutoUpdaterService>(sp =>
-        {
-            var repo = sp.GetRequiredService<DockerComposeConfigurationRepository>();
-            var updateManager = sp.GetRequiredService<UpdateProcessManager>();
-            var updateHost = sp.GetRequiredService<UpdateHost>();
-            var logger = sp.GetRequiredService<ILogger<AutoUpdaterService>>();
-            return new AutoUpdaterService(repo, updateManager, updateHost, logger);
-        });
+        services.AddSingleton<AutoUpdaterService>();
 
         // Register SSH VPN service
         services.AddSingleton<ISshVpnService>(provider =>
@@ -30,7 +24,7 @@ public static class ServiceCollectionExtensions
             
             return new SshVpnService(
                 provider.GetRequiredService<ILogger<SshVpnService>>(),
-                configuration
+                configuration, provider.GetRequiredService<ISshConnectionManager>()
             );
         });
 
