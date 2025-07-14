@@ -1,0 +1,30 @@
+@using ModelingEvolution.AutoUpdater
+
+@if (Package.IsUpgradeAvailable)
+{
+    <MudField Label="Available upgrade:">@(Package.AvailableUpgrade?.ToString() ?? "Unknown")</MudField>
+}
+else
+{
+    <MudText Color="GetMudColor(Package.StatusColor)">@Package.StatusText</MudText>
+}
+
+@if (!string.IsNullOrEmpty(Package.ErrorMessage))
+{
+    <MudText Color="Color.Error">@Package.ErrorMessage</MudText>
+}
+
+@code {
+    [Parameter] public DockerComposeConfiguration Package { get; set; } = null!;
+
+    private Color GetMudColor(PackageStatusColor statusColor)
+    {
+        return statusColor switch
+        {
+            PackageStatusColor.Success => Color.Success,
+            PackageStatusColor.Warning => Color.Warning,
+            PackageStatusColor.Error => Color.Error,
+            _ => Color.Info
+        };
+    }
+}

@@ -1,0 +1,7 @@
+@using ModelingEvolution.AutoUpdater
+
+<MudField Label="Current version">@Package.CurrentVersion</MudField>
+
+@code {
+    [Parameter] public DockerComposeConfiguration Package { get; set; } = null!;
+}

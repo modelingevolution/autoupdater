@@ -1,0 +1,11 @@
+@using ModelingEvolution.AutoUpdater
+
+<MudPaper Class="pa-4" Elevation="2">
+    <MudField Label="Name">@Package.FriendlyName</MudField>
+    <PackageVersion Package="@Package" />
+    <PackageStatus Package="@Package" />
+</MudPaper>
+
+@code {
+    [Parameter] public DockerComposeConfiguration Package { get; set; } = null!;
+}

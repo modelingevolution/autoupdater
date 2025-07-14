@@ -1,0 +1,69 @@
+using Microsoft.Extensions.Logging;
+using System;
+using System.Collections.Concurrent;
+using System.Collections.Generic;
+using System.Linq;
+
+namespace ModelingEvolution.AutoUpdater.Services
+{
+    /// <summary>
+    /// In-memory logger sink implementation
+    /// </summary>
+    public class InMemoryLoggerSink : IInMemoryLoggerSink
+    {
+        private readonly ConcurrentQueue<LogEntry> _logs = new();
+        private readonly int _maxEntries;
+        private volatile LogEntry? _lastEntry;
+
+        public event Action<LogEntry>? LogAdded;
+
+        public IReadOnlyList<LogEntry> LogEntries => _logs.ToList();
+
+        public InMemoryLoggerSink(int maxEntries = 1000)
+        {
+            _maxEntries = maxEntries;
+        }
+
+        public void AddLog(LogLevel level, string category, string message, Exception? exception = null)
+        {
+            var entry = new LogEntry(DateTime.Now, level, category, message, exception);
+
+            // Do not enqueue if last message content is the same (prevent spam)
+            if (_lastEntry != null && 
+                _lastEntry.Level == level && 
+                _lastEntry.Category == category && 
+                _lastEntry.Message == message &&
+                Equals(_lastEntry.Exception, exception))
+            {
+                return; // Skip duplicate message
+            }
+
+            _logs.Enqueue(entry);
+            _lastEntry = entry;
+            
+            // Maintain max entries limit
+            while (_logs.Count > _maxEntries)
+            {
+                _logs.TryDequeue(out _);
+            }
+
+            LogAdded?.Invoke(entry);
+        }
+
+        public void Clear()
+        {
+            while (_logs.TryDequeue(out _)) { }
+            _lastEntry = null;
+        }
+
+        public IEnumerable<LogEntry> GetLogs(LogLevel minimumLevel = LogLevel.Trace)
+        {
+            return _logs.Where(log => log.Level >= minimumLevel);
+        }
+
+        public IEnumerable<LogEntry> GetRecentLogs(int count = 100)
+        {
+            return _logs.TakeLast(count);
+        }
+    }
+}

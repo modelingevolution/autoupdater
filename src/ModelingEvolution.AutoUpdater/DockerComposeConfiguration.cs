@@ -2,6 +2,8 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Text.Json;
+using Microsoft.Extensions.Logging;
+using ModelingEvolution.AutoUpdater.Extensions;
 
 namespace ModelingEvolution.AutoUpdater
 {
@@ -77,10 +79,76 @@ namespace ModelingEvolution.AutoUpdater
             }
         }
 
+        // Status properties - require ILogger dependency injection
+        private static ILogger? _logger;
+
+        /// <summary>
+        /// Sets the logger for status operations. Should be called during DI setup.
+        /// </summary>
+        public static void SetLogger(ILogger logger)
+        {
+            _logger = logger;
+        }
+
+        /// <summary>
+        /// Checks if an upgrade is available for this package
+        /// </summary>
+        public bool IsUpgradeAvailable => _logger != null && this.IsUpgradeAvailable(_logger);
+
+        /// <summary>
+        /// Gets the available upgrade version if one exists
+        /// </summary>
+        public GitTagVersion? AvailableUpgrade => _logger != null ? this.AvailableUpgrade(_logger) : null;
+
+        /// <summary>
+        /// Gets the status text for display purposes
+        /// </summary>
+        public string StatusText
+        {
+            get
+            {
+                if (_logger == null) return "Status unavailable";
+                
+                if (IsUpgradeAvailable)
+                {
+                    var upgrade = AvailableUpgrade;
+                    return upgrade != null ? $"Upgrade available: {upgrade}" : "Upgrade available";
+                }
+                return "You have the latest version.";
+            }
+        }
+
+        /// <summary>
+        /// Gets the status color for display purposes
+        /// </summary>
+        public PackageStatusColor StatusColor
+        {
+            get
+            {
+                if (_logger == null) return PackageStatusColor.Warning;
+                return IsUpgradeAvailable ? PackageStatusColor.Warning : PackageStatusColor.Success;
+            }
+        }
+
+        /// <summary>
+        /// Error message for this package (managed externally)
+        /// </summary>
+        public string ErrorMessage { get; set; } = string.Empty;
+
         public void Dispose()
         {
             // No cleanup needed for this data-only record
         }
+    }
+
+    /// <summary>
+    /// Status color enumeration for package display
+    /// </summary>
+    public enum PackageStatusColor
+    {
+        Success,   // Green - Up to date
+        Warning,   // Orange - Upgrade available
+        Error      // Red - Error occurred
     }
 
     public class UpdateFailedException : Exception

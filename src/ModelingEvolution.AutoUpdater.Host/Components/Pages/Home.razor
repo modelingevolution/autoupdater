@@ -1,38 +1,21 @@
 ﻿@page "/"
 @using ModelingEvolution.AutoUpdater
-@using ModelingEvolution.AutoUpdater.Extensions
 @using ModelingEvolution.AutoUpdater.Host.Components.Shared
-@inject DockerComposeConfigurationRepository repo
 @inject UpdateService updateService
-@inject UpdateHost host
 @inject IConfiguration Configuration
 <PageTitle>Home</PageTitle>
 
-<MudStack>
-    <ObservableForEach ItemSource="repo.GetPackages()">
-        <MudPaper Class="pa-4" Elevation="2">
-            <MudField Label="Name">@context.FriendlyName</MudField>
-            <MudField Label="Current version">@context.CurrentVersion</MudField>
-            @if (@context.IsUpgradeAvailable(host.Log))
-            {
-                <MudField Label="Available upgrade:">@context.AvailableUpgrade(host.Log)</MudField>
-            } else
-            {
-                <MudText Color="Color.Info">You have the latest version.</MudText>
-               
-            }
-            <MudText Color="Color.Error">@_lastError</MudText>
-        </MudPaper>
-    </ObservableForEach>
-</MudStack>
+<PackageList ErrorMessage="@_lastError" />
 
 <MudButton Variant="Variant.Filled" Size="Size.Large" Class="ma-4" OnClick="@OnClick">Update all</MudButton>
 
 <VpnControl />
 
+<LoggerViewer />
+
 @code {
-    private bool _isUpdateAvailable;
     private string _lastError = string.Empty;
+    
     private async Task OnClick(MouseEventArgs e)
     {
         try

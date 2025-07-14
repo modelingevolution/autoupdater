@@ -1,6 +1,8 @@
 using ModelingEvolution.AutoUpdater.Host.Features.AutoUpdater;
 using ModelingEvolution.AutoUpdater.Host.Services.VPN;
+using ModelingEvolution.AutoUpdater.Host.Services;
 using ModelingEvolution.AutoUpdater.Services;
+using ModelingEvolution.AutoUpdater;
 
 namespace ModelingEvolution.AutoUpdater.Host.Extensions;
 
@@ -9,6 +11,12 @@ public static class ServiceCollectionExtensions
     public static IServiceCollection AddApplicationServices(this IServiceCollection services)
     {
         services.AddSingleton<AutoUpdaterService>();
+        
+        // Configure in-memory logging
+        services.AddLogging(builder => builder.AddInMemoryLogging());
+        
+        // Configure DockerComposeConfiguration with logger through a hosted service
+        services.AddHostedService<PackageStatusInitializationService>();
 
         // Register SSH VPN service
         services.AddSingleton<ISshVpnService>(provider =>

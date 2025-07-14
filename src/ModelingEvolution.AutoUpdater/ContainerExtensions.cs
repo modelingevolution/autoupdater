@@ -26,12 +26,27 @@ namespace ModelingEvolution.AutoUpdater
             
             container.AddSingleton<IDockerComposeService, DockerComposeService>();
             container.AddSingleton<IDeploymentStateProvider, DeploymentStateProvider>();
+            container.AddSingleton<IBackupService, BackupService>();
+            container.AddSingleton<IHealthCheckService, HealthCheckService>();
+            container.AddSingleton<IProgressService, ProgressService>();
+            container.AddSingleton<IInMemoryLoggerSink, InMemoryLoggerSink>();
 
             // Register UpdateHost - it depends on the services above
             container.AddSingleton<UpdateHost>();
             container.AddHostedService(sp => sp.GetRequiredService<UpdateHost>());
             
             return container;
+        }
+
+        public static ILoggingBuilder AddInMemoryLogging(this ILoggingBuilder builder)
+        {
+            builder.Services.AddSingleton<ILoggerProvider>(provider =>
+            {
+                var sink = provider.GetRequiredService<IInMemoryLoggerSink>();
+                return new InMemoryLoggerProvider(sink);
+            });
+            
+            return builder;
         }
 
     }

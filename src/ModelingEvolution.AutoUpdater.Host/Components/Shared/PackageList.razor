@@ -1,0 +1,31 @@
+@using ModelingEvolution.AutoUpdater
+@inject DockerComposeConfigurationRepository repo
+
+<MudStack>
+    <ObservableForEach ItemSource="@packages">
+        <PackageDetails Package="@context" />
+    </ObservableForEach>
+</MudStack>
+
+@code {
+    [Parameter] public string ErrorMessage { get; set; } = string.Empty;
+
+    private IReadOnlyList<DockerComposeConfiguration> packages = null!;
+
+    protected override void OnInitialized()
+    {
+        packages = repo.GetPackages().ToList();
+    }
+
+    protected override void OnParametersSet()
+    {
+        // Update error messages on all packages when global error changes
+        if (packages != null)
+        {
+            foreach (var package in packages)
+            {
+                package.ErrorMessage = ErrorMessage;
+            }
+        }
+    }
+}

@@ -47,6 +47,10 @@ Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "scripts", "scripts", "{D840
 	EndProjectSection
 EndProject
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "docs", "docs", "{CA494032-C537-4FBC-8B08-60BC6CB7BA2D}"
+	ProjectSection(SolutionItems) = preProject
+		docs\DOCKER-FAILURE-DECISION-TREE.md = docs\DOCKER-FAILURE-DECISION-TREE.md
+		docs\MIGRATION-ARCHITECTURE.md = docs\MIGRATION-ARCHITECTURE.md
+	EndProjectSection
 EndProject
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "features", "features", "{EA54CA73-FB29-478D-8F97-E6482A4BBEF4}"
 	ProjectSection(SolutionItems) = preProject

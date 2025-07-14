@@ -5,6 +5,7 @@ using ModelingEvolution.AutoUpdater.Services;
 using NSubstitute;
 using System;
 using System.Collections.Generic;
+using System.Collections.Immutable;
 using System.Linq;
 using System.Threading.Tasks;
 using Xunit;
@@ -236,8 +237,11 @@ namespace ModelingEvolution.AutoUpdater.Tests.Services
                 new MigrationScript("down-2.0.0.sh", "/path/down-2.0.0.sh", new Version(2, 0, 0), MigrationDirection.Down, true)
             };
 
+            // Previously executed UP scripts (simulates that 1.0.0 and 1.5.0 were applied)
+            var executedVersions = ImmutableSortedSet.Create(new Version(1, 0, 0), new Version(1, 5, 0));
+
             // Act - rollback from 1.5.0 to 1.0.0
-            var result = await _service.FilterScriptsForMigrationAsync(scripts, "1.5.0", "1.0.0");
+            var result = await _service.FilterScriptsForMigrationAsync(scripts, "1.5.0", "1.0.0", executedVersions);
 
             // Assert
             result.Should().HaveCount(1);

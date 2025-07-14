@@ -2,6 +2,7 @@ using Microsoft.Extensions.Logging;
 using ModelingEvolution.AutoUpdater.Models;
 using System;
 using System.Collections.Generic;
+using System.Collections.Immutable;
 using System.IO;
 using System.Linq;
 using System.Text.RegularExpressions;
@@ -101,7 +102,8 @@ namespace ModelingEvolution.AutoUpdater.Services
         public async Task<IEnumerable<MigrationScript>> FilterScriptsForMigrationAsync(
             IEnumerable<MigrationScript> allScripts, 
             string? fromVersion, 
-            string targetVersion)
+            string targetVersion,
+            ImmutableSortedSet<Version>? excludeVersions = null)
         {
             try
             {
@@ -123,6 +125,8 @@ namespace ModelingEvolution.AutoUpdater.Services
 
                 List<MigrationScript> filteredScripts;
 
+                excludeVersions ??= ImmutableSortedSet<Version>.Empty;
+
                 if (from == null || target > from)
                 {
                     // Forward migration: use UP scripts
@@ -140,6 +144,14 @@ namespace ModelingEvolution.AutoUpdater.Services
                         // If we have a from version, script version must be > from version
                         if (from != null && script.Version <= from)
                             return false;
+
+                        // Exclude already executed scripts
+                        if (excludeVersions.Contains(script.Version))
+                        {
+                            _logger.LogDebug("Excluding already executed UP script: {FileName} (v{Version})", 
+                                script.FileName, script.Version);
+                            return false;
+                        }
 
                         // Only include executable scripts
                         return script.IsExecutable;
@@ -159,6 +171,15 @@ namespace ModelingEvolution.AutoUpdater.Services
                         if (script.Version <= target || script.Version > from)
                             return false;
 
+                        // For DOWN scripts, we should execute them if the UP version WAS executed
+                        // (i.e., the version is in the excludeVersions set, meaning UP was run)
+                        if (!excludeVersions.Contains(script.Version))
+                        {
+                            _logger.LogDebug("Skipping DOWN script for version that was never applied: {FileName} (v{Version})", 
+                                script.FileName, script.Version);
+                            return false;
+                        }
+
                         // Only include executable scripts
                         return script.IsExecutable;
                     }).OrderByDescending(s => s.Version).ToList(); // Execute in reverse order for rollback
@@ -167,7 +188,7 @@ namespace ModelingEvolution.AutoUpdater.Services
                 {
                     // Same version, no migration needed
                     _logger.LogDebug("Target version equals current version, no migration needed");
-                    filteredScripts = new List<MigrationScript>();
+                    filteredScripts = new List<MigrationScript>(0);
                 }
 
                 _logger.LogInformation("Filtered {Count} migration scripts for execution", filteredScripts.Count);
@@ -183,12 +204,14 @@ namespace ModelingEvolution.AutoUpdater.Services
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Failed to filter migration scripts");
-                return Enumerable.Empty<MigrationScript>();
+                return [];
             }
         }
 
-        public async Task ExecuteScriptsAsync(IEnumerable<MigrationScript> scripts, string workingDirectory)
+        public async Task<IEnumerable<Version>> ExecuteScriptsAsync(IEnumerable<MigrationScript> scripts, string workingDirectory)
         {
+            var executedVersions = new List<Version>();
+            
             try
             {
                 var scriptList = scripts.ToList();
@@ -198,13 +221,18 @@ namespace ModelingEvolution.AutoUpdater.Services
                 foreach (var script in scriptList)
                 {
                     await ExecuteScriptAsync(script, workingDirectory);
+                    executedVersions.Add(script.Version);
+                    _logger.LogDebug("Successfully executed {Direction} script for version {Version}", 
+                        script.Direction, script.Version);
                 }
 
                 _logger.LogInformation("All migration scripts executed successfully");
+                return executedVersions;
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Failed to execute migration scripts");
+                _logger.LogError(ex, "Failed to execute migration scripts. Successfully executed: {ExecutedVersions}", 
+                    string.Join(", ", executedVersions));
                 throw;
             }
         }
