@@ -1,4 +1,5 @@
 using FluentAssertions;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using ModelingEvolution.AutoUpdater;
 using ModelingEvolution.AutoUpdater.Models;
@@ -14,6 +15,7 @@ namespace ModelingEvolution.AutoUpdater.Tests.Services
 {
     public class UpdateHostTests
     {
+        private readonly IConfiguration _configuration = Substitute.For<IConfiguration>();
         private readonly IGitService _gitService = Substitute.For<IGitService>();
         private readonly IScriptMigrationService _scriptService = Substitute.For<IScriptMigrationService>();
         private readonly ISshConnectionManager _sshConnectionManager = Substitute.For<ISshConnectionManager>();
@@ -48,7 +50,7 @@ namespace ModelingEvolution.AutoUpdater.Tests.Services
             _dockerService.GetComposeFilesForArchitectureAsync(Arg.Any<string>(), "x64")
                          .Returns(new[] { "docker-compose.yml", "docker-compose.x64.yml" });
 
-            var updateHost = new UpdateHost(_gitService, _scriptService, _sshConnectionManager, _dockerService, _deploymentStateProvider, _logger);
+            var updateHost = new UpdateHost(_configuration, _logger, _gitService, _scriptService, _sshConnectionManager, _dockerService, _deploymentStateProvider);
 
             // Act
             var result = await updateHost.UpdateAsync(config);
@@ -72,7 +74,7 @@ namespace ModelingEvolution.AutoUpdater.Tests.Services
             _gitService.GetAvailableVersionsAsync(Arg.Any<string>())
                       .Returns(new[] { new GitTagVersion("1.0.0", new Version(1, 0, 0)) });
 
-            var updateHost = new UpdateHost(_gitService, _scriptService, _sshConnectionManager, _dockerService, _deploymentStateProvider, _logger);
+            var updateHost = new UpdateHost(_configuration, _logger, _gitService, _scriptService, _sshConnectionManager, _dockerService, _deploymentStateProvider);
 
             // Act
             var result = await updateHost.UpdateAsync(config);
@@ -111,7 +113,7 @@ namespace ModelingEvolution.AutoUpdater.Tests.Services
             mockSshService2.GetArchitectureAsync().Returns("x64");
             _sshConnectionManager.CreateSshServiceAsync().Returns(mockSshService2);
 
-            var updateHost = new UpdateHost(_gitService, _scriptService, _sshConnectionManager, _dockerService, _deploymentStateProvider, _logger);
+            var updateHost = new UpdateHost(_configuration, _logger, _gitService, _scriptService, _sshConnectionManager, _dockerService, _deploymentStateProvider);
 
             // Act
             var result = await updateHost.UpdateAsync(config);

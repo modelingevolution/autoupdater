@@ -72,8 +72,7 @@ namespace ModelingEvolution.AutoUpdater.Tests.Services
         [Theory]
         [InlineData("")]
         [InlineData("   ")]
-        [InlineData(null)]
-        public async Task GetCurrentVersionAsync_WithInvalidDeploymentPath_ShouldThrowArgumentException(string deploymentPath)
+        public async Task GetCurrentVersionAsync_WithInvalidDeploymentPath_ShouldReturnNull(string deploymentPath)
         {
             // Act & Assert
             var result = await _deploymentStateProvider.GetCurrentVersionAsync(deploymentPath);

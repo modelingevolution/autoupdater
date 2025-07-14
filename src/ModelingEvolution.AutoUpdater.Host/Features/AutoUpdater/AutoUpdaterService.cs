@@ -1,18 +1,19 @@
 using ModelingEvolution.AutoUpdater.Host.Features.AutoUpdater.Models;
 using System.Text.Json;
 using ModelingEvolution.AutoUpdater.Extensions;
+using ModelingEvolution.AutoUpdater.Services;
 
 namespace ModelingEvolution.AutoUpdater.Host.Features.AutoUpdater;
 
 public class AutoUpdaterService
 {
     private readonly UpdateService _updateService;
-    private readonly SshConnectionManager _sshManager;
+    private readonly ISshConnectionManager _sshManager;
     private readonly ILogger<AutoUpdaterService> _logger;
 
     public AutoUpdaterService(
         UpdateService updateService,
-        SshConnectionManager sshManager,
+        ISshConnectionManager sshManager,
         ILogger<AutoUpdaterService> logger)
     {
         _updateService = updateService;

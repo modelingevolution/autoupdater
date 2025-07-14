@@ -30,18 +30,36 @@ namespace ModelingEvolution.AutoUpdater.Services
             {
                 _logger.LogDebug("Discovering migration scripts in directory {DirectoryPath}", directoryPath);
 
-                if (string.IsNullOrWhiteSpace(directoryPath) || !Directory.Exists(directoryPath))
+                if (string.IsNullOrWhiteSpace(directoryPath))
                 {
-                    _logger.LogWarning("Directory {DirectoryPath} does not exist or is invalid", directoryPath);
+                    _logger.LogWarning("Directory path is null or whitespace");
+                    return Enumerable.Empty<MigrationScript>();
+                }
+
+                // Check if directory exists using SSH
+                if (!await _sshService.DirectoryExistsAsync(directoryPath))
+                {
+                    _logger.LogWarning("Directory {DirectoryPath} does not exist on remote host", directoryPath);
                     return Enumerable.Empty<MigrationScript>();
                 }
 
                 var scripts = new List<MigrationScript>();
-                var scriptFiles = Directory.GetFiles(directoryPath, "*-*.sh", SearchOption.TopDirectoryOnly);
+                
+                // List .sh files in the directory using SSH
+                var listCommand = $"find \"{directoryPath}\" -maxdepth 1 -name \"*-*.sh\" -type f";
+                var result = await _sshService.ExecuteCommandAsync(listCommand);
+                
+                if (!result.IsSuccess)
+                {
+                    _logger.LogWarning("Failed to list script files in {DirectoryPath}: {Error}", directoryPath, result.Error);
+                    return Enumerable.Empty<MigrationScript>();
+                }
+
+                var scriptFiles = result.Output.Split('\n', StringSplitOptions.RemoveEmptyEntries);
 
                 foreach (var scriptFile in scriptFiles)
                 {
-                    var fileName = Path.GetFileName(scriptFile);
+                    var fileName = Path.GetFileName(scriptFile.Trim());
                     var match = ScriptNamePattern.Match(fileName);
 
                     if (match.Success)
@@ -52,8 +70,8 @@ namespace ModelingEvolution.AutoUpdater.Services
                         if (Version.TryParse(versionStr, out var version) &&
                             Enum.TryParse<MigrationDirection>(directionStr, true, out var direction))
                         {
-                            var isExecutable = await IsExecutableAsync(scriptFile);
-                            var script = new MigrationScript(fileName, scriptFile, version, direction, isExecutable);
+                            var isExecutable = await IsExecutableAsync(scriptFile.Trim());
+                            var script = new MigrationScript(fileName, scriptFile.Trim(), version, direction, isExecutable);
                             scripts.Add(script);
                             
                             _logger.LogDebug("Discovered migration script: {FileName} (v{Version}, {Direction}, executable: {IsExecutable})", 

@@ -32,6 +32,13 @@ namespace ModelingEvolution.AutoUpdater.Services
         Task StartServicesAsync(string[] composeFiles, string workingDirectory);
 
         /// <summary>
+        /// Stops Docker Compose services using the specified compose files
+        /// </summary>
+        /// <param name="composeFiles">The compose files to stop</param>
+        /// <param name="workingDirectory">The working directory for the compose command</param>
+        Task StopServicesAsync(string[] composeFiles, string workingDirectory);
+
+        /// <summary>
         /// Stops Docker Compose services for the specified project
         /// </summary>
         /// <param name="projectName">The name of the compose project to stop</param>
@@ -50,5 +57,20 @@ namespace ModelingEvolution.AutoUpdater.Services
         /// <param name="containerId">The container ID to get volume mappings for</param>
         /// <returns>Dictionary of host path to container path mappings</returns>
         Task<IDictionary<string, string>> GetVolumeMappingsAsync(string containerId);
+
+        /// <summary>
+        /// Gets the status of services in the specified compose files
+        /// </summary>
+        /// <param name="composeFiles">The compose files to check</param>
+        /// <param name="workingDirectory">The working directory for the compose command</param>
+        /// <returns>Services status as string output</returns>
+        Task<string> GetServicesStatusAsync(string[] composeFiles, string workingDirectory);
+
+        /// <summary>
+        /// Restarts Docker Compose services using the specified compose files
+        /// </summary>
+        /// <param name="composeFiles">The compose files to restart</param>
+        /// <param name="workingDirectory">The working directory for the compose command</param>
+        Task RestartServicesAsync(string[] composeFiles, string workingDirectory);
     }
 }

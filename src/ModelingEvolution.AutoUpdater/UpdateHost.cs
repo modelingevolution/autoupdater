@@ -30,38 +30,19 @@ public class UpdateHost : IHostedService
     public UpdateHost(
         IConfiguration config, 
         ILogger<UpdateHost> log,
-        IGitService? gitService = null,
-        IScriptMigrationService? scriptMigrationService = null,
-        ISshConnectionManager? sshConnectionManager = null,
-        IDockerComposeService? dockerComposeService = null,
-        IDeploymentStateProvider? deploymentStateProvider = null)
+        IGitService gitService,
+        IScriptMigrationService scriptMigrationService,
+        ISshConnectionManager sshConnectionManager,
+        IDockerComposeService dockerComposeService,
+        IDeploymentStateProvider deploymentStateProvider)
     {
-        _config = config;
-        _log = log;
-        // For now, require all services to be provided - we'll implement legacy adapters later
+        _config = config ?? throw new ArgumentNullException(nameof(config));
+        _log = log ?? throw new ArgumentNullException(nameof(log));
         _gitService = gitService ?? throw new ArgumentNullException(nameof(gitService));
         _scriptMigrationService = scriptMigrationService ?? throw new ArgumentNullException(nameof(scriptMigrationService));
         _sshConnectionManager = sshConnectionManager ?? throw new ArgumentNullException(nameof(sshConnectionManager));
         _dockerComposeService = dockerComposeService ?? throw new ArgumentNullException(nameof(dockerComposeService));
         _deploymentStateProvider = deploymentStateProvider ?? throw new ArgumentNullException(nameof(deploymentStateProvider));
-    }
-    
-    // Constructor for dependency injection with all services
-    public UpdateHost(
-        IGitService gitService,
-        IScriptMigrationService scriptMigrationService,
-        ISshConnectionManager sshConnectionManager,
-        IDockerComposeService dockerComposeService,
-        IDeploymentStateProvider deploymentStateProvider,
-        ILogger<UpdateHost> log)
-    {
-        _gitService = gitService;
-        _scriptMigrationService = scriptMigrationService;
-        _sshConnectionManager = sshConnectionManager;
-        _dockerComposeService = dockerComposeService;
-        _deploymentStateProvider = deploymentStateProvider;
-        _log = log;
-        _config = null!; // Will not be used in this constructor
     }
     
     public IDictionary<string, string> Volumes { get; private set; } = new Dictionary<string, string>();

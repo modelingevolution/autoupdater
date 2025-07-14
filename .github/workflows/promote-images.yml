@@ -43,13 +43,14 @@ jobs:
         
         echo "🔄 Promoting commit image to production tags..."
         
-        # Extract commit SHA from the tag
-        COMMIT_SHA="${{ github.sha }}"
-        SOURCE_TAG="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${COMMIT_SHA}"
+        # Extract short SHA from the tag commit and create master-{short_sha} format
+        SHORT_SHA="${{ github.sha }}"
+        SHORT_SHA="${SHORT_SHA:0:7}"
+        SOURCE_TAG="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:master-${SHORT_SHA}"
         
         echo "Source image: $SOURCE_TAG"
         
-        # Create manifest list for each production tag using the commit reference
+        # Create manifest list for each production tag using the master-{short_sha} reference
         echo "Creating production tags..."
         TAGS_JSON='${{ steps.meta.outputs.json }}'
         echo "$TAGS_JSON" | jq -r '.tags[]' | while read tag; do

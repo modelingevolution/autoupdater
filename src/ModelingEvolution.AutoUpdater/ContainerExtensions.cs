@@ -16,9 +16,14 @@ namespace ModelingEvolution.AutoUpdater
             // Register the new refactored services
             container.AddSingleton<IGitService, GitService>();
             container.AddSingleton<IScriptMigrationService, ScriptMigrationService>();
+            container.AddSingleton<ISshService>(sp =>
+                sp.GetRequiredService<ISshConnectionManager>().CreateSshServiceAsync().Result);
             
+            container.AddSingleton<ISshConnectionManager, SshConnectionManager>(x =>
+                SshConnectionManager.CreateFromConfiguration(x.GetRequiredService<IConfiguration>(),
+                    x.GetRequiredService<ILoggerFactory>()));
             // Register SshConnectionManager using the static factory method
-            container.AddSingleton<ISshConnectionManager, SshConnectionManager>();
+            
             container.AddSingleton<IDockerComposeService, DockerComposeService>();
             container.AddSingleton<IDeploymentStateProvider, DeploymentStateProvider>();
 

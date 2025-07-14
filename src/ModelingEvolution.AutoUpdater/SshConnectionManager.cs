@@ -45,7 +45,7 @@ public class SshConnectionManager : ISshConnectionManager, IDisposable
         }
         else
         {
-            host = configuration.GetValue<string>("Host") ?? string.Empty;
+            host = configuration.GetValue<string>("SshHost") ?? string.Empty;
             if (string.IsNullOrEmpty(host))
             {
                 throw new InvalidOperationException("SSH Host must be provided either in configuration or as hostOverride parameter");
