@@ -66,19 +66,23 @@ jobs:
           BUILD_CONFIGURATION=Release
           ASSEMBLY_VERSION=1.0.0.0
           ASSEMBLY_INFORMATIONAL_VERSION=1.0.0+${{ github.sha }}
+        provenance: false
 
     - name: Export digest
       if: github.event_name != 'pull_request'
       run: |
         mkdir -p /tmp/digests
         digest="${{ steps.build.outputs.digest }}"
-        touch "/tmp/digests/${digest#sha256:}"
+        # Extract architecture from matrix.platform (linux/amd64 -> amd64)
+        arch=$(echo "${{ matrix.platform }}" | cut -d'/' -f2)
+        echo -n "$digest" > "/tmp/digests/${arch}"
+        echo "Created digest file for ${arch}: $digest"
         
     - name: Upload digest
       if: github.event_name != 'pull_request'
       uses: actions/upload-artifact@v4
       with:
-        name: digests-${{ matrix.runner }}
+        name: digest-${{ matrix.platform == 'linux/amd64' && 'amd64' || 'arm64' }}
         path: /tmp/digests/*
         if-no-files-found: error
         retention-days: 1
@@ -96,7 +100,7 @@ jobs:
       - name: Download digests
         uses: actions/download-artifact@v4
         with:
-          pattern: digests-*
+          pattern: digest-*
           merge-multiple: true
           path: /tmp/digests
         
@@ -125,23 +129,42 @@ jobs:
         run: |
           set -e
         
-            # Read digests
-            AMD64_DIGEST=$(cat /tmp/digests/amd64)
-            ARM64_DIGEST=$(cat /tmp/digests/arm64)
+          echo "=== Debugging digest files ==="
+          echo "Available digest files:"
+          ls -la /tmp/digests/
+          echo "Contents:"
+          cat /tmp/digests/* || echo "No digest files found"
+          
+          # Check if both digest files exist
+          if [ ! -f /tmp/digests/amd64 ] || [ ! -f /tmp/digests/arm64 ]; then
+            echo "❌ Missing digest files"
+            ls -la /tmp/digests/
+            exit 1
+          fi
         
-            echo "AMD64 digest: $AMD64_DIGEST"
-            echo "ARM64 digest: $ARM64_DIGEST"
+          # Read digests
+          AMD64_DIGEST=$(cat /tmp/digests/amd64)
+          ARM64_DIGEST=$(cat /tmp/digests/arm64)
         
-            # Create manifest for each tag
-            echo '${{ steps.meta.outputs.json }}' | jq -r '.tags[]' | while read tag; do
-              if [[ -n "$tag" && "$tag" != *":-"* ]]; then
-                echo "Creating manifest for: $tag"
-                docker buildx imagetools create \
-                  --tag "$tag" \
-                  "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@$AMD64_DIGEST" \
-                  "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@$ARM64_DIGEST"
-              fi
-            done
+          echo "AMD64 digest: $AMD64_DIGEST"
+          echo "ARM64 digest: $ARM64_DIGEST"
         
-            echo "✅ Multi-arch manifest creation completed"
+          # Validate digests
+          if [[ -z "$AMD64_DIGEST" || -z "$ARM64_DIGEST" ]]; then
+            echo "❌ Empty digests found"
+            exit 1
+          fi
+        
+          # Create manifest for each tag
+          echo '${{ steps.meta.outputs.json }}' | jq -r '.tags[]' | while read tag; do
+            if [[ -n "$tag" && "$tag" != *":-"* ]]; then
+              echo "Creating manifest for: $tag"
+              docker buildx imagetools create \
+                --tag "$tag" \
+                "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@$AMD64_DIGEST" \
+                "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@$ARM64_DIGEST"
+            fi
+          done
+        
+          echo "✅ Multi-arch manifest creation completed"
     

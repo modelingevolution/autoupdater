@@ -49,6 +49,16 @@ jobs:
         SOURCE_TAG="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:master-${SHORT_SHA}"
         
         echo "Source image: $SOURCE_TAG"
+        echo "GitHub SHA: ${{ github.sha }}"
+        echo "Short SHA: $SHORT_SHA"
+        
+        # Verify source image exists
+        if ! docker buildx imagetools inspect "$SOURCE_TAG" > /dev/null 2>&1; then
+          echo "❌ Source image not found: $SOURCE_TAG"
+          echo "Available images:"
+          docker buildx imagetools ls "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}" || echo "No images found"
+          exit 1
+        fi
         
         # Create manifest list for each production tag using the master-{short_sha} reference
         echo "Creating production tags..."
