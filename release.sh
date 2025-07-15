@@ -36,6 +36,9 @@ print_usage() {
     echo "  ./release.sh --minor -m \"New UI components\"  # Auto-increment minor"
     echo "  ./release.sh --patch                         # Auto-increment patch"
     echo "  ./release.sh --dry-run                       # Preview next patch release"
+    echo ""
+    echo "Non-interactive mode:"
+    echo "  echo 'y' | ./release.sh [options]            # For CI/CD or automated use"
 }
 
 print_error() {
@@ -110,6 +113,14 @@ check_branch() {
     local current_branch=$(git branch --show-current)
     if [[ "$current_branch" != "master" ]]; then
         print_warning "You are on branch '$current_branch', not 'master'"
+        
+        # Check if running in non-interactive mode
+        if [[ ! -t 0 ]]; then
+            print_error "Non-interactive mode detected. Cannot proceed from non-master branch."
+            print_info "To run this script from a non-master branch, use: echo 'y' | ./release.sh [options]"
+            return 1
+        fi
+        
         read -p "Continue anyway? (y/N): " -n 1 -r
         echo
         if [[ ! $REPLY =~ ^[Yy]$ ]]; then
