@@ -1,6 +1,7 @@
 using ModelingEvolution.AutoUpdater;
 using ModelingEvolution.AutoUpdater.Host.Components;
 using ModelingEvolution.AutoUpdater.Host.Extensions;
+using ModelingEvolution.RuntimeConfiguration;
 using MudBlazor.Services;
 
 namespace ModelingEvolution.AutoUpdater.Host;
@@ -14,6 +15,7 @@ public class Program
             .AddJsonFile("appsettings.json", optional: false, reloadOnChange: true)
             .AddJsonFile($"appsettings.{Environment.GetEnvironmentVariable("ASPNETCORE_ENVIRONMENT")}.json", optional: true)
             .AddJsonFile($"appsettings.override.json", optional: true)
+            .AddRuntimeConfiguration()
             .AddEnvironmentVariables()
             .AddCommandLine(args);
     }

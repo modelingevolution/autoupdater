@@ -18,7 +18,7 @@ namespace ModelingEvolution.AutoUpdater.Services
         public event Action<LogEntry>? LogAdded;
 
         public IReadOnlyList<LogEntry> LogEntries => _logs.ToList();
-
+        public bool Enabled { get; set; } = true;
         public InMemoryLoggerSink(int maxEntries = 1000)
         {
             _maxEntries = maxEntries;
@@ -26,14 +26,17 @@ namespace ModelingEvolution.AutoUpdater.Services
 
         public void AddLog(LogLevel level, string category, string message, Exception? exception = null)
         {
+            if (!Enabled)
+                return;
             var entry = new LogEntry(DateTime.Now, level, category, message, exception);
 
+            var le = _lastEntry;
             // Do not enqueue if last message content is the same (prevent spam)
-            if (_lastEntry != null && 
-                _lastEntry.Level == level && 
-                _lastEntry.Category == category && 
-                _lastEntry.Message == message &&
-                Equals(_lastEntry.Exception, exception))
+            if (le != null && 
+                le.Level == level && 
+                le.Category == category && 
+                le.Message == message &&
+                Equals(le.Exception, exception))
             {
                 return; // Skip duplicate message
             }

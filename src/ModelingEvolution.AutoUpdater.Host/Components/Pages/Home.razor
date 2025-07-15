@@ -1,31 +1,45 @@
 ﻿@page "/"
 @using ModelingEvolution.AutoUpdater
 @using ModelingEvolution.AutoUpdater.Host.Components.Shared
+@using ModelingEvolution.AutoUpdater.Services
 @inject UpdateService updateService
-@inject IConfiguration Configuration
-<PageTitle>Home</PageTitle>
+@inject IInMemoryLoggerSink _logSink
+<PageTitle>Packages</PageTitle>
+
+<MudText Typo="Typo.h4" Class="mb-4">Package Management</MudText>
 
 <PackageList ErrorMessage="@_lastError" />
 
 <MudButton Variant="Variant.Filled" Size="Size.Large" Class="ma-4" OnClick="@OnClick">Update all</MudButton>
 
-<VpnControl />
-
-<LoggerViewer />
+@if (_logSink.Enabled)
+{
+    <LogViewer/>
+}
 
 @code {
+
+
+
     private string _lastError = string.Empty;
-    
+
     private async Task OnClick(MouseEventArgs e)
     {
-        try
+        _lastError = string.Empty;
+        _logSink.Clear();
+        _logSink.Enabled = true;
+
+        _ = Task.Run(async () =>
         {
-            _lastError = string.Empty;
-            await updateService.UpdateAllAsync();
-        }
-        catch (UpdateFailedException ex)
-        {
-            _lastError = ex.Message;
-        }
+            try
+            {
+                await updateService.UpdateAllAsync();
+            }
+            catch (UpdateFailedException ex)
+            {
+                _lastError = ex.Message;
+                await this.InvokeAsync(StateHasChanged);
+            }
+        });
     }
 }

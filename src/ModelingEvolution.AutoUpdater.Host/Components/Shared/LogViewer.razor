@@ -2,6 +2,7 @@
 @using Microsoft.Extensions.Logging
 @inject IInMemoryLoggerSink LoggerSink
 @inject IProgressService ProgressService
+@inject IJSRuntime JSRuntime
 @implements IDisposable
 
 <div class="logger-viewer">
@@ -125,10 +126,7 @@
     {
         try
         {
-            await logContainer.FocusAsync();
-            await Task.Run(() => {});
-            // Note: Scrolling to bottom in Blazor requires JavaScript interop
-            // For now, we'll rely on CSS to maintain scroll position
+            await JSRuntime.InvokeVoidAsync("scrollToBottom", logContainer);
         }
         catch
         {

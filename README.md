@@ -28,6 +28,8 @@ View the latest test results and coverage reports at: [https://modelingevolution
 - **Version Management**: Automatic version detection and upgrade availability checking
 - **Flexible Authentication**: Support for Docker registry authentication
 - **Blazor UI**: Web-based management interface for monitoring and controlling updates
+- **Runtime Configuration**: Edit Docker authentication and other settings through the web interface
+- **Version Tracking**: Assembly version information with git commit hash displayed in the web interface
 - **Background Services**: Hosted services for continuous monitoring and updating
 
 ## 🚀 Quick Start (Empty Project)
@@ -90,6 +92,7 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
       - ./data:/data
       - ./appsettings.json:/app/appsettings.json:ro  # Configuration mapping
+      - /var/docker/data/autoupdater/appsettings.runtime.json:/app/appsettings.runtime.json  # Runtime configuration
     environment:
       - SshUser=deploy
       - SshAuthMethod=PrivateKey
@@ -98,7 +101,80 @@ services:
 
 ### Configuration
 
-The AutoUpdater configuration is mapped through Docker Compose. Create an `appsettings.json` file in the root directory (not in the data folder). 
+The AutoUpdater configuration is mapped through Docker Compose. Create an `appsettings.json` file in the root directory (not in the data folder).
+
+### Runtime Configuration
+
+The AutoUpdater supports runtime configuration changes through the web interface. Settings like Docker authentication can be modified per package and are stored in `appsettings.runtime.json`. This file should be mapped to a persistent volume to survive container restarts.
+
+#### Docker Authentication Management
+
+Docker authentication can be configured and edited through the web interface:
+
+1. **Access the Packages page** in the AutoUpdater web interface
+2. **Click the "Edit Auth" button** for any package to open the authentication dialog
+3. **Enter Docker authentication** in the format `username:password` (will be automatically base64-encoded)
+4. **Save changes** to update the runtime configuration immediately
+5. **Reset to default** to remove custom authentication for a package
+
+The authentication dialog supports multi-line input for complex authentication strings and provides real-time validation.
+
+#### Version Information
+
+The AutoUpdater displays version information in the bottom left of the navigation menu:
+
+- **Development builds**: Shows `v1.0.0+dev` for local development
+- **CI/CD builds**: Shows `v1.0.0 (abcd123)` with git commit hash for deployed versions
+- **Version tracking**: Automatically embedded during Docker build process using assembly attributes
+
+The version information helps identify which build is currently running and provides traceability back to the source code commit.
+
+#### Installation Script (install.sh)
+
+The install.sh script should be created in the deployment repository and should:
+
+1. Create the required directory structure for persistent data
+2. Set up the runtime configuration file mapping
+3. Execute all up*.sh migration scripts in order
+4. Start the AutoUpdater service
+
+Example install.sh structure:
+```bash
+#!/bin/bash
+
+# Create data directory for persistent storage
+mkdir -p /var/docker/data/autoupdater
+
+# Create runtime configuration file if it doesn't exist
+touch /var/docker/data/autoupdater/appsettings.runtime.json
+
+# Set proper permissions
+chmod 644 /var/docker/data/autoupdater/appsettings.runtime.json
+
+# Execute all migration scripts in order
+for script in up-*.sh; do
+    if [ -f "$script" ]; then
+        echo "Executing $script..."
+        bash "$script"
+    fi
+done
+
+# Start AutoUpdater services
+docker-compose up -d
+```
+
+#### Runtime Configuration Structure
+
+Runtime configuration is automatically managed through the web interface. The structure is:
+```json
+{
+  "DockerAuth": {
+    "package-name": "base64-encoded-auth-string"
+  }
+}
+```
+
+**Note**: Docker authentication should be entered in the web interface as `username:password` format - the system automatically handles base64 encoding and storage in the runtime configuration file. 
 
 #### Configuration Structure
 

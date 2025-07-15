@@ -54,12 +54,17 @@ WORKDIR /src
 # Copy project files for dependency restoration
 COPY ["src/ModelingEvolution.AutoUpdater.Host/ModelingEvolution.AutoUpdater.Host.csproj", "src/ModelingEvolution.AutoUpdater.Host/"]
 COPY ["src/ModelingEvolution.AutoUpdater/ModelingEvolution.AutoUpdater.csproj", "src/ModelingEvolution.AutoUpdater/"]
+COPY ["src/Submodules/runtime-configuration/src/ModelingEvolution.RuntimeConfiguration/ModelingEvolution.RuntimeConfiguration.csproj", "src/Submodules/runtime-configuration/src/ModelingEvolution.RuntimeConfiguration/"]
 
 # Restore dependencies
 RUN dotnet restore "src/ModelingEvolution.AutoUpdater.Host/ModelingEvolution.AutoUpdater.Host.csproj"
 
 # Copy all source code
 COPY . .
+
+# Ensure runtime configuration is available
+# Note: If building with submodules, ensure they are initialized before docker build
+# Or copy the submodule content explicitly
 
 # Build the application
 WORKDIR "/src/src/ModelingEvolution.AutoUpdater.Host"

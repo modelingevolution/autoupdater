@@ -1,11 +1,44 @@
 @using ModelingEvolution.AutoUpdater
+@inject IDialogService DialogService
 
 <MudPaper Class="pa-4" Elevation="2">
-    <MudField Label="Name">@Package.FriendlyName</MudField>
+    <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px;">
+        <MudField Label="Name">@Package.FriendlyName</MudField>
+        <MudTooltip Text="Security Settings">
+            <MudIconButton Icon="@Icons.Material.Filled.Security" 
+                          Color="Color.Primary" 
+                          Size="Size.Small"
+                          OnClick="OpenSecurityDialog" />
+        </MudTooltip>
+    </div>
     <PackageVersion Package="@Package" />
     <PackageStatus Package="@Package" />
 </MudPaper>
 
 @code {
     [Parameter] public DockerComposeConfiguration Package { get; set; } = null!;
+
+    private async Task OpenSecurityDialog()
+    {
+        var parameters = new DialogParameters
+        {
+            ["Package"] = Package
+        };
+
+        var options = new DialogOptions
+        {
+            CloseOnEscapeKey = true,
+            MaxWidth = MaxWidth.Medium,
+            FullWidth = true
+        };
+
+        var dialog = await DialogService.ShowAsync<PackageAuthDialog>("Security Settings", parameters, options);
+        var result = await dialog.Result;
+        
+        if (result != null && !result.Canceled)
+        {
+            // Optionally trigger a refresh or update of the package list
+            StateHasChanged();
+        }
+    }
 }

@@ -2,6 +2,7 @@
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using ModelingEvolution.AutoUpdater.Services;
+using ModelingEvolution.RuntimeConfiguration;
 
 namespace ModelingEvolution.AutoUpdater
 {
@@ -9,6 +10,9 @@ namespace ModelingEvolution.AutoUpdater
     {
         public static IServiceCollection AddAutoUpdater(this IServiceCollection container)
         {
+            // Add runtime configuration support
+            container.AddRuntimeConfiguration();
+            
             // Register core services
             container.AddSingleton<UpdateService>();
             container.AddSingleton<DockerComposeConfigurationRepository>();
@@ -29,7 +33,14 @@ namespace ModelingEvolution.AutoUpdater
             container.AddSingleton<IBackupService, BackupService>();
             container.AddSingleton<IHealthCheckService, HealthCheckService>();
             container.AddSingleton<IProgressService, ProgressService>();
-            container.AddSingleton<IInMemoryLoggerSink, InMemoryLoggerSink>();
+            container.AddSingleton<IDockerAuthService, DockerAuthService>();
+            container.AddSingleton<IInMemoryLoggerSink>(sp => sp.GetRequiredService<InMemoryLoggerSink>());
+            container.AddSingleton<InMemoryLoggerSink>(sp =>
+            {
+                var l = new InMemoryLoggerSink();
+                l.Enabled = false; 
+                return l;
+            });
 
             // Register UpdateHost - it depends on the services above
             container.AddSingleton<UpdateHost>();

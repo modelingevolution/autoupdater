@@ -1,0 +1,24 @@
+@page "/remote-support"
+@using ModelingEvolution.AutoUpdater.Host.Components.Shared
+
+<PageTitle>Remote Support</PageTitle>
+
+<MudText Typo="Typo.h4" Class="mb-4">Remote Support</MudText>
+
+<MudCard Class="mb-4">
+    <MudCardHeader>
+        <CardHeaderContent>
+            <MudText Typo="Typo.h6">VPN Management</MudText>
+        </CardHeaderContent>
+    </MudCardHeader>
+    <MudCardContent>
+        <MudText Typo="Typo.body2" Class="mb-3">
+            Configure and manage VPN connections for remote support access.
+        </MudText>
+        <VpnControl />
+    </MudCardContent>
+</MudCard>
+
+@code {
+    
+}

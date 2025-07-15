@@ -23,7 +23,11 @@ namespace ModelingEvolution.AutoUpdater.Services
         /// Event triggered when new log entry is added
         /// </summary>
         event Action<LogEntry>? LogAdded;
-
+        /// <summary>
+        /// Gets or sets a value indicating whether the in-memory logger sink is enabled.
+        /// When enabled, log entries are captured and stored in memory; otherwise, logging is disabled.
+        /// </summary>
+        bool Enabled { get; set; }
         /// <summary>
         /// All log entries
         /// </summary>

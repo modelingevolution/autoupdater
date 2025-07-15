@@ -1,0 +1,47 @@
+@using System.Reflection
+
+<div class="assembly-version">
+    <small class="text-muted">
+        v@_version
+    </small>
+</div>
+
+<style>
+    .assembly-version {
+        font-size: 0.75rem;
+        opacity: 0.7;
+        margin-top: auto;
+        padding: 8px 16px;
+    }
+</style>
+
+@code {
+    private string _version = string.Empty;
+
+    protected override void OnInitialized()
+    {
+        try
+        {
+            var assembly = Assembly.GetExecutingAssembly();
+            var version = assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion
+                         ?? assembly.GetCustomAttribute<AssemblyVersionAttribute>()?.Version
+                         ?? assembly.GetName().Version?.ToString()
+                         ?? "Unknown";
+            
+            // If version contains git hash, format it nicely
+            if (version.Contains('+'))
+            {
+                var parts = version.Split('+');
+                _version = $"{parts[0]} ({parts[1][..Math.Min(7, parts[1].Length)]})";
+            }
+            else
+            {
+                _version = version;
+            }
+        }
+        catch
+        {
+            _version = "Unknown";
+        }
+    }
+}

@@ -1,0 +1,111 @@
+@using ModelingEvolution.AutoUpdater
+@using ModelingEvolution.AutoUpdater.Services
+@using MudBlazor
+@inject IDockerAuthService DockerAuthService
+@inject ISnackbar Snackbar
+
+<MudDialog>
+    <DialogContent>
+        <MudContainer Style="max-width: 600px;">
+            <MudText Typo="Typo.h6" Class="mb-4">Docker Authentication Settings</MudText>
+            <MudText Typo="Typo.body2" Class="mb-4">
+                Configure Docker registry authentication for <strong>@Package.FriendlyName</strong>
+            </MudText>
+            
+            <MudTextField @bind-Value="_dockerAuth" 
+                         Label="Docker Authentication" 
+                         Variant="Variant.Outlined"
+                         Lines="3"
+                         HelperText="Enter Docker registry authentication token (base64 encoded username:password)"
+                         Class="mb-4" />
+            
+            
+            @if (_isLoading)
+            {
+                <MudProgressCircular Class="mb-4" Indeterminate="true" />
+            }
+        </MudContainer>
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="Cancel">Cancel</MudButton>
+        <MudButton Color="Color.Secondary" OnClick="ResetToDefault" StartIcon="@Icons.Material.Filled.RestoreFromTrash">
+            Reset to Default
+        </MudButton>
+        <MudButton Color="Color.Primary" OnClick="Save" StartIcon="@Icons.Material.Filled.Save" Disabled="_isLoading">
+            Save
+        </MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] 
+    public IMudDialogInstance MudDialog { get; set; } = default!;
+    
+    [Parameter] 
+    public DockerComposeConfiguration Package { get; set; } = default!;
+    
+    private string _dockerAuth = string.Empty;
+    private bool _isLoading = false;
+
+    protected override async Task OnInitializedAsync()
+    {
+        _isLoading = true;
+        try
+        {
+            var currentAuth = await DockerAuthService.GetDockerAuthAsync(Package.FriendlyName);
+            _dockerAuth = currentAuth ?? string.Empty;
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Failed to load Docker authentication: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _isLoading = false;
+        }
+    }
+
+    private async Task Save()
+    {
+        _isLoading = true;
+        try
+        {
+            await DockerAuthService.UpdateDockerAuthAsync(Package.FriendlyName, _dockerAuth);
+            Snackbar.Add("Docker authentication updated successfully", Severity.Success);
+            MudDialog.Close(DialogResult.Ok(true));
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Failed to update Docker authentication: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _isLoading = false;
+        }
+    }
+
+    private async Task ResetToDefault()
+    {
+        _isLoading = true;
+        try
+        {
+            await DockerAuthService.UpdateDockerAuthAsync(Package.FriendlyName, null);
+            _dockerAuth = string.Empty;
+            Snackbar.Add("Docker authentication reset to default", Severity.Success);
+            MudDialog.Close(DialogResult.Ok(true));
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Failed to reset Docker authentication: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _isLoading = false;
+        }
+    }
+
+    private void Cancel()
+    {
+        MudDialog.Cancel();
+    }
+}
