@@ -181,7 +181,7 @@ check_docker_images() {
     
     # Expected image tags based on current commit (for Docker Hub)
     local expected_images=(
-        "${registry}/${image_name}:preview"
+    "${registry}/${image_name}:master-${current_commit}"
     )
     
     print_info "Checking if Docker images exist for commit $current_commit..."
