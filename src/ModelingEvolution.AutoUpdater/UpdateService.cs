@@ -1,6 +1,7 @@
 using Microsoft.Extensions.Logging;
 using ModelingEvolution.AutoUpdater.Extensions;
 using ModelingEvolution.AutoUpdater.Models;
+using ModelingEvolution.AutoUpdater.Services;
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -14,15 +15,18 @@ namespace ModelingEvolution.AutoUpdater
     {
         private readonly DockerComposeConfigurationRepository _repository;
         private readonly UpdateHost _updateHost;
+        private readonly IGitService _gitService;
         private readonly ILogger<UpdateService> _logger;
 
         public UpdateService(
             DockerComposeConfigurationRepository repository,
             UpdateHost updateHost,
+            IGitService gitService,
             ILogger<UpdateService> logger)
         {
             _repository = repository ?? throw new ArgumentNullException(nameof(repository));
             _updateHost = updateHost ?? throw new ArgumentNullException(nameof(updateHost));
+            _gitService = gitService ?? throw new ArgumentNullException(nameof(gitService));
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         }
 
@@ -62,7 +66,7 @@ namespace ModelingEvolution.AutoUpdater
             {
                 var packageName = config.FriendlyName;
                 var currentVersion = await GetCurrentVersionAsync(config);
-                var availableVersions = config.AvailableVersions(_logger);
+                var availableVersions = await config.AvailableVersionsAsync(_gitService, _logger);
                 var latestVersion = availableVersions.OrderByDescending(v => v.Version).FirstOrDefault();
                 
                 var upgradeAvailable = latestVersion != null &&
@@ -92,7 +96,7 @@ namespace ModelingEvolution.AutoUpdater
                 return null;
 
             var currentVersion = await GetCurrentVersionAsync(config);
-            var availableVersions = config.AvailableVersions(_logger);
+            var availableVersions = await config.AvailableVersionsAsync(_gitService, _logger);
             var latestVersion = availableVersions.OrderByDescending(v => v.Version).FirstOrDefault();
             
             var upgradeAvailable = latestVersion != null &&

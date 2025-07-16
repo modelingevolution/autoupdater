@@ -1,11 +1,9 @@
-using LibGit2Sharp;
 using Microsoft.Extensions.Logging;
+using ModelingEvolution.AutoUpdater.Services;
 using System;
 using System.Collections.Generic;
-using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
-using Version = LibGit2Sharp.Version;
 
 namespace ModelingEvolution.AutoUpdater.Extensions
 {
@@ -14,42 +12,20 @@ namespace ModelingEvolution.AutoUpdater.Extensions
     /// </summary>
     public static class DockerComposeConfigurationExtensions
     {
-        public static bool CloneRepository(this DockerComposeConfiguration config, ILogger logger)
+        public static async Task<bool> CloneRepositoryAsync(this DockerComposeConfiguration config, IGitService gitService, ILogger logger)
         {
-            try
-            {
-                logger.LogInformation("Cloning repository {RepositoryUrl} to {RepositoryLocation}", 
-                    config.RepositoryUrl, config.RepositoryLocation);
-
-                if (Directory.Exists(config.RepositoryLocation))
-                {
-                    logger.LogInformation("Repository already exists at {RepositoryLocation}", config.RepositoryLocation);
-                    return true;
-                }
-
-                Directory.CreateDirectory(config.RepositoryLocation);
-                Repository.Clone(config.RepositoryUrl, config.RepositoryLocation);
-
-                logger.LogInformation("Repository cloned successfully to {RepositoryLocation}", config.RepositoryLocation);
-                return true;
-            }
-            catch (Exception ex)
-            {
-                logger.LogError(ex, "Failed to clone repository {RepositoryUrl} to {RepositoryLocation}", 
-                    config.RepositoryUrl, config.RepositoryLocation);
-                return false;
-            }
+            return await gitService.CloneRepositoryAsync(config.RepositoryUrl, config.RepositoryLocation);
         }
 
-        public static bool IsUpgradeAvailable(this DockerComposeConfiguration config, ILogger logger)
+        public static async Task<bool> IsUpgradeAvailableAsync(this DockerComposeConfiguration config, IGitService gitService, ILogger logger)
         {
-            var availableUpgrade = config.AvailableUpgrade(logger);
+            var availableUpgrade = await config.AvailableUpgradeAsync(gitService, logger);
             return availableUpgrade != null;
         }
 
-        public static GitTagVersion? AvailableUpgrade(this DockerComposeConfiguration config, ILogger logger)
+        public static async Task<GitTagVersion?> AvailableUpgradeAsync(this DockerComposeConfiguration config, IGitService gitService, ILogger logger)
         {
-            var availableVersions = config.AvailableVersions(logger);
+            var availableVersions = await config.AvailableVersionsAsync(gitService, logger);
             var currentVersion = config.CurrentVersion;
 
             if (currentVersion == null)
@@ -65,113 +41,25 @@ namespace ModelingEvolution.AutoUpdater.Extensions
             throw new InvalidOperationException($"Current version '{currentVersion}' is not a valid GitTagVersion");
         }
 
-        public static IEnumerable<GitTagVersion> AvailableVersions(this DockerComposeConfiguration config, ILogger logger)
+        public static async Task<IReadOnlyList<GitTagVersion>> AvailableVersionsAsync(this DockerComposeConfiguration config, IGitService gitService, ILogger logger)
         {
-            return config.Versions(logger).Where(v => v != null!);
+            return await gitService.GetAvailableVersionsAsync(config.RepositoryLocation);
         }
 
-        public static GitTagVersion[] Versions(this DockerComposeConfiguration config, ILogger logger)
+        public static async Task<GitTagVersion[]> VersionsAsync(this DockerComposeConfiguration config, IGitService gitService, ILogger logger)
         {
-            try
-            {
-                if (!config.IsGitVersioned)
-                {
-                    logger.LogWarning("Repository at {RepositoryLocation} is not a Git repository", config.RepositoryLocation);
-                    return [];
-                }
-
-                using var repo = new Repository(config.RepositoryLocation);
-                var tags = repo.Tags
-                    .Select(tag => GitTagVersion.TryParse(tag.FriendlyName, out var version) ? version : null)
-                    .Where(v => v != null)
-                    .Cast<GitTagVersion>()
-                    .OrderByDescending(v => v.Version)
-                    .ToArray();
-
-                logger.LogDebug("Found {Count} valid version tags in repository", tags.Count());
-                return tags;
-            }
-            catch (Exception ex)
-            {
-                logger.LogError(ex, "Failed to get versions from repository at {RepositoryLocation}", config.RepositoryLocation);
-                return [];
-            }
+            var versions = await gitService.GetAvailableVersionsAsync(config.RepositoryLocation);
+            return versions.ToArray();
         }
 
-        public static bool Pull(this DockerComposeConfiguration config, ILogger logger)
+        public static async Task<bool> PullAsync(this DockerComposeConfiguration config, IGitService gitService, ILogger logger)
         {
-            try
-            {
-                logger.LogInformation("Pulling latest changes for repository at {RepositoryLocation}", config.RepositoryLocation);
-
-                if (!config.IsGitVersioned)
-                {
-                    logger.LogError("Repository at {RepositoryLocation} is not a Git repository", config.RepositoryLocation);
-                    return false;
-                }
-
-                using var repo = new Repository(config.RepositoryLocation);
-                var signature = new Signature(config.MergerName, config.MergerEmail, DateTimeOffset.Now);
-
-                var pullOptions = new PullOptions
-                {
-                    FetchOptions = new FetchOptions(),
-                    MergeOptions = new MergeOptions()
-                };
-
-                var result = Commands.Pull(repo, signature, pullOptions);
-                var success = result.Status != MergeStatus.Conflicts;
-
-                if (success)
-                {
-                    logger.LogInformation("Repository pulled successfully. Status: {Status}", result.Status);
-                }
-                else
-                {
-                    logger.LogError("Pull failed with conflicts. Status: {Status}", result.Status);
-                }
-
-                return success;
-            }
-            catch (Exception ex)
-            {
-                logger.LogError(ex, "Failed to pull repository at {RepositoryLocation}", config.RepositoryLocation);
-                return false;
-            }
+            return await gitService.PullLatestAsync(config.RepositoryLocation);
         }
 
-        public static void Checkout(this DockerComposeConfiguration config, GitTagVersion version, ILogger logger)
+        public static async Task CheckoutAsync(this DockerComposeConfiguration config, GitTagVersion version, IGitService gitService, ILogger logger)
         {
-            try
-            {
-                logger.LogInformation("Checking out version {Version} in repository at {RepositoryLocation}", 
-                    version.FriendlyName, config.RepositoryLocation);
-
-                if (!config.IsGitVersioned)
-                {
-                    throw new InvalidOperationException($"Repository at {config.RepositoryLocation} is not a Git repository");
-                }
-
-                using var repo = new Repository(config.RepositoryLocation);
-                
-                // Find the tag
-                var tag = repo.Tags.FirstOrDefault(t => t.FriendlyName == version.FriendlyName);
-                if (tag == null)
-                {
-                    throw new InvalidOperationException($"Tag {version.FriendlyName} not found in repository");
-                }
-
-                // Checkout the tag
-                Commands.Checkout(repo, tag.Target.Sha);
-
-                logger.LogInformation("Successfully checked out version {Version}", version.FriendlyName);
-            }
-            catch (Exception ex)
-            {
-                logger.LogError(ex, "Failed to checkout version {Version} in repository at {RepositoryLocation}", 
-                    version.FriendlyName, config.RepositoryLocation);
-                throw;
-            }
+            await gitService.CheckoutVersionAsync(config.RepositoryLocation, version.FriendlyName);
         }
     }
 }

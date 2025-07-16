@@ -34,8 +34,8 @@ namespace ModelingEvolution.AutoUpdater.Services
         /// Gets all available versions (tags) from the repository
         /// </summary>
         /// <param name="repositoryPath">The local path of the Git repository</param>
-        /// <returns>Collection of available versions ordered by semantic version</returns>
-        Task<IEnumerable<GitTagVersion>> GetAvailableVersionsAsync(string repositoryPath);
+        /// <returns>Collection of available versions ordered by semantic version (descending)</returns>
+        Task<IReadOnlyList<GitTagVersion>> GetAvailableVersionsAsync(string repositoryPath);
 
 
         /// <summary>

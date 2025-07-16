@@ -92,13 +92,17 @@ namespace ModelingEvolution.AutoUpdater
 
         /// <summary>
         /// Checks if an upgrade is available for this package
+        /// NOTE: This property is deprecated. Use IsUpgradeAvailableAsync extension method instead.
         /// </summary>
-        public bool IsUpgradeAvailable => _logger != null && this.IsUpgradeAvailable(_logger);
+        [Obsolete("Use IsUpgradeAvailableAsync extension method with IGitService instead")]
+        public bool IsUpgradeAvailable => false; // Placeholder to maintain compatibility
 
         /// <summary>
         /// Gets the available upgrade version if one exists
+        /// NOTE: This property is deprecated. Use AvailableUpgradeAsync extension method instead.
         /// </summary>
-        public GitTagVersion? AvailableUpgrade => _logger != null ? this.AvailableUpgrade(_logger) : null;
+        [Obsolete("Use AvailableUpgradeAsync extension method with IGitService instead")]
+        public GitTagVersion? AvailableUpgrade => null; // Placeholder to maintain compatibility
 
         /// <summary>
         /// Gets the status text for display purposes

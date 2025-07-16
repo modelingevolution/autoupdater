@@ -15,6 +15,7 @@ namespace ModelingEvolution.AutoUpdater.Services
     public class GitService : IGitService
     {
         private readonly ILogger<GitService> _logger;
+        private static readonly IReadOnlyList<GitTagVersion> EmptyVersionList = new List<GitTagVersion>(0).AsReadOnly();
 
         public GitService(ILogger<GitService> logger)
         {
@@ -129,7 +130,7 @@ namespace ModelingEvolution.AutoUpdater.Services
             }
         }
 
-        public async Task<IEnumerable<GitTagVersion>> GetAvailableVersionsAsync(string repositoryPath)
+        public async Task<IReadOnlyList<GitTagVersion>> GetAvailableVersionsAsync(string repositoryPath)
         {
             try
             {
@@ -138,14 +139,17 @@ namespace ModelingEvolution.AutoUpdater.Services
                 if (!IsGitRepository(repositoryPath))
                 {
                     _logger.LogWarning("Path {RepositoryPath} is not a Git repository", repositoryPath);
-                    return Enumerable.Empty<GitTagVersion>();
+                    return EmptyVersionList;
                 }
 
                 return await Task.Run(() =>
                 {
                     using var repo = new Repository(repositoryPath);
                     
-                    var versions = new List<GitTagVersion>();
+                    // Pre-size list to avoid reallocations - most repos have < 50 tags
+                    var versions = new List<GitTagVersion>(Math.Min(repo.Tags.Count(), 100));
+                    
+                    // Parse versions directly into the list
                     foreach (var tag in repo.Tags)
                     {
                         if (GitTagVersion.TryParse(tag.FriendlyName, out var version))
@@ -153,14 +157,17 @@ namespace ModelingEvolution.AutoUpdater.Services
                             versions.Add(version);
                         }
                     }
-
-                    return versions.OrderByDescending(v => v.Version);
+                    
+                    // Sort in-place to avoid creating intermediate collections
+                    versions.Sort((x, y) => y.Version.CompareTo(x.Version));
+                    
+                    return versions;
                 });
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Failed to get available versions from {RepositoryPath}", repositoryPath);
-                return Enumerable.Empty<GitTagVersion>();
+                return EmptyVersionList;
             }
         }
 
@@ -192,17 +199,16 @@ namespace ModelingEvolution.AutoUpdater.Services
                 {
                     using var repo = new Repository(repositoryPath);
                     var origin = repo.Network.Remotes["origin"];
-                    
-                    if (origin != null)
-                    {
-                        var refSpecs = origin.FetchRefSpecs.Select(spec => spec.Specification);
-                        var fetchOptions = new FetchOptions
-                        {
-                            TagFetchMode = TagFetchMode.All
-                        };
 
-                        Commands.Fetch(repo, "origin", refSpecs, fetchOptions, null);
-                    }
+                    if (origin == null) return;
+                    
+                    var refSpecs = origin.FetchRefSpecs.Select(spec => spec.Specification);
+                    var fetchOptions = new FetchOptions
+                    {
+                        TagFetchMode = TagFetchMode.All
+                    };
+
+                    Commands.Fetch(repo, "origin", refSpecs, fetchOptions, null);
                 });
 
                 _logger.LogInformation("Successfully fetched latest tags and references");
