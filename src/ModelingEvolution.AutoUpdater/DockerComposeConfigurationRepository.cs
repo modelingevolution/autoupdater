@@ -6,32 +6,42 @@ using System.Collections.ObjectModel;
 
 namespace ModelingEvolution.AutoUpdater
 {
+    /// <summary>
+    /// 
+    /// </summary>
     public class DockerComposeConfigurationRepository
     {
         private readonly ObservableCollection<DockerComposeConfiguration> _items = new();
-        private readonly IConfiguration configuration;
+        private readonly IConfiguration _configuration;
         private readonly ILogger<DockerComposeConfigurationRepository> _logger;
 
         public DockerComposeConfigurationRepository(IConfiguration configuration, ILogger<DockerComposeConfigurationRepository> logger)
         {
-            this.configuration = configuration;
+            this._configuration = configuration;
             _logger = logger;
-            ChangeToken.OnChange(() => this.configuration.GetReloadToken(), this.OnConfigurationReloaded);
+            ChangeToken.OnChange(() => this._configuration.GetReloadToken(), this.OnConfigurationReloaded);
             OnConfigurationReloaded();
         }
 
         private void OnConfigurationReloaded()
-        {            
-            foreach (var i in _items) i.Dispose();
-            _items.Clear();
+        {
+            try
+            {
+                foreach (var i in _items) i.Dispose();
+                _items.Clear();
 
-            LoadSection("StdPackages");
-            LoadSection("Packages");
-            _logger.LogInformation("Configuration reloaded");
+                LoadSection("StdPackages");
+                LoadSection("Packages");
+                _logger.LogInformation("Configuration reloaded");
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error reloading configuration");
+            }
         }
         private void LoadSection(string section)
         {
-            var items = configuration.GetSection(section).Get<DockerComposeConfiguration[]>();
+            var items = _configuration.GetSection(section).Get<DockerComposeConfiguration[]>();
             if (items != null && items.Any())
                 foreach (var i in items) _items.Add(i);
             else _logger.LogInformation("No items in section {section}", section);

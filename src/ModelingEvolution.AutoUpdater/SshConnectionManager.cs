@@ -1,5 +1,6 @@
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
+using ModelingEvolution.AutoUpdater.Extensions;
 using ModelingEvolution.AutoUpdater.Services;
 using Renci.SshNet;
 using Renci.SshNet.Common;
@@ -45,7 +46,7 @@ public class SshConnectionManager : ISshConnectionManager, IDisposable
         }
         else
         {
-            host = configuration.GetValue<string>("SshHost") ?? string.Empty;
+            host = configuration.SshHost();
             if (string.IsNullOrEmpty(host))
             {
                 throw new InvalidOperationException("SSH Host must be provided either in configuration or as hostOverride parameter");

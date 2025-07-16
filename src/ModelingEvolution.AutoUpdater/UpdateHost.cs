@@ -97,12 +97,11 @@ public class UpdateHost : IHostedService
     {
         try
         {
-            // Initialize SSH configuration from appsettings
-            // Use individual GetValue calls to properly handle environment variables and JSON config
-            _sshConfig.SshUser = _config?.GetValue<string>("SshUser");
-            _sshConfig.SshPwd = _config?.GetValue<string>("SshPwd");
-            _sshConfig.SshKeyPath = _config?.GetValue<string>("SshKeyPath");
-            _sshConfig.SshKeyPassphrase = _config?.GetValue<string>("SshKeyPassphrase");
+            // Initialize SSH configuration from appsettings using extension methods
+            _sshConfig.SshUser = _config?.SshUser();
+            _sshConfig.SshPwd = _config?.SshPassword();
+            _sshConfig.SshKeyPath = _config?.SshKeyPath();
+            _sshConfig.SshKeyPassphrase = _config?.SshKeyPassphrase();
             
             // Parse enum values safely
             if (Enum.TryParse<SshAuthMethod>(_config?.GetValue<string>("SshAuthMethod"), true, out var authMethod))
@@ -110,16 +109,16 @@ public class UpdateHost : IHostedService
                 _sshConfig.SshAuthMethod = authMethod;
             }
             
-            // Parse integer values with defaults
-            _sshConfig.SshPort = _config?.GetValue<int?>("SshPort") ?? 22;
-            _sshConfig.SshTimeoutSeconds = _config?.GetValue<int?>("SshTimeoutSeconds") ?? 30;
-            _sshConfig.SshKeepAliveSeconds = _config?.GetValue<int?>("SshKeepAliveSeconds") ?? 30;
+            // Parse integer values with defaults using extension methods
+            _sshConfig.SshPort = _config?.SshPort() ?? 22;
+            _sshConfig.SshTimeoutSeconds = _config?.SshTimeoutSeconds() ?? 30;
+            _sshConfig.SshKeepAliveSeconds = _config?.SshKeepAliveSeconds() ?? 30;
             
-            // Parse boolean values with defaults
-            _sshConfig.SshEnableCompression = _config?.GetValue<bool?>("SshEnableCompression") ?? true;
+            // Parse boolean values with defaults using extension methods
+            _sshConfig.SshEnableCompression = _config?.SshEnableCompression() ?? true;
             
             // Initialize host address from configuration with fallback
-            _hostAddress = _config?.GetValue<string>("SshHost")  ?? _config?.GetValue<string>("HostAddress") ?? "172.17.0.1";
+            _hostAddress = _config?.SshHost() ?? _config?.GetValue<string>("HostAddress") ?? "172.17.0.1";
             
             
             

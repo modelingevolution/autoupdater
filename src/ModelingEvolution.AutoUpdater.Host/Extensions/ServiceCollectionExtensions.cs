@@ -3,6 +3,7 @@ using ModelingEvolution.AutoUpdater.Host.Services.VPN;
 using ModelingEvolution.AutoUpdater.Host.Services;
 using ModelingEvolution.AutoUpdater.Services;
 using ModelingEvolution.AutoUpdater;
+using ModelingEvolution.AutoUpdater.Extensions;
 
 namespace ModelingEvolution.AutoUpdater.Host.Extensions;
 
@@ -18,12 +19,12 @@ public static class ServiceCollectionExtensions
         // Configure DockerComposeConfiguration with logger through a hosted service
         services.AddHostedService<PackageStatusInitializationService>();
 
-        // Register SSH VPN service
+        // Register SSH VPN service using extension methods
         services.AddSingleton<ISshVpnService>(provider =>
         {
             var configuration = provider.GetRequiredService<IConfiguration>();
-            var vpnProviderAccess = configuration.GetValue<string>("VpnProviderAccess", "None");
-            var vpnProvider = configuration.GetValue<string>("VpnProvider", "None");
+            var vpnProviderAccess = configuration.VpnProviderAccess();
+            var vpnProvider = configuration.VpnProvider();
             
             if (vpnProviderAccess != "Ssh" || vpnProvider != "Wireguard")
             {
