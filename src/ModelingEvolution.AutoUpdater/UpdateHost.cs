@@ -194,6 +194,26 @@ public class UpdateHost : IHostedService
             // Step 1: Load current deployment state
             var currentDeploymentState = await _deploymentStateProvider.GetDeploymentStateAsync(configuration.ComposeFolderPath);
             currentVersion = currentDeploymentState?.Version;
+
+            if (!_gitService.IsGitRepository(configuration.RepositoryLocation))
+            {
+                _log.LogInformation("Repository not found at {RepositoryLocation}, cloning from {RepositoryUrl}", 
+                    configuration.RepositoryLocation, configuration.RepositoryUrl);
+                _progressService.UpdateOperation("Cloning repository");
+                
+                try
+                {
+                    await _gitService.CloneRepositoryAsync(configuration.RepositoryUrl, configuration.RepositoryLocation);
+                    _log.LogInformation("Repository cloned successfully to {RepositoryLocation}", configuration.RepositoryLocation);
+                }
+                catch (Exception ex)
+                {
+                    _log.LogError(ex, "Failed to clone repository from {RepositoryUrl} to {RepositoryLocation}", 
+                        configuration.RepositoryUrl, configuration.RepositoryLocation);
+                    throw new InvalidOperationException($"Failed to clone repository: {ex.Message}", ex);
+                }
+            }
+
             var availableVersions = await _gitService.GetAvailableVersionsAsync(configuration.RepositoryLocation);
             var latestVersion = availableVersions.OrderByDescending(v => v.Version).FirstOrDefault();
 
