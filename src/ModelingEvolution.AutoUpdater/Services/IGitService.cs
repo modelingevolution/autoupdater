@@ -50,5 +50,13 @@ namespace ModelingEvolution.AutoUpdater.Services
         /// </summary>
         /// <param name="repositoryPath">The local path of the Git repository</param>
         Task FetchAsync(string repositoryPath);
+
+        /// <summary>
+        /// Initializes a Git repository in an existing directory and adds a remote origin
+        /// </summary>
+        /// <param name="repositoryPath">The local path to initialize as a Git repository</param>
+        /// <param name="remoteUrl">The URL of the remote repository to add as origin</param>
+        /// <returns>True if the initialization was successful, false otherwise</returns>
+        Task<bool> InitializeRepositoryAsync(string repositoryPath, string remoteUrl);
     }
 }

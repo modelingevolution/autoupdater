@@ -219,5 +219,70 @@ namespace ModelingEvolution.AutoUpdater.Services
                 throw;
             }
         }
+
+        public async Task<bool> InitializeRepositoryAsync(string repositoryPath, string remoteUrl)
+        {
+            try
+            {
+                _logger.LogInformation("Initializing Git repository at {RepositoryPath} with remote {RemoteUrl}", repositoryPath, remoteUrl);
+
+                if (!Directory.Exists(repositoryPath))
+                {
+                    _logger.LogError("Directory {RepositoryPath} does not exist", repositoryPath);
+                    return false;
+                }
+
+                if (IsGitRepository(repositoryPath))
+                {
+                    _logger.LogWarning("Directory {RepositoryPath} is already a Git repository", repositoryPath);
+                    return false;
+                }
+
+                await Task.Run(() =>
+                {
+                    // Initialize the repository
+                    Repository.Init(repositoryPath);
+                    
+                    using var repo = new Repository(repositoryPath);
+                    
+                    // Add remote origin
+                    repo.Network.Remotes.Add("origin", remoteUrl);
+                    
+                    // Fetch from remote to get all branches and tags
+                    var fetchOptions = new FetchOptions
+                    {
+                        TagFetchMode = TagFetchMode.All
+                    };
+                    
+                    var refSpecs = repo.Network.Remotes["origin"].FetchRefSpecs.Select(spec => spec.Specification);
+                    Commands.Fetch(repo, "origin", refSpecs, fetchOptions, null);
+                    
+                    // Set up tracking branch for master/main
+                    var remoteBranches = repo.Branches.Where(b => b.IsRemote && 
+                        (b.FriendlyName.EndsWith("/master") || b.FriendlyName.EndsWith("/main"))).ToList();
+                    
+                    if (remoteBranches.Any())
+                    {
+                        var mainBranch = remoteBranches.First();
+                        var localBranchName = mainBranch.FriendlyName.Split('/').Last();
+                        
+                        // Create local tracking branch
+                        var localBranch = repo.CreateBranch(localBranchName, mainBranch.Tip);
+                        repo.Branches.Update(localBranch, b => b.TrackedBranch = mainBranch.CanonicalName);
+                        
+                        // Checkout the local branch
+                        Commands.Checkout(repo, localBranch);
+                    }
+                });
+
+                _logger.LogInformation("Successfully initialized Git repository at {RepositoryPath}", repositoryPath);
+                return true;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to initialize Git repository at {RepositoryPath}", repositoryPath);
+                return false;
+            }
+        }
     }
 }
