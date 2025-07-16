@@ -216,8 +216,8 @@ check_docker_images() {
             fi
         done
         
-        # If we found the preview image, that's sufficient
-        if [[ " ${found_images[*]} " =~ " ${registry}/${image_name}:preview " ]]; then
+        # If we found the master-commit image, that's sufficient
+        if [[ " ${found_images[*]} " =~ " ${registry}/${image_name}:master-${current_commit} " ]]; then
             print_success "✓ Found required Docker images for commit $current_commit"
             return 0
         fi
