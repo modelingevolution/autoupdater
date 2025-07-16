@@ -14,7 +14,7 @@ services:
       # Data volume for persistent storage
       - ./data:/data
       # SSH keys for authentication (optional)
-      - ~/.ssh:/root/.ssh:ro
+      # - ~/.ssh:/root/.ssh:ro
       # D-Bus socket for NetworkManager (VPN support)
       - /var/run/dbus:/var/run/dbus:ro
       # NetworkManager configuration (optional)

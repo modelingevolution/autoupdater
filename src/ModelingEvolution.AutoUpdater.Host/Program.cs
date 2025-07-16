@@ -36,7 +36,7 @@ public class Program
         // Configure services
         builder.Services
             .AddMudServices()
-            .AddApplicationServices()
+            .AddAutoUpdaterHost()
             .AddApiServices()
             .AddOpenApi()
             .AddRazorComponents()
@@ -53,8 +53,8 @@ public class Program
 
         // Configure pipeline and endpoints
         app.ConfigurePipeline()
-           .MapEndpoints()
-           .MapOpenApi();
+            .MapEndpoints()
+            .MapOpenApi();
 
         await app.RunAsync();
     }

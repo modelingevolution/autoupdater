@@ -67,17 +67,17 @@ namespace ModelingEvolution.AutoUpdater.Extensions
 
         public static IEnumerable<GitTagVersion> AvailableVersions(this DockerComposeConfiguration config, ILogger logger)
         {
-            return config.Versions(logger).Where(v => v != null);
+            return config.Versions(logger).Where(v => v != null!);
         }
 
-        public static IEnumerable<GitTagVersion> Versions(this DockerComposeConfiguration config, ILogger logger)
+        public static GitTagVersion[] Versions(this DockerComposeConfiguration config, ILogger logger)
         {
             try
             {
                 if (!config.IsGitVersioned)
                 {
                     logger.LogWarning("Repository at {RepositoryLocation} is not a Git repository", config.RepositoryLocation);
-                    return Enumerable.Empty<GitTagVersion>();
+                    return [];
                 }
 
                 using var repo = new Repository(config.RepositoryLocation);
@@ -85,7 +85,8 @@ namespace ModelingEvolution.AutoUpdater.Extensions
                     .Select(tag => GitTagVersion.TryParse(tag.FriendlyName, out var version) ? version : null)
                     .Where(v => v != null)
                     .Cast<GitTagVersion>()
-                    .OrderByDescending(v => v.Version);
+                    .OrderByDescending(v => v.Version)
+                    .ToArray();
 
                 logger.LogDebug("Found {Count} valid version tags in repository", tags.Count());
                 return tags;
@@ -93,7 +94,7 @@ namespace ModelingEvolution.AutoUpdater.Extensions
             catch (Exception ex)
             {
                 logger.LogError(ex, "Failed to get versions from repository at {RepositoryLocation}", config.RepositoryLocation);
-                return Enumerable.Empty<GitTagVersion>();
+                return [];
             }
         }
 

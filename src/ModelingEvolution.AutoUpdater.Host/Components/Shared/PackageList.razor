@@ -3,29 +3,28 @@
 
 <MudStack>
     <ObservableForEach ItemSource="@packages">
-        <PackageDetails Package="@context" />
+        
+        <PackageDetails Package="@context" /> 
     </ObservableForEach>
 </MudStack>
 
 @code {
     [Parameter] public string ErrorMessage { get; set; } = string.Empty;
 
-    private IReadOnlyList<DockerComposeConfiguration> packages = null!;
+    private IReadOnlyList<DockerComposeConfiguration> packages = Array.Empty<DockerComposeConfiguration>();
 
     protected override void OnInitialized()
     {
-        packages = repo.GetPackages().ToList();
+        packages = repo.GetPackages();
     }
 
     protected override void OnParametersSet()
     {
         // Update error messages on all packages when global error changes
-        if (packages != null)
+        if (packages == null!) return;
+        foreach (var package in packages)
         {
-            foreach (var package in packages)
-            {
-                package.ErrorMessage = ErrorMessage;
-            }
+            package.ErrorMessage = ErrorMessage;
         }
     }
 }

@@ -14,7 +14,7 @@ public static class WebApplicationExtensions
 
         app.UseStaticFiles();
         app.UseAntiforgery();
-
+        app.MapStaticAssets();
         return app;
     }
 

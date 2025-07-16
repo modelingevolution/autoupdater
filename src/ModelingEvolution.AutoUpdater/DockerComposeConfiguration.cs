@@ -10,15 +10,15 @@ namespace ModelingEvolution.AutoUpdater
     /// <summary>
     /// Configuration data for Docker Compose deployments - Pure data record
     /// </summary>
-    public record DockerComposeConfiguration : IDisposable
+    public record DockerComposeConfiguration 
     {
         public string RepositoryLocation { get; init; } = string.Empty;
         public string RepositoryUrl { get; init; } = string.Empty;
         public string DockerComposeDirectory { get; init; } = "./";
         public string? DockerAuth { get; init; }
         public string? DockerRegistryUrl { get; init; }
-        public string MergerName { get; init; } = "pi-admin";
-        public string MergerEmail { get; init; } = "admin@eventpi.com";
+        public string MergerName { get; init; } = "deploy";
+        public string MergerEmail { get; init; } = "deploy@modelingeovlution.com";
         public IList<DockerRegistryPat> DockerAuths { get; init; } = new List<DockerRegistryPat>();
 
         public DockerComposeConfiguration(string repositoryLocation, string repositoryUrl,
@@ -135,10 +135,7 @@ namespace ModelingEvolution.AutoUpdater
         /// </summary>
         public string ErrorMessage { get; set; } = string.Empty;
 
-        public void Dispose()
-        {
-            // No cleanup needed for this data-only record
-        }
+      
     }
 
     /// <summary>

@@ -269,7 +269,7 @@ public class SshConnectionManager : ISshConnectionManager, IDisposable
         {
             try
             {
-                await Task.Run(() => client.Connect());
+                await client.ConnectAsync(CancellationToken.None);
                 return;
             }
             catch (Exception ex) when (attempt < maxRetries)
@@ -281,7 +281,7 @@ public class SshConnectionManager : ISshConnectionManager, IDisposable
         }
 
         // Final attempt without catching exception
-        await Task.Run(() => client.Connect());
+        await client.ConnectAsync(CancellationToken.None);
     }
 
     private async Task ConnectWithRetryAsync(ScpClient client)
@@ -293,7 +293,7 @@ public class SshConnectionManager : ISshConnectionManager, IDisposable
         {
             try
             {
-                await Task.Run(() => client.Connect());
+                await client.ConnectAsync(CancellationToken.None);
                 return;
             }
             catch (Exception ex) when (attempt < maxRetries)
@@ -305,7 +305,7 @@ public class SshConnectionManager : ISshConnectionManager, IDisposable
         }
 
         // Final attempt without catching exception
-        await Task.Run(() => client.Connect());
+        await client.ConnectAsync(CancellationToken.None);
     }
 
     public void Dispose()

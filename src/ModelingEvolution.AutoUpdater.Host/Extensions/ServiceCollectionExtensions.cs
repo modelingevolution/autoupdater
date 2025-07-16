@@ -9,7 +9,7 @@ namespace ModelingEvolution.AutoUpdater.Host.Extensions;
 
 public static class ServiceCollectionExtensions
 {
-    public static IServiceCollection AddApplicationServices(this IServiceCollection services)
+    public static IServiceCollection AddAutoUpdaterHost(this IServiceCollection services)
     {
         services.AddSingleton<AutoUpdaterService>();
         

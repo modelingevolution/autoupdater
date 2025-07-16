@@ -27,12 +27,11 @@ namespace ModelingEvolution.AutoUpdater
         {
             try
             {
-                foreach (var i in _items) i.Dispose();
                 _items.Clear();
 
                 LoadSection("StdPackages");
                 LoadSection("Packages");
-                _logger.LogInformation("Configuration reloaded");
+                _logger.LogInformation("Configuration loaded");
             }
             catch (Exception ex)
             {

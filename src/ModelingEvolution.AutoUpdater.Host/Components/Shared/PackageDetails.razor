@@ -35,10 +35,6 @@
         var dialog = await DialogService.ShowAsync<PackageAuthDialog>("Security Settings", parameters, options);
         var result = await dialog.Result;
         
-        if (result != null && !result.Canceled)
-        {
-            // Optionally trigger a refresh or update of the package list
-            StateHasChanged();
-        }
+        
     }
 }
