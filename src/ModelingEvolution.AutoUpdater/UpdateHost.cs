@@ -214,6 +214,8 @@ public class UpdateHost : IHostedService
                 }
             }
 
+            await _gitService.FetchAsync(configuration.RepositoryLocation);
+            
             var availableVersions = await _gitService.GetAvailableVersionsAsync(configuration.RepositoryLocation);
             var latestVersion = availableVersions.OrderByDescending(v => v.Version).FirstOrDefault();
 
