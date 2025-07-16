@@ -23,7 +23,7 @@ public class Program
             .AddCommandLine(args);
     }
 
-    public static void Main(string[] args)
+    public static async Task Main(string[] args)
     {
         var builder = WebApplication.CreateBuilder(args);
         
@@ -36,12 +36,14 @@ public class Program
         // Configure services
         builder.Services
             .AddMudServices()
-            .AddAutoUpdater()
             .AddApplicationServices()
             .AddApiServices()
             .AddOpenApi()
             .AddRazorComponents()
             .AddInteractiveServerComponents();
+
+        // Add AutoUpdater with async initialization
+        await builder.Services.AddAutoUpdaterAsync(builder.Configuration);
 
         var app = builder.Build();
 
@@ -54,7 +56,7 @@ public class Program
            .MapEndpoints()
            .MapOpenApi();
 
-        app.Run();
+        await app.RunAsync();
     }
 
     private static void WriteConsoleHeader(WebApplicationBuilder builder)

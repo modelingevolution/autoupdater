@@ -8,7 +8,7 @@ namespace ModelingEvolution.AutoUpdater
 {
     public static class ContainerExtensions
     {
-        public static IServiceCollection AddAutoUpdater(this IServiceCollection container)
+        public static async Task<IServiceCollection> AddAutoUpdaterAsync(this IServiceCollection container, IConfiguration configuration)
         {
             // Add runtime configuration support
             container.AddRuntimeConfiguration();
@@ -20,13 +20,15 @@ namespace ModelingEvolution.AutoUpdater
             // Register the new refactored services
             container.AddSingleton<IGitService, GitService>();
             container.AddSingleton<IScriptMigrationService, ScriptMigrationService>();
-            container.AddSingleton<ISshService>(sp =>
-                sp.GetRequiredService<ISshConnectionManager>().CreateSshServiceAsync().Result);
             
-            container.AddSingleton<ISshConnectionManager, SshConnectionManager>(x =>
-                SshConnectionManager.CreateFromConfiguration(x.GetRequiredService<IConfiguration>(),
-                    x.GetRequiredService<ILoggerFactory>()));
-            // Register SshConnectionManager using the static factory method
+            // Create SshConnectionManager instance manually from configuration
+            var loggerFactory = LoggerFactory.Create(builder => builder.AddConsole());
+            var sshConnectionManager = SshConnectionManager.CreateFromConfiguration(configuration, loggerFactory);
+            container.AddSingleton<ISshConnectionManager>(sshConnectionManager);
+            
+            // Create ISshService with proper await - no more .Result deadlock
+            var sshService = await sshConnectionManager.CreateSshServiceAsync();
+            container.AddSingleton<ISshService>(sshService);
             
             container.AddSingleton<IDockerComposeService, DockerComposeService>();
             container.AddSingleton<IDeploymentStateProvider, DeploymentStateProvider>();

@@ -19,7 +19,7 @@ namespace ModelingEvolution.AutoUpdater
         {
             this._configuration = configuration;
             _logger = logger;
-            ChangeToken.OnChange(() => this._configuration.GetReloadToken(), this.OnConfigurationReloaded);
+            //ChangeToken.OnChange(() => this._configuration.GetReloadToken(), this.OnConfigurationReloaded);
             OnConfigurationReloaded();
         }
 
