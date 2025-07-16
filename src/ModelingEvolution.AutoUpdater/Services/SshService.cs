@@ -32,7 +32,8 @@ namespace ModelingEvolution.AutoUpdater.Services
                 _logger.LogDebug("Executing SSH command: {Command}", command);
                 
                 using var sshCommand = _sshClient.CreateCommand(fullCommand);
-                var result = await Task.Run(() => sshCommand.Execute());
+                
+                await sshCommand.ExecuteAsync();
                 
                 var commandResult = new SshCommandResult
                 {
