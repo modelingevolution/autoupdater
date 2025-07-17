@@ -13,13 +13,13 @@ namespace ModelingEvolution.AutoUpdater
 {
     public class UpdateService
     {
-        private readonly DockerComposeConfigurationRepository _repository;
+        private readonly DockerComposeConfigurationModel _repository;
         private readonly UpdateHost _updateHost;
         private readonly IGitService _gitService;
         private readonly ILogger<UpdateService> _logger;
 
         public UpdateService(
-            DockerComposeConfigurationRepository repository,
+            DockerComposeConfigurationModel repository,
             UpdateHost updateHost,
             IGitService gitService,
             ILogger<UpdateService> logger)
@@ -87,10 +87,9 @@ namespace ModelingEvolution.AutoUpdater
             return packages;
         }
 
-        public async Task<PackageInfo?> GetPackageAsync(string packageName)
+        public async Task<PackageInfo?> GetPackageAsync(PackageName packageName)
         {
-            var config = _repository.GetPackages()
-                .FirstOrDefault(c => c.FriendlyName.Equals(packageName, StringComparison.OrdinalIgnoreCase));
+            var config = _repository.GetPackage(packageName);
 
             if (config == null)
                 return null;
@@ -114,10 +113,9 @@ namespace ModelingEvolution.AutoUpdater
             };
         }
 
-        public async Task<UpdateResult> TriggerUpdateAsync(string packageName)
+        public async Task<UpdateResult> TriggerUpdateAsync(PackageName packageName)
         {
-            var config = _repository.GetPackages()
-                .FirstOrDefault(c => c.FriendlyName.Equals(packageName, StringComparison.OrdinalIgnoreCase));
+            var config = _repository.GetPackage(packageName);
 
             if (config == null)
             {

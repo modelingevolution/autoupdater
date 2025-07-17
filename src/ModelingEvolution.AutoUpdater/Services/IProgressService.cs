@@ -18,6 +18,11 @@ namespace ModelingEvolution.AutoUpdater.Services
         string CurrentOperation { get; }
 
         /// <summary>
+        /// Current application being updated
+        /// </summary>
+        string CurrentApplication { get; }
+
+        /// <summary>
         /// Overall progress percentage (0-100)
         /// </summary>
         int ProgressPercentage { get; }
@@ -73,6 +78,11 @@ namespace ModelingEvolution.AutoUpdater.Services
         void StartOperation(string operation, int totalPackages = 1);
 
         /// <summary>
+        /// Start tracking an update operation for a specific application
+        /// </summary>
+        void StartOperation(string operation, string applicationName, int totalPackages = 1);
+
+        /// <summary>
         /// Complete the current operation
         /// </summary>
         void CompleteOperation();
@@ -81,5 +91,14 @@ namespace ModelingEvolution.AutoUpdater.Services
         /// Reset all progress tracking
         /// </summary>
         void Reset();
+
+        /// <summary>
+        /// Log operation progress with optional percentage update and structured logging
+        /// </summary>
+        /// <param name="message">The operation message</param>
+        /// <param name="percentage">Optional progress percentage (0-100)</param>
+        /// <param name="logMessage">Optional log message template</param>
+        /// <param name="args">Optional log message arguments for structured logging</param>
+        void LogOperationProgress(string message, float? percentage = null, string? logMessage = null, params object[] args);
     }
 }

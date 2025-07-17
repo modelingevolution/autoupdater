@@ -12,6 +12,7 @@ public static class ServiceCollectionExtensions
     public static IServiceCollection AddAutoUpdaterHost(this IServiceCollection services)
     {
         services.AddSingleton<AutoUpdaterService>();
+        services.AddSingleton<IBrandingService, BrandingService>();
         
         // Configure in-memory logging
         services.AddLogging(builder => builder.AddInMemoryLogging());

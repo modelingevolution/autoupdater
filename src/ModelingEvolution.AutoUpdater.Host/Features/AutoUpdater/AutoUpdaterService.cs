@@ -2,6 +2,7 @@ using ModelingEvolution.AutoUpdater.Host.Features.AutoUpdater.Models;
 using System.Text.Json;
 using ModelingEvolution.AutoUpdater.Extensions;
 using ModelingEvolution.AutoUpdater.Services;
+using ModelingEvolution.AutoUpdater;
 
 namespace ModelingEvolution.AutoUpdater.Host.Features.AutoUpdater;
 
@@ -10,6 +11,11 @@ public class AutoUpdaterService
     private readonly UpdateService _updateService;
     private readonly ISshConnectionManager _sshManager;
     private readonly ILogger<AutoUpdaterService> _logger;
+    
+    private static readonly JsonSerializerOptions JsonOptions = new()
+    {
+        PropertyNameCaseInsensitive = true
+    };
 
     public AutoUpdaterService(
         UpdateService updateService,
@@ -23,33 +29,26 @@ public class AutoUpdaterService
 
     public async Task<PackagesResponse> GetPackagesAsync()
     {
-        var packages = new List<PackageStatus>();
+        // Get both data sources concurrently
+        var composeStatusTask = GetDockerComposeStatusAsync();
+        var packageInfosTask = _updateService.GetPackagesAsync();
         
-        // Get Docker Compose status via SSH
-        var composeStatusMap = await GetDockerComposeStatusAsync();
+        var composeStatusMap = await composeStatusTask;
+        var packageInfos = await packageInfosTask;
         
-        // Get packages from UpdateService
-        var packageInfos = await _updateService.GetPackagesAsync();
-        
-        foreach (var packageInfo in packageInfos)
+        var packages = packageInfos.Select(packageInfo => new PackageStatus
         {
-            // Determine status from Docker Compose status
-            var status = GetPackageStatus(packageInfo.Name, composeStatusMap);
-            
-            packages.Add(new PackageStatus
-            {
-                Name = packageInfo.Name,
-                RepositoryUrl = packageInfo.RepositoryUrl,
-                CurrentVersion = packageInfo.CurrentVersion,
-                LastChecked = packageInfo.LastChecked,
-                Status = status
-            });
-        }
+            Name = packageInfo.Name,
+            RepositoryUrl = packageInfo.RepositoryUrl,
+            CurrentVersion = packageInfo.CurrentVersion,
+            LastChecked = packageInfo.LastChecked,
+            Status = GetPackageStatus(packageInfo.Name, composeStatusMap)
+        }).ToList();
 
         return new PackagesResponse { Packages = packages };
     }
 
-    private async Task<Dictionary<string, ComposeProjectStatus>> GetDockerComposeStatusAsync()
+    private async Task<Dictionary<PackageName, ComposeProjectStatus>> GetDockerComposeStatusAsync()
     {
         try
         {
@@ -60,31 +59,26 @@ public class AutoUpdaterService
             if (string.IsNullOrWhiteSpace(ret.Output))
             {
                 _logger.LogWarning("No output from docker-compose ls command");
-                return new Dictionary<string, ComposeProjectStatus>();
+                return [];
             }
 
-            var composeProjects = JsonSerializer.Deserialize<ComposeProject[]>(ret.Output, new JsonSerializerOptions
-            {
-                PropertyNameCaseInsensitive = true
-            });
+            var composeProjects = JsonSerializer.Deserialize<ComposeProject[]>(ret.Output, JsonOptions);
 
             if (composeProjects == null)
             {
                 _logger.LogWarning("Failed to deserialize docker-compose ls output");
-                return new Dictionary<string, ComposeProjectStatus>();
+                return [];
             }
 
-            var statusMap = new Dictionary<string, ComposeProjectStatus>();
-            foreach (var project in composeProjects)
-            {
-                statusMap[project.Name] = new ComposeProjectStatus
+            var statusMap = composeProjects.ToDictionary(
+                project => (PackageName)project.Name,
+                project => new ComposeProjectStatus
                 {
                     Status = project.Status,
                     ConfigFiles = project.ConfigFiles,
-                    RunningServices = project.Status.ToLowerInvariant().Contains("running") ? 1 : 0,
-                    TotalServices = 1 // This is approximate, would need additional parsing for exact count
-                };
-            }
+                    RunningServices = project.Status.Contains("running", StringComparison.OrdinalIgnoreCase) ? 1 : 0,
+                    TotalServices = 1
+                });
 
             _logger.LogDebug("Retrieved status for {Count} compose projects", statusMap.Count);
             return statusMap;
@@ -92,11 +86,11 @@ public class AutoUpdaterService
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to get Docker Compose status via SSH");
-            return new Dictionary<string, ComposeProjectStatus>();
+            return [];
         }
     }
 
-    private string GetPackageStatus(string packageName, Dictionary<string, ComposeProjectStatus> composeStatusMap)
+    private string GetPackageStatus(PackageName packageName, Dictionary<PackageName, ComposeProjectStatus> composeStatusMap)
     {
         // Try exact match first
         if (composeStatusMap.TryGetValue(packageName, out var exactMatch))
@@ -104,12 +98,11 @@ public class AutoUpdaterService
             return MapComposeStatusToPackageStatus(exactMatch.Status);
         }
 
-        // Try partial match (in case of naming differences)
+        // Try partial match by name similarity
         var partialMatch = composeStatusMap.FirstOrDefault(kvp => 
-            kvp.Key.Contains(packageName, StringComparison.OrdinalIgnoreCase) ||
-            packageName.Contains(kvp.Key, StringComparison.OrdinalIgnoreCase));
+            string.Equals(kvp.Key.ToString(), packageName.ToString(), StringComparison.OrdinalIgnoreCase));
 
-        if (!partialMatch.Equals(default(KeyValuePair<string, ComposeProjectStatus>)))
+        if (partialMatch.Key != default)
         {
             _logger.LogDebug("Found partial match for package {PackageName}: {ComposeName}", 
                 packageName, partialMatch.Key);
@@ -121,20 +114,18 @@ public class AutoUpdaterService
         return "not-deployed";
     }
 
-    private string MapComposeStatusToPackageStatus(string composeStatus)
-    {
-        return composeStatus.ToLowerInvariant() switch
+    private static string MapComposeStatusToPackageStatus(string composeStatus) =>
+        composeStatus switch
         {
-            var status when status.Contains("running") => "running",
-            var status when status.Contains("exited") => "stopped",
-            var status when status.Contains("paused") => "paused",
-            var status when status.Contains("restarting") => "restarting",
-            var status when status.Contains("dead") => "failed",
+            var s when s.Contains("running", StringComparison.OrdinalIgnoreCase) => "running",
+            var s when s.Contains("exited", StringComparison.OrdinalIgnoreCase) => "stopped",
+            var s when s.Contains("paused", StringComparison.OrdinalIgnoreCase) => "paused",
+            var s when s.Contains("restarting", StringComparison.OrdinalIgnoreCase) => "restarting",
+            var s when s.Contains("dead", StringComparison.OrdinalIgnoreCase) => "failed",
             _ => "unknown"
         };
-    }
 
-    public async Task<UpgradeStatusResponse> GetUpgradeStatusAsync(string packageName)
+    public async Task<UpgradeStatusResponse> GetUpgradeStatusAsync(PackageName packageName)
     {
         var packageInfo = await _updateService.GetPackageAsync(packageName);
 
@@ -153,40 +144,42 @@ public class AutoUpdaterService
         };
     }
 
-    public async Task<UpdateResponse> TriggerUpdateAsync(string packageName)
+    public Task<UpdateResponse> TriggerUpdateAsync(PackageName packageName)
     {
         var updateId = Guid.NewGuid().ToString();
-        
-        // Start update in background
-        _ = Task.Run(async () =>
-        {
-            try
-            {
-                _logger.LogInformation("Starting update for package {PackageName}, update ID: {UpdateId}", packageName, updateId);
-                await _updateService.TriggerUpdateAsync(packageName);
-                _logger.LogInformation("Update completed for package {PackageName}, update ID: {UpdateId}", packageName, updateId);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Update failed for package {PackageName}, update ID: {UpdateId}", packageName, updateId);
-            }
-        });
+        _ = StartBackgroundUpdate(packageName, updateId);
 
-        return new UpdateResponse
+        return Task.FromResult(new UpdateResponse
         {
             PackageName = packageName,
             UpdateId = updateId,
             Status = "started",
             Message = "Update process initiated"
-        };
+        });
     }
 
     public async Task<UpdateAllResponse> TriggerUpdateAllAsync()
     {
+        var packageInfos = await _updateService.GetPackagesAsync();
+        var result = ProcessPackagesForUpdate(packageInfos);
+
+        // If no packages to update, trigger the update process anyway
+        if (result.UpdatesStarted.Count == 0)
+        {
+            _ = Task.Run(_updateService.UpdateAllAsync);
+        }
+
+        return new UpdateAllResponse
+        {
+            UpdatesStarted = result.UpdatesStarted,
+            Skipped = result.Skipped
+        };
+    }
+    
+    private UpdateProcessResult ProcessPackagesForUpdate(IEnumerable<PackageInfo> packageInfos)
+    {
         var updatesStarted = new List<UpdateInfo>();
         var skipped = new List<SkippedPackage>();
-
-        var packageInfos = await _updateService.GetPackagesAsync();
         
         foreach (var packageInfo in packageInfos)
         {
@@ -195,21 +188,7 @@ public class AutoUpdaterService
                 if (packageInfo.UpgradeAvailable)
                 {
                     var updateId = Guid.NewGuid().ToString();
-                    
-                    // Start update in background
-                    _ = Task.Run(async () =>
-                    {
-                        try
-                        {
-                            _logger.LogInformation("Starting update for package {PackageName}, update ID: {UpdateId}", packageInfo.Name, updateId);
-                            await _updateService.TriggerUpdateAsync(packageInfo.Name);
-                            _logger.LogInformation("Update completed for package {PackageName}, update ID: {UpdateId}", packageInfo.Name, updateId);
-                        }
-                        catch (Exception ex)
-                        {
-                            _logger.LogError(ex, "Update failed for package {PackageName}, update ID: {UpdateId}", packageInfo.Name, updateId);
-                        }
-                    });
+                    _ = StartBackgroundUpdate(packageInfo.Name, updateId);
 
                     updatesStarted.Add(new UpdateInfo
                     {
@@ -238,22 +217,28 @@ public class AutoUpdaterService
                 });
             }
         }
-
-        // If no packages to update, trigger the update process anyway
-        if (updatesStarted.Count == 0)
-        {
-            _ = Task.Run(async () =>
-            {
-                await _updateService.UpdateAllAsync();
-            });
-        }
-
-        return new UpdateAllResponse
+        
+        return new UpdateProcessResult
         {
             UpdatesStarted = updatesStarted,
             Skipped = skipped
         };
     }
+    
+    private Task StartBackgroundUpdate(PackageName packageName, string updateId) =>
+        Task.Run(async () =>
+        {
+            try
+            {
+                _logger.LogInformation("Starting update for package {PackageName}, update ID: {UpdateId}", packageName, updateId);
+                await _updateService.TriggerUpdateAsync(packageName);
+                _logger.LogInformation("Update completed for package {PackageName}, update ID: {UpdateId}", packageName, updateId);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Update failed for package {PackageName}, update ID: {UpdateId}", packageName, updateId);
+            }
+        });
 }
 
 public class PackageNotFoundException : Exception

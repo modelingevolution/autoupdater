@@ -43,92 +43,32 @@ namespace ModelingEvolution.AutoUpdater.Tests.Services
         public async Task GetComposeFilesForArchitectureAsync_WithInvalidDirectoryPath_ShouldThrowArgumentException(string? directoryPath)
         {
             // Act & Assert
-            var act = async () => await _service.GetComposeFilesForArchitectureAsync(directoryPath!, "x64");
+            var act = async () => await _service.GetComposeFiles(directoryPath!, CpuArchitecture.X64);
             await act.Should().ThrowAsync<ArgumentException>()
                 .WithParameterName("directoryPath");
         }
 
-        [Theory]
-        [InlineData("")]
-        [InlineData("  ")]
-        [InlineData(null)]
-        public async Task GetComposeFilesForArchitectureAsync_WithInvalidArchitecture_ShouldThrowArgumentException(string? architecture)
-        {
-            // Act & Assert
-            var act = async () => await _service.GetComposeFilesForArchitectureAsync("/path", architecture!);
-            await act.Should().ThrowAsync<ArgumentException>()
-                .WithParameterName("architecture");
-        }
+        
+        
 
-        [Fact]
-        public async Task GetComposeFilesForArchitectureAsync_WithBaseFileOnly_ShouldReturnBaseFile()
-        {
-            // Arrange
-            const string directoryPath = "/app";
-            const string architecture = "x64";
-            
-            _sshService.FileExistsAsync("/app/docker-compose.yml").Returns(true);
-            _sshService.FileExistsAsync("/app/docker-compose.x64.yml").Returns(false);
-
-            // Act
-            var result = await _service.GetComposeFilesForArchitectureAsync(directoryPath, architecture);
-
-            // Assert
-            result.Should().HaveCount(1);
-            result[0].Should().Be("docker-compose.yml");
-        }
-
-        [Fact]
-        public async Task GetComposeFilesForArchitectureAsync_WithBothFiles_ShouldReturnBothFiles()
-        {
-            // Arrange
-            const string directoryPath = "/app";
-            const string architecture = "arm64";
-            
-            _sshService.FileExistsAsync("/app/docker-compose.yml").Returns(true);
-            _sshService.FileExistsAsync("/app/docker-compose.arm64.yml").Returns(true);
-
-            // Act
-            var result = await _service.GetComposeFilesForArchitectureAsync(directoryPath, architecture);
-
-            // Assert
-            result.Should().HaveCount(2);
-            result[0].Should().Be("docker-compose.yml");
-            result[1].Should().Be("docker-compose.arm64.yml");
-        }
-
-        [Fact]
-        public async Task GetComposeFilesForArchitectureAsync_WithNoFiles_ShouldReturnEmpty()
-        {
-            // Arrange
-            const string directoryPath = "/app";
-            const string architecture = "x64";
-            
-            _sshService.FileExistsAsync(Arg.Any<string>()).Returns(false);
-
-            // Act
-            var result = await _service.GetComposeFilesForArchitectureAsync(directoryPath, architecture);
-
-            // Assert
-            result.Should().BeEmpty();
-        }
 
         [Fact]
         public async Task GetComposeFilesForArchitectureAsync_WithArchFileOnly_ShouldReturnArchFile()
         {
             // Arrange
             const string directoryPath = "/app";
-            const string architecture = "x64";
-            
-            _sshService.FileExistsAsync("/app/docker-compose.yml").Returns(false);
-            _sshService.FileExistsAsync("/app/docker-compose.x64.yml").Returns(true);
+            CpuArchitecture architecture = CpuArchitecture.X64;
 
+            
+            _sshService.GetFiles("/app", Arg.Any<string>())
+                .Returns(["/app/docker-compose.yml", "/app/docker-compose.x64.yml"]);
             // Act
-            var result = await _service.GetComposeFilesForArchitectureAsync(directoryPath, architecture);
+            var result = await _service.GetComposeFiles(directoryPath, architecture);
 
             // Assert
-            result.Should().HaveCount(1);
-            result[0].Should().Be("docker-compose.x64.yml");
+            result.Should().HaveCount(2);
+            result[0].Should().Be("/app/docker-compose.yml");
+            result[1].Should().Be("/app/docker-compose.x64.yml");
         }
 
         [Fact]

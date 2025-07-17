@@ -51,6 +51,12 @@ public record UpdateAllResponse
     public List<SkippedPackage> Skipped { get; init; } = new();
 }
 
+public record UpdateProcessResult
+{
+    public List<UpdateInfo> UpdatesStarted { get; init; } = new();
+    public List<SkippedPackage> Skipped { get; init; } = new();
+}
+
 // Models for Docker Compose status checking
 public record ComposeProject
 {

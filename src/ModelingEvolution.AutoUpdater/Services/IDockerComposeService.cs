@@ -15,7 +15,7 @@ namespace ModelingEvolution.AutoUpdater.Services
         /// <param name="composeDirectory">The directory containing compose files</param>
         /// <param name="architecture">The target architecture (e.g., "x64", "arm64")</param>
         /// <returns>Array of compose file paths to use</returns>
-        Task<string[]> GetComposeFilesForArchitectureAsync(string composeDirectory, string architecture);
+        Task<string[]> GetComposeFiles(string composeDirectory, CpuArchitecture architecture);
 
         /// <summary>
         /// Gets the current status of a Docker Compose project

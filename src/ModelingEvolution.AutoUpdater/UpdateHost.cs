@@ -4,6 +4,8 @@ using Ductus.FluentDocker.Common;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using ModelingEvolution.AutoUpdater.Common;
+using ModelingEvolution.AutoUpdater.Common.Events;
 using ModelingEvolution.AutoUpdater.Extensions;
 using ModelingEvolution.AutoUpdater.Models;
 using ModelingEvolution.AutoUpdater.Services;
@@ -31,6 +33,7 @@ public class UpdateHost : IHostedService
     private readonly IBackupService _backupService;
     private readonly IHealthCheckService _healthCheckService;
     private readonly IProgressService _progressService;
+    private readonly IEventHub _eventHub;
     private readonly GlobalSshConfiguration _sshConfig = new();
     private readonly SemaphoreSlim _updateLock = new(1, 1);
     
@@ -44,7 +47,8 @@ public class UpdateHost : IHostedService
         IDeploymentStateProvider deploymentStateProvider,
         IBackupService backupService,
         IHealthCheckService healthCheckService,
-        IProgressService progressService)
+        IProgressService progressService,
+        IEventHub eventHub)
     {
         _config = config ?? throw new ArgumentNullException(nameof(config));
         _log = log ?? throw new ArgumentNullException(nameof(log));
@@ -56,6 +60,7 @@ public class UpdateHost : IHostedService
         _backupService = backupService ?? throw new ArgumentNullException(nameof(backupService));
         _healthCheckService = healthCheckService ?? throw new ArgumentNullException(nameof(healthCheckService));
         _progressService = progressService ?? throw new ArgumentNullException(nameof(progressService));
+        _eventHub = eventHub ?? throw new ArgumentNullException(nameof(eventHub));
     }
     
     public IDictionary<string, string> Volumes { get; private set; } = new Dictionary<string, string>();
@@ -178,18 +183,17 @@ public class UpdateHost : IHostedService
 
         try
         {
-            _progressService.StartOperation("Initializing update", 1);
+            _progressService.StartOperation("Initializing update", configuration.FriendlyName, 1);
             
             BackupResult? backup = null;
             var executedScripts = new List<string>();
             var executedVersions = new List<SystemVersion>();
             string? currentVersion = null;
+            GitTagVersion? latestVersion = null;
             
             try
             {
-            _log.LogInformation("Starting update process for {RepositoryLocation}", configuration.RepositoryLocation);
-            _progressService.UpdateOperation("Loading deployment state");
-            _progressService.UpdateProgress(10);
+            _progressService.LogOperationProgress("Loading deployment state", 10, "Starting update process for {RepositoryLocation}", configuration.RepositoryLocation);
 
             // Step 1: Load current deployment state
             var currentDeploymentState = await _deploymentStateProvider.GetDeploymentStateAsync(configuration.ComposeFolderPath);
@@ -199,28 +203,22 @@ public class UpdateHost : IHostedService
             {
                 if (!Directory.Exists(configuration.RepositoryLocation))
                 {
-                    _log.LogInformation("Repository not found at {RepositoryLocation}, cloning from {RepositoryUrl}",
-                        configuration.RepositoryLocation, configuration.RepositoryUrl);
-                    _progressService.UpdateOperation("Cloning repository");
+                    _progressService.LogOperationProgress("Cloning repository", null, "Repository not found at {RepositoryLocation}, cloning from {RepositoryUrl}", configuration.RepositoryLocation, configuration.RepositoryUrl);
 
                     try
                     {
-                        await _gitService.CloneRepositoryAsync(configuration.RepositoryUrl,
-                            configuration.RepositoryLocation);
-                        _log.LogInformation("Repository cloned successfully to {RepositoryLocation}",
-                            configuration.RepositoryLocation);
+                        await _gitService.CloneRepositoryAsync(configuration.RepositoryUrl, configuration.RepositoryLocation);
+                        _log.LogInformation("Repository cloned successfully to {RepositoryLocation}", configuration.RepositoryLocation);
                     }
                     catch (Exception ex)
                     {
-                        _log.LogError(ex, "Failed to clone repository from {RepositoryUrl} to {RepositoryLocation}",
-                            configuration.RepositoryUrl, configuration.RepositoryLocation);
+                        _log.LogError(ex, "Failed to clone repository from {RepositoryUrl} to {RepositoryLocation}", configuration.RepositoryUrl, configuration.RepositoryLocation);
                         throw new InvalidOperationException($"Failed to clone repository: {ex.Message}", ex);
                     }
                 }
                 else
                 {
-                    _log.LogInformation("Directory exists at {RepositoryLocation} but is not a Git repository, initializing", configuration.RepositoryLocation);
-                    _progressService.UpdateOperation("Initializing Git repository");
+                    _progressService.LogOperationProgress("Initializing Git repository", null, "Directory exists at {RepositoryLocation} but is not a Git repository, initializing", configuration.RepositoryLocation);
                     
                     try
                     {
@@ -238,13 +236,12 @@ public class UpdateHost : IHostedService
             await _gitService.FetchAsync(configuration.RepositoryLocation);
             
             var availableVersions = await _gitService.GetAvailableVersionsAsync(configuration.RepositoryLocation);
-            var latestVersion = availableVersions.OrderByDescending(v => v.Version).FirstOrDefault();
+            latestVersion = availableVersions.OrderByDescending(v => v.Version).FirstOrDefault();
 
             if (latestVersion == null)
             {
                 _log.LogWarning("No versions found in repository {RepositoryUrl}", configuration.RepositoryUrl);
-                return UpdateResult.CreateSuccess(currentVersion ?? "unknown", currentVersion, executedScripts, 
-                    HealthCheckResult.Healthy(new List<string>()));
+                return UpdateResult.CreateSuccess(currentVersion ?? "unknown", currentVersion, executedScripts, HealthCheckResult.Healthy(new List<string>()));
             }
 
             // Step 2: Check if update is needed
@@ -255,17 +252,17 @@ public class UpdateHost : IHostedService
                     HealthCheckResult.Healthy(new List<string>()));
             }
 
-            _log.LogInformation("Updating from {CurrentVersion} to {TargetVersion}", 
-                currentVersion ?? "initial", latestVersion.FriendlyName);
+            _log.LogInformation("Updating from {CurrentVersion} to {TargetVersion}", currentVersion ?? "initial", latestVersion.FriendlyName);
+
+            // Publish update started event
+            await _eventHub.PublishAsync(new UpdateStartedEvent(configuration.FriendlyName, currentVersion, latestVersion.FriendlyName));
 
             // Step 3: Checkout the target version
-            _progressService.UpdateOperation("Checking out target version");
-            _progressService.UpdateProgress(20);
+            _progressService.LogOperationProgress("Checking out target version", 20);
             await _gitService.CheckoutVersionAsync(configuration.RepositoryLocation, latestVersion.FriendlyName);
 
             // Phase 1: Backup Creation (Decision Point: Backup Script Exists?)
-            _progressService.UpdateOperation("Creating backup");
-            _progressService.UpdateProgress(30);
+            _progressService.LogOperationProgress("Creating backup", 30);
             if (await _backupService.BackupScriptExistsAsync(configuration.ComposeFolderPath))
             {
                 _log.LogInformation("Creating backup before update");
@@ -289,18 +286,14 @@ public class UpdateHost : IHostedService
             // Step 4: Get architecture and compose files
             using var sshService = await _sshConnectionManager.CreateSshServiceAsync();
             var architecture = await sshService.GetArchitectureAsync();
-            var composeFiles = await _dockerComposeService.GetComposeFilesForArchitectureAsync(
-                configuration.ComposeFolderPath, architecture);
+            var composeFiles = await _dockerComposeService.GetComposeFiles(configuration.ComposeFolderPath, architecture);
 
             // Phase 2: Stop Current Services
-            _progressService.UpdateOperation("Stopping services");
-            _progressService.UpdateProgress(40);
-            _log.LogInformation("Stopping current Docker Compose services");
+            _progressService.LogOperationProgress("Stopping services", 40, "Stopping current Docker Compose services");
             await _dockerComposeService.StopServicesAsync(composeFiles, configuration.ComposeFolderPath);
 
             // Phase 3: Migration Scripts (Decision Point: All Scripts Successful?)
-            _progressService.UpdateOperation("Executing migration scripts");
-            _progressService.UpdateProgress(50);
+            _progressService.LogOperationProgress("Executing migration scripts", 50);
             try
             {
                 var allScripts = await _scriptMigrationService.DiscoverScriptsAsync(configuration.ComposeFolderPath);
@@ -327,21 +320,16 @@ public class UpdateHost : IHostedService
                     _log.LogInformation("Performing rollback with backup recovery");
                     await PerformRollbackWithBackupAsync(executedVersions, backup, composeFiles, configuration.ComposeFolderPath);
                     
-                    return UpdateResult.CreateFailed(
-                        $"Migration failed: {migrationEx.Message}",
-                        currentVersion, executedScripts, recoveryPerformed: true, backup.BackupFilePath);
+                    return UpdateResult.CreateFailed($"Migration failed: {migrationEx.Message}", currentVersion, executedScripts, recoveryPerformed: true, backup.BackupFilePath);
                 }
                 else
                 {
-                    return UpdateResult.CreateFailed(
-                        $"Migration failed: {migrationEx.Message} - No recovery possible without backup",
-                        currentVersion, executedScripts, recoveryPerformed: false);
+                    return UpdateResult.CreateFailed($"Migration failed: {migrationEx.Message} - No recovery possible without backup", currentVersion, executedScripts, recoveryPerformed: false);
                 }
             }
 
             // Phase 4: Start New Services (Decision Point: docker-compose up)
-            _progressService.UpdateOperation("Starting services");
-            _progressService.UpdateProgress(70);
+            _progressService.LogOperationProgress("Starting services", 70);
             try
             {
                 _log.LogInformation("Starting new Docker Compose services");
@@ -357,22 +345,16 @@ public class UpdateHost : IHostedService
                     _log.LogInformation("Docker startup failed - performing rollback with backup recovery");
                     await PerformRollbackWithBackupAsync(executedVersions, backup, composeFiles, configuration.ComposeFolderPath);
                     
-                    return UpdateResult.CreateFailed(
-                        $"Docker startup failed: {dockerEx.Message}",
-                        currentVersion, executedScripts, recoveryPerformed: true, backup.BackupFilePath);
+                    return UpdateResult.CreateFailed($"Docker startup failed: {dockerEx.Message}", currentVersion, executedScripts, recoveryPerformed: true, backup.BackupFilePath);
                 }
                 else
                 {
-                    return UpdateResult.CreateFailed(
-                        $"Docker startup failed: {dockerEx.Message} - No recovery possible without backup",
-                        currentVersion, executedScripts, recoveryPerformed: false);
+                    return UpdateResult.CreateFailed($"Docker startup failed: {dockerEx.Message} - No recovery possible without backup", currentVersion, executedScripts, recoveryPerformed: false);
                 }
             }
 
             // Phase 5: Health Check (Decision Point: All Services Healthy?)
-            _progressService.UpdateOperation("Performing health checks");
-            _progressService.UpdateProgress(80);
-            _log.LogInformation("Performing health check on all services");
+            _progressService.LogOperationProgress("Performing health checks", 80, "Performing health check on all services");
             var healthCheck = await _healthCheckService.CheckServicesHealthAsync(composeFiles, configuration.ComposeFolderPath);
             
             if (!healthCheck.AllHealthy)
@@ -400,10 +382,17 @@ public class UpdateHost : IHostedService
             }
 
             // Phase 6: Complete Success
-            _progressService.UpdateOperation("Finalizing update");
-            _progressService.UpdateProgress(90);
-            _log.LogInformation("All services healthy - update completed successfully");
+            _progressService.LogOperationProgress("Finalizing update", 90, "All services healthy - update completed successfully");
             await UpdateDeploymentStateAsync(currentDeploymentState, latestVersion.FriendlyName, executedVersions, configuration.ComposeFolderPath);
+            
+            // Publish successful update completion event
+            await _eventHub.PublishAsync(new UpdateCompletedEvent(
+                configuration.FriendlyName,
+                currentVersion,
+                latestVersion.FriendlyName,
+                true,
+                null,
+                executedScripts));
             
             // Cleanup backup on complete success
             if (backup?.Success == true)
@@ -419,6 +408,15 @@ public class UpdateHost : IHostedService
         {
             _log.LogError(ex, "Unexpected error during update process");
             
+            // Publish failed update completion event
+            await _eventHub.PublishAsync(new UpdateCompletedEvent(
+                configuration.FriendlyName,
+                currentVersion,
+                latestVersion?.FriendlyName ?? "unknown",
+                false,
+                ex.Message,
+                executedScripts));
+            
             // Unexpected failure - try to recover if possible
             if (backup?.Success == true)
             {
@@ -427,7 +425,7 @@ public class UpdateHost : IHostedService
                     _log.LogInformation("Attempting emergency rollback due to unexpected error");
                     using var sshService = await _sshConnectionManager.CreateSshServiceAsync();
                     var architecture = await sshService.GetArchitectureAsync();
-                    var composeFiles = await _dockerComposeService.GetComposeFilesForArchitectureAsync(
+                    var composeFiles = await _dockerComposeService.GetComposeFiles(
                         configuration.ComposeFolderPath, architecture);
                     
                     await PerformRollbackWithBackupAsync(executedVersions, backup, composeFiles, configuration.ComposeFolderPath);

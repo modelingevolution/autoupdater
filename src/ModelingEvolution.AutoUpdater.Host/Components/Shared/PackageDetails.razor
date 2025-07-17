@@ -4,12 +4,16 @@
 <MudPaper Class="pa-4" Elevation="2">
     <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px;">
         <MudField Label="Name">@Package.FriendlyName</MudField>
-        <MudTooltip Text="Security Settings">
-            <MudIconButton Icon="@Icons.Material.Filled.Security" 
-                          Color="Color.Primary" 
-                          Size="Size.Small"
-                          OnClick="OpenSecurityDialog" />
-        </MudTooltip>
+        <div style="display: flex; gap: 4px; align-items: center;">
+            <CheckPackageVersionButton PackageName="@Package.FriendlyName" />
+            <UpdatePackageButton PackageName="@Package.FriendlyName" />
+            <MudTooltip Text="Security Settings">
+                <MudIconButton Icon="@Icons.Material.Filled.Security" 
+                               Color="Color.Default" 
+                               Size="Size.Small"
+                               OnClick="OpenSecurityDialog" />
+            </MudTooltip>
+        </div>
     </div>
     <PackageVersion Package="@Package" />
     <PackageStatus Package="@Package" />
@@ -34,7 +38,5 @@
 
         var dialog = await DialogService.ShowAsync<PackageAuthDialog>("Security Settings", parameters, options);
         var result = await dialog.Result;
-        
-        
     }
 }

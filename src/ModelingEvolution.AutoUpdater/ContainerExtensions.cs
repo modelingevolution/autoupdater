@@ -1,6 +1,7 @@
 ﻿using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using ModelingEvolution.AutoUpdater.Common;
 using ModelingEvolution.AutoUpdater.Services;
 using ModelingEvolution.RuntimeConfiguration;
 
@@ -15,7 +16,7 @@ namespace ModelingEvolution.AutoUpdater
             
             // Register core services
             container.AddSingleton<UpdateService>();
-            container.AddSingleton<DockerComposeConfigurationRepository>();
+            container.AddSingleton<DockerComposeConfigurationModel>();
 
             // Register the new refactored services
             container.AddSingleton<IGitService, GitService>();
@@ -36,6 +37,7 @@ namespace ModelingEvolution.AutoUpdater
             container.AddSingleton<IHealthCheckService, HealthCheckService>();
             container.AddSingleton<IProgressService, ProgressService>();
             container.AddSingleton<IDockerAuthService, DockerAuthService>();
+            container.AddSingleton<IEventHub, EventHub>();
             container.AddSingleton<IInMemoryLoggerSink>(sp => sp.GetRequiredService<InMemoryLoggerSink>());
             container.AddSingleton<InMemoryLoggerSink>(sp =>
             {

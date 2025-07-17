@@ -72,14 +72,7 @@ public class SshConnectionManager : ISshConnectionManager, IDisposable
         _logger.LogInformation("Creating SSH connection to {Host}:{Port} with user {User} using {AuthMethod}",
             _config.Host, _config.Port, _config.User, _config.AuthMethod);
 
-        var connectionInfo = _config.AuthMethod switch
-        {
-            SshAuthMethod.Password => CreatePasswordAuth(),
-            SshAuthMethod.PrivateKey => CreateKeyAuth(),
-            SshAuthMethod.PrivateKeyWithPassphrase => CreateKeyAuthWithPassphrase(),
-            SshAuthMethod.KeyWithPasswordFallback => CreateKeyAuthWithFallback(),
-            _ => throw new NotSupportedException($"SSH auth method {_config.AuthMethod} is not supported")
-        };
+        var connectionInfo = GetConnectionInfo();
 
         _client = new SshClient(connectionInfo);
         
@@ -109,10 +102,11 @@ public class SshConnectionManager : ISshConnectionManager, IDisposable
     {
         var sshClient = await CreateConnectionAsync();
         var scpClient = await CreateScpConnectionAsync();
+        var sftpCLient = await CreateSftpConnectionAsync();
         var logger = _logger as ILogger<SshService> ?? 
                     new LoggerFactory().CreateLogger<SshService>();
         
-        return new SshService(sshClient, scpClient, logger);
+        return new SshService(sshClient, scpClient, sftpCLient, logger);
     }
 
     /// <summary>
@@ -143,6 +137,30 @@ public class SshConnectionManager : ISshConnectionManager, IDisposable
         _logger.LogInformation("Creating SCP connection to {Host}:{Port} with user {User} using {AuthMethod}",
             _config.Host, _config.Port, _config.User, _config.AuthMethod);
 
+        var connectionInfo = GetConnectionInfo();
+
+        var scpClient = new ScpClient(connectionInfo);
+        
+        // Configure client settings
+        scpClient.KeepAliveInterval = _config.KeepAliveInterval;
+        scpClient.ConnectionInfo.Timeout = _config.Timeout;
+
+        try
+        {
+            await ConnectWithRetryAsync(scpClient);
+            _logger.LogInformation("Successfully connected SCP client to {Host}:{Port}", _config.Host, _config.Port);
+            return scpClient;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to connect SCP client to {Host}:{Port}", _config.Host, _config.Port);
+            scpClient?.Dispose();
+            throw;
+        }
+    }
+
+    private ConnectionInfo GetConnectionInfo()
+    {
         var connectionInfo = _config.AuthMethod switch
         {
             SshAuthMethod.Password => CreatePasswordAuth(),
@@ -151,9 +169,24 @@ public class SshConnectionManager : ISshConnectionManager, IDisposable
             SshAuthMethod.KeyWithPasswordFallback => CreateKeyAuthWithFallback(),
             _ => throw new NotSupportedException($"SSH auth method {_config.AuthMethod} is not supported")
         };
+        return connectionInfo;
+    }
 
-        var scpClient = new ScpClient(connectionInfo);
-        
+    /// <summary>
+    /// Creates and connects SCP client based on configuration
+    /// </summary>
+    private async Task<SftpClient> CreateSftpConnectionAsync()
+    {
+        if (_disposed)
+            throw new ObjectDisposedException(nameof(SshConnectionManager));
+
+        _logger.LogInformation("Creating SCP connection to {Host}:{Port} with user {User} using {AuthMethod}",
+            _config.Host, _config.Port, _config.User, _config.AuthMethod);
+
+        var connectionInfo = GetConnectionInfo();
+
+        var scpClient = new SftpClient(connectionInfo);
+
         // Configure client settings
         scpClient.KeepAliveInterval = _config.KeepAliveInterval;
         scpClient.ConnectionInfo.Timeout = _config.Timeout;
@@ -259,8 +292,8 @@ public class SshConnectionManager : ISshConnectionManager, IDisposable
             _logger.LogDebug("SSH private key file found: {KeyPath}", keyPath);
         }
     }
-
-    private async Task ConnectWithRetryAsync(SshClient client)
+  
+    private async Task ConnectWithRetryAsync<TClient>(TClient client) where TClient : BaseClient
     {
         const int maxRetries = 3;
         const int retryDelayMs = 1000;
@@ -284,29 +317,7 @@ public class SshConnectionManager : ISshConnectionManager, IDisposable
         await client.ConnectAsync(CancellationToken.None);
     }
 
-    private async Task ConnectWithRetryAsync(ScpClient client)
-    {
-        const int maxRetries = 3;
-        const int retryDelayMs = 1000;
-
-        for (int attempt = 1; attempt <= maxRetries; attempt++)
-        {
-            try
-            {
-                await client.ConnectAsync(CancellationToken.None);
-                return;
-            }
-            catch (Exception ex) when (attempt < maxRetries)
-            {
-                _logger.LogWarning(ex, "SCP connection attempt {Attempt} failed, retrying in {DelayMs}ms", 
-                    attempt, retryDelayMs);
-                await Task.Delay(retryDelayMs);
-            }
-        }
-
-        // Final attempt without catching exception
-        await client.ConnectAsync(CancellationToken.None);
-    }
+    
 
     public void Dispose()
     {

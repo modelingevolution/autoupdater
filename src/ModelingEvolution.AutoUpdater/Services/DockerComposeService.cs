@@ -23,7 +23,8 @@ namespace ModelingEvolution.AutoUpdater.Services
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         }
 
-        public async Task<string[]> GetComposeFilesForArchitectureAsync(string directoryPath, string architecture)
+        public async Task<string[]> GetComposeFiles(string directoryPath,
+            CpuArchitecture architecture)
         {
             try
             {
@@ -31,37 +32,23 @@ namespace ModelingEvolution.AutoUpdater.Services
                     architecture, directoryPath);
 
                 if (string.IsNullOrWhiteSpace(directoryPath))
-                {
                     throw new ArgumentException("Directory path cannot be null or whitespace", nameof(directoryPath));
-                }
 
-                if (string.IsNullOrWhiteSpace(architecture))
-                {
-                    throw new ArgumentException("Architecture cannot be null or whitespace", nameof(architecture));
-                }
+                
+                var notValid = CpuArchitecture.All
+                    .Where(x => x != architecture)
+                    .Select(x=> Path.Combine(directoryPath, $"docker-compose.{x}.yml"))
+                    .ToHashSet();
 
-                var composeFiles = new List<string>();
-
-                // Base docker-compose.yml (always included if it exists)
-                var baseComposeFile = Path.Combine(directoryPath, "docker-compose.yml");
-                if (await _sshService.FileExistsAsync(baseComposeFile))
-                {
-                    composeFiles.Add("docker-compose.yml");
-                    _logger.LogDebug("Added base compose file: docker-compose.yml");
-                }
-
-                // Architecture-specific override file
-                var archComposeFile = Path.Combine(directoryPath, $"docker-compose.{architecture}.yml");
-                if (await _sshService.FileExistsAsync(archComposeFile))
-                {
-                    composeFiles.Add($"docker-compose.{architecture}.yml");
-                    _logger.LogDebug("Added architecture-specific compose file: docker-compose.{Architecture}.yml", architecture);
-                }
-
-                _logger.LogInformation("Found {Count} compose files for architecture {Architecture}: {Files}", 
-                    composeFiles.Count, architecture, string.Join(", ", composeFiles));
-
-                return composeFiles.ToArray();
+                var composeFiles = _sshService
+                    .GetFiles(directoryPath, "docker-compose*yml")
+                    .Except(notValid)
+                    .OrderBy(x=>x.Length)
+                    .ToArray();
+                
+                _logger.LogInformation("Found docker-compose files: {docker-compose-files}.", string.Join(',', composeFiles.Select(Path.GetFileName)));
+                
+                return composeFiles;
             }
             catch (Exception ex)
             {

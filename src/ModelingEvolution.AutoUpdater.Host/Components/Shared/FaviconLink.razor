@@ -1,0 +1,13 @@
+@using ModelingEvolution.AutoUpdater.Host.Services
+@inject IBrandingService BrandingService
+
+@{
+    var (faviconPath, mimeType) = BrandingService.GetFavicon();
+}
+
+<link rel="icon" type="@mimeType" href="@faviconPath" />
+
+@code {
+    // This component generates a dynamic favicon link based on available logo files
+    // It will automatically use logo.* files if found in wwwroot, otherwise falls back to favicon.png
+}

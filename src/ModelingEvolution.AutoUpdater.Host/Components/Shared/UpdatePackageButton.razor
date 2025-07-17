@@ -1,0 +1,112 @@
+@using ModelingEvolution.AutoUpdater
+@using ModelingEvolution.AutoUpdater.Common
+@using ModelingEvolution.AutoUpdater.Common.Events
+@using ModelingEvolution.AutoUpdater.Services
+@inject UpdateHost UpdateHost
+@inject DockerComposeConfigurationModel ConfigurationModel
+@inject ILogger<UpdatePackageButton> Logger
+@inject IInMemoryLoggerSink LoggerSink
+@inject IEventHub EventHub
+@implements IDisposable
+
+<MudTooltip Text="@GetTooltipText()">
+    <MudIconButton Icon="@(_isUpdating? Icons.Material.Filled.HourglassEmpty : @Icons.Material.Filled.DirectionsRun)"
+                   Color="Color.Default" 
+                   Size="Size.Small"
+                   OnClick="UpdatePackageAsync"
+                   Disabled="@(_isUpdating || !_hasUpdateAvailable)" />
+</MudTooltip>
+
+@code {
+    [Parameter] public PackageName PackageName { get; set; }
+    
+    private bool _isUpdating = false;
+    private bool _hasUpdateAvailable = false;
+    private IEventSubscription? _versionCheckSubscription;
+    
+    protected override void OnInitialized()
+    {
+        _versionCheckSubscription = EventHub.Subscribe<VersionCheckCompletedEvent>(OnVersionCheckCompleted);
+        CheckInitialUpdateStatus();
+    }
+    
+    private void CheckInitialUpdateStatus()
+    {
+        var packageConfig = ConfigurationModel.GetPackage(PackageName);
+        if (packageConfig != null)
+        {
+            _hasUpdateAvailable = packageConfig.IsUpgradeAvailable;
+            StateHasChanged();
+        }
+    }
+    
+    private void OnVersionCheckCompleted(VersionCheckCompletedEvent evt)
+    {
+        if (evt.ApplicationName == PackageName.ToString())
+        {
+            _hasUpdateAvailable = evt.IsUpgradeAvailable;
+            InvokeAsync(StateHasChanged);
+        }
+    }
+    
+    private string GetTooltipText()
+    {
+        if (_isUpdating) return "Updating package...";
+        if (!_hasUpdateAvailable) return "No update available";
+        return "Update package";
+    }
+
+    private async Task UpdatePackageAsync()
+    {
+        if (_isUpdating) return;
+        
+        // Clear logs and enable logging
+        LoggerSink.Clear();
+        LoggerSink.Enabled = true;
+        
+        _isUpdating = true;
+        
+        try
+        {
+            Logger.LogInformation("Starting update for package: {PackageName}", PackageName);
+            
+            // Run in background thread to avoid blocking UI
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    // Get the package configuration
+                    var packageConfig = ConfigurationModel.GetPackage(PackageName);
+                    if (packageConfig == null)
+                    {
+                        Logger.LogError("Package configuration not found for: {PackageName}", PackageName);
+                        return;
+                    }
+                    
+                    // Call the real UpdateHost service
+                    Logger.LogInformation("Starting real update for package: {PackageName}", PackageName);
+                    var updateResult = await UpdateHost.UpdateAsync(packageConfig);
+                    
+                    Logger.LogInformation("Update completed for package: {PackageName}, Status: {Status}, Success: {Success}", 
+                        PackageName, updateResult.Status, updateResult.Success);
+                }
+                catch (Exception ex)
+                {
+                    Logger.LogError(ex, "Error during update for package: {PackageName}", PackageName);
+                }
+            });
+        }
+        finally
+        {
+            _isUpdating = false;
+            
+            // Ensure UI update happens on UI thread
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+    
+    public void Dispose()
+    {
+        _versionCheckSubscription?.Dispose();
+    }
+}

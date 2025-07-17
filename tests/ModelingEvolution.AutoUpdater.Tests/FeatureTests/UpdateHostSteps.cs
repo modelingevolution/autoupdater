@@ -2,6 +2,7 @@ using FluentAssertions;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using ModelingEvolution.AutoUpdater;
+using ModelingEvolution.AutoUpdater.Common;
 using ModelingEvolution.AutoUpdater.Models;
 using ModelingEvolution.AutoUpdater.Services;
 using NSubstitute;
@@ -27,6 +28,7 @@ namespace ModelingEvolution.AutoUpdater.Tests.FeatureTests
         private readonly IBackupService _backupService = Substitute.For<IBackupService>();
         private readonly IHealthCheckService _healthCheckService = Substitute.For<IHealthCheckService>();
         private readonly IProgressService _progressService = Substitute.For<IProgressService>();
+        private readonly IEventHub _eventHub = Substitute.For<IEventHub>();
         private readonly ILogger<UpdateHost> _logger = Substitute.For<ILogger<UpdateHost>>();
 
         private UpdateHost _updateHost = null!;
@@ -52,14 +54,14 @@ namespace ModelingEvolution.AutoUpdater.Tests.FeatureTests
             _updateHost = new UpdateHost(
                 _configuration, _logger, _gitService, _scriptService, 
                 _sshConnectionManager, _dockerService, _deploymentStateProvider, 
-                _backupService, _healthCheckService, _progressService);
+                _backupService, _healthCheckService, _progressService, _eventHub);
         }
 
         [Given(@"the system has SSH connectivity")]
         public void GivenTheSystemHasSshConnectivity()
         {
             var mockSshService = Substitute.For<ISshService>();
-            mockSshService.GetArchitectureAsync().Returns("x64");
+            mockSshService.GetArchitectureAsync().Returns(CpuArchitecture.X64);
             _sshConnectionManager.CreateSshServiceAsync().Returns(mockSshService);
         }
 
@@ -74,7 +76,7 @@ namespace ModelingEvolution.AutoUpdater.Tests.FeatureTests
                 DockerComposeDirectory = "./"
             };
 
-            _dockerService.GetComposeFilesForArchitectureAsync(Arg.Any<string>(), "x64")
+            _dockerService.GetComposeFiles(Arg.Any<string>(), CpuArchitecture.X64)
                          .Returns(new[] { "docker-compose.yml", "docker-compose.x64.yml" });
         }
 

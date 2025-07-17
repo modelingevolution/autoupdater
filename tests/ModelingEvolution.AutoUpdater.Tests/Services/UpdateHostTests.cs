@@ -2,6 +2,7 @@ using FluentAssertions;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using ModelingEvolution.AutoUpdater;
+using ModelingEvolution.AutoUpdater.Common;
 using ModelingEvolution.AutoUpdater.Models;
 using ModelingEvolution.AutoUpdater.Services;
 using NSubstitute;
@@ -26,6 +27,7 @@ namespace ModelingEvolution.AutoUpdater.Tests.Services
         private readonly IBackupService _backupService = Substitute.For<IBackupService>();
         private readonly IHealthCheckService _healthCheckService = Substitute.For<IHealthCheckService>();
         private readonly IProgressService _progressService = Substitute.For<IProgressService>();
+        private readonly IEventHub _eventHub = Substitute.For<IEventHub>();
         private readonly ILogger<UpdateHost> _logger = Substitute.For<ILogger<UpdateHost>>();
 
         [Fact]
@@ -58,10 +60,10 @@ namespace ModelingEvolution.AutoUpdater.Tests.Services
                          .Returns(new[] { new Version(1, 0, 1) });
 
             var mockSshService = Substitute.For<ISshService>();
-            mockSshService.GetArchitectureAsync().Returns("x64");
+            mockSshService.GetArchitectureAsync().Returns(CpuArchitecture.X64);
             _sshConnectionManager.CreateSshServiceAsync().Returns(mockSshService);
 
-            _dockerService.GetComposeFilesForArchitectureAsync(Arg.Any<string>(), "x64")
+            _dockerService.GetComposeFiles(Arg.Any<string>(), CpuArchitecture.X64)
                          .Returns(new[] { "docker-compose.yml", "docker-compose.x64.yml" });
 
             // Setup backup and health check mocks
@@ -69,7 +71,7 @@ namespace ModelingEvolution.AutoUpdater.Tests.Services
             _healthCheckService.CheckServicesHealthAsync(Arg.Any<string[]>(), Arg.Any<string>())
                               .Returns(HealthCheckResult.Healthy(new List<string> { "api", "database" }));
 
-            var updateHost = new UpdateHost(_configuration, _logger, _gitService, _scriptService, _sshConnectionManager, _dockerService, _deploymentStateProvider, _backupService, _healthCheckService, _progressService);
+            var updateHost = new UpdateHost(_configuration, _logger, _gitService, _scriptService, _sshConnectionManager, _dockerService, _deploymentStateProvider, _backupService, _healthCheckService, _progressService, _eventHub);
 
             // Act
             var result = await updateHost.UpdateAsync(config);
@@ -105,7 +107,7 @@ namespace ModelingEvolution.AutoUpdater.Tests.Services
             _gitService.GetAvailableVersionsAsync(Arg.Any<string>())
                       .Returns(new[] { new GitTagVersion("1.0.0", new Version(1, 0, 0)) });
 
-            var updateHost = new UpdateHost(_configuration, _logger, _gitService, _scriptService, _sshConnectionManager, _dockerService, _deploymentStateProvider, _backupService, _healthCheckService, _progressService);
+            var updateHost = new UpdateHost(_configuration, _logger, _gitService, _scriptService, _sshConnectionManager, _dockerService, _deploymentStateProvider, _backupService, _healthCheckService, _progressService, _eventHub);
 
             // Act
             var result = await updateHost.UpdateAsync(config);
@@ -152,16 +154,16 @@ namespace ModelingEvolution.AutoUpdater.Tests.Services
                          .Do(x => throw new Exception("Script execution failed"));
 
             var mockSshService2 = Substitute.For<ISshService>();
-            mockSshService2.GetArchitectureAsync().Returns("x64");
+            mockSshService2.GetArchitectureAsync().Returns(CpuArchitecture.X64);
             _sshConnectionManager.CreateSshServiceAsync().Returns(mockSshService2);
 
-            _dockerService.GetComposeFilesForArchitectureAsync(Arg.Any<string>(), "x64")
+            _dockerService.GetComposeFiles(Arg.Any<string>(), CpuArchitecture.X64)
                          .Returns(new[] { "docker-compose.yml", "docker-compose.x64.yml" });
 
             // Setup backup to test decision tree: no backup available
             _backupService.BackupScriptExistsAsync(Arg.Any<string>()).Returns(false);
 
-            var updateHost = new UpdateHost(_configuration, _logger, _gitService, _scriptService, _sshConnectionManager, _dockerService, _deploymentStateProvider, _backupService, _healthCheckService, _progressService);
+            var updateHost = new UpdateHost(_configuration, _logger, _gitService, _scriptService, _sshConnectionManager, _dockerService, _deploymentStateProvider, _backupService, _healthCheckService, _progressService, _eventHub);
 
             // Act
             var result = await updateHost.UpdateAsync(config);
@@ -200,7 +202,7 @@ namespace ModelingEvolution.AutoUpdater.Tests.Services
             _backupService.CreateBackupAsync(Arg.Any<string>())
                           .Returns(BackupResult.CreateFailure("Insufficient disk space"));
 
-            var updateHost = new UpdateHost(_configuration, _logger, _gitService, _scriptService, _sshConnectionManager, _dockerService, _deploymentStateProvider, _backupService, _healthCheckService, _progressService);
+            var updateHost = new UpdateHost(_configuration, _logger, _gitService, _scriptService, _sshConnectionManager, _dockerService, _deploymentStateProvider, _backupService, _healthCheckService, _progressService, _eventHub);
 
             // Act
             var result = await updateHost.UpdateAsync(config);
@@ -245,10 +247,10 @@ namespace ModelingEvolution.AutoUpdater.Tests.Services
                          .Do(x => throw new Exception("Migration script execution failed"));
 
             var mockSshService = Substitute.For<ISshService>();
-            mockSshService.GetArchitectureAsync().Returns("x64");
+            mockSshService.GetArchitectureAsync().Returns(CpuArchitecture.X64);
             _sshConnectionManager.CreateSshServiceAsync().Returns(mockSshService);
 
-            _dockerService.GetComposeFilesForArchitectureAsync(Arg.Any<string>(), "x64")
+            _dockerService.GetComposeFiles(Arg.Any<string>(), CpuArchitecture.X64)
                          .Returns(new[] { "docker-compose.yml", "docker-compose.x64.yml" });
 
             // Test decision point: Backup Available? YES
@@ -258,7 +260,7 @@ namespace ModelingEvolution.AutoUpdater.Tests.Services
             _backupService.RestoreBackupAsync(Arg.Any<string>(), Arg.Any<string>())
                           .Returns(RestoreResult.CreateSuccess());
 
-            var updateHost = new UpdateHost(_configuration, _logger, _gitService, _scriptService, _sshConnectionManager, _dockerService, _deploymentStateProvider, _backupService, _healthCheckService, _progressService);
+            var updateHost = new UpdateHost(_configuration, _logger, _gitService, _scriptService, _sshConnectionManager, _dockerService, _deploymentStateProvider, _backupService, _healthCheckService, _progressService, _eventHub);
 
             // Act
             var result = await updateHost.UpdateAsync(config);
@@ -306,10 +308,10 @@ namespace ModelingEvolution.AutoUpdater.Tests.Services
                          .Returns(new[] { new Version(1, 0, 1) });
 
             var mockSshService = Substitute.For<ISshService>();
-            mockSshService.GetArchitectureAsync().Returns("x64");
+            mockSshService.GetArchitectureAsync().Returns(CpuArchitecture.X64);
             _sshConnectionManager.CreateSshServiceAsync().Returns(mockSshService);
 
-            _dockerService.GetComposeFilesForArchitectureAsync(Arg.Any<string>(), "x64")
+            _dockerService.GetComposeFiles(Arg.Any<string>(), CpuArchitecture.X64)
                          .Returns(new[] { "docker-compose.yml", "docker-compose.x64.yml" });
 
             // Test decision point: docker-compose up fails (but rollback should succeed)
@@ -329,7 +331,7 @@ namespace ModelingEvolution.AutoUpdater.Tests.Services
             _backupService.RestoreBackupAsync(Arg.Any<string>(), Arg.Any<string>())
                           .Returns(RestoreResult.CreateSuccess());
 
-            var updateHost = new UpdateHost(_configuration, _logger, _gitService, _scriptService, _sshConnectionManager, _dockerService, _deploymentStateProvider, _backupService, _healthCheckService, _progressService);
+            var updateHost = new UpdateHost(_configuration, _logger, _gitService, _scriptService, _sshConnectionManager, _dockerService, _deploymentStateProvider, _backupService, _healthCheckService, _progressService, _eventHub);
 
             // Act
             var result = await updateHost.UpdateAsync(config);
@@ -375,10 +377,10 @@ namespace ModelingEvolution.AutoUpdater.Tests.Services
                          .Returns(new[] { new Version(1, 0, 1) });
 
             var mockSshService = Substitute.For<ISshService>();
-            mockSshService.GetArchitectureAsync().Returns("x64");
+            mockSshService.GetArchitectureAsync().Returns(CpuArchitecture.X64);
             _sshConnectionManager.CreateSshServiceAsync().Returns(mockSshService);
 
-            _dockerService.GetComposeFilesForArchitectureAsync(Arg.Any<string>(), "x64")
+            _dockerService.GetComposeFiles(Arg.Any<string>(), CpuArchitecture.X64)
                          .Returns(new[] { "docker-compose.yml", "docker-compose.x64.yml" });
 
             _backupService.BackupScriptExistsAsync(Arg.Any<string>()).Returns(false);
@@ -391,7 +393,7 @@ namespace ModelingEvolution.AutoUpdater.Tests.Services
             _healthCheckService.CheckServicesHealthAsync(Arg.Any<string[]>(), Arg.Any<string>())
                               .Returns(healthCheck);
 
-            var updateHost = new UpdateHost(_configuration, _logger, _gitService, _scriptService, _sshConnectionManager, _dockerService, _deploymentStateProvider, _backupService, _healthCheckService, _progressService);
+            var updateHost = new UpdateHost(_configuration, _logger, _gitService, _scriptService, _sshConnectionManager, _dockerService, _deploymentStateProvider, _backupService, _healthCheckService, _progressService, _eventHub);
 
             // Act
             var result = await updateHost.UpdateAsync(config);
@@ -440,10 +442,10 @@ namespace ModelingEvolution.AutoUpdater.Tests.Services
                          .Returns(new[] { new Version(1, 0, 1) });
 
             var mockSshService = Substitute.For<ISshService>();
-            mockSshService.GetArchitectureAsync().Returns("x64");
+            mockSshService.GetArchitectureAsync().Returns(CpuArchitecture.X64);
             _sshConnectionManager.CreateSshServiceAsync().Returns(mockSshService);
 
-            _dockerService.GetComposeFilesForArchitectureAsync(Arg.Any<string>(), "x64")
+            _dockerService.GetComposeFiles(Arg.Any<string>(), CpuArchitecture.X64)
                          .Returns(new[] { "docker-compose.yml", "docker-compose.x64.yml" });
 
             // Test decision point: Backup Available? YES
@@ -461,7 +463,7 @@ namespace ModelingEvolution.AutoUpdater.Tests.Services
             _healthCheckService.CheckServicesHealthAsync(Arg.Any<string[]>(), Arg.Any<string>())
                               .Returns(healthCheck);
 
-            var updateHost = new UpdateHost(_configuration, _logger, _gitService, _scriptService, _sshConnectionManager, _dockerService, _deploymentStateProvider, _backupService, _healthCheckService, _progressService);
+            var updateHost = new UpdateHost(_configuration, _logger, _gitService, _scriptService, _sshConnectionManager, _dockerService, _deploymentStateProvider, _backupService, _healthCheckService, _progressService, _eventHub);
 
             // Act
             var result = await updateHost.UpdateAsync(config);
@@ -495,10 +497,10 @@ namespace ModelingEvolution.AutoUpdater.Tests.Services
                       .Returns(new[] { new GitTagVersion("1.1.0", new Version(1, 1, 0)) });
 
             var mockSshService = Substitute.For<ISshService>();
-            mockSshService.GetArchitectureAsync().Returns("x64");
+            mockSshService.GetArchitectureAsync().Returns(CpuArchitecture.X64);
             _sshConnectionManager.CreateSshServiceAsync().Returns(mockSshService);
 
-            _dockerService.GetComposeFilesForArchitectureAsync(Arg.Any<string>(), "x64")
+            _dockerService.GetComposeFiles(Arg.Any<string>(), CpuArchitecture.X64)
                          .Returns(new[] { "docker-compose.yml", "docker-compose.x64.yml" });
 
             // Test decision point: Backup Available? YES
@@ -512,7 +514,7 @@ namespace ModelingEvolution.AutoUpdater.Tests.Services
             _healthCheckService.When(x => x.CheckServicesHealthAsync(Arg.Any<string[]>(), Arg.Any<string>()))
                               .Do(x => throw new Exception("Unexpected health check error"));
 
-            var updateHost = new UpdateHost(_configuration, _logger, _gitService, _scriptService, _sshConnectionManager, _dockerService, _deploymentStateProvider, _backupService, _healthCheckService, _progressService);
+            var updateHost = new UpdateHost(_configuration, _logger, _gitService, _scriptService, _sshConnectionManager, _dockerService, _deploymentStateProvider, _backupService, _healthCheckService, _progressService, _eventHub);
 
             // Act
             var result = await updateHost.UpdateAsync(config);

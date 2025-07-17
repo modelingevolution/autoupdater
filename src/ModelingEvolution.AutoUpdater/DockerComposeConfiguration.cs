@@ -1,24 +1,26 @@
 using System;
 using System.Collections.Generic;
+using System.ComponentModel;
 using System.IO;
+using System.Runtime.CompilerServices;
 using System.Text.Json;
 using Microsoft.Extensions.Logging;
 using ModelingEvolution.AutoUpdater.Extensions;
+using ModelingEvolution.AutoUpdater.Services;
 
 namespace ModelingEvolution.AutoUpdater
 {
     /// <summary>
-    /// Configuration data for Docker Compose deployments - Pure data record
+    /// Configuration data for Docker Compose deployments with observable properties for UI binding
     /// </summary>
-    public record DockerComposeConfiguration 
+    public class DockerComposeConfiguration : INotifyPropertyChanged
     {
         public string RepositoryLocation { get; init; } = string.Empty;
         public string RepositoryUrl { get; init; } = string.Empty;
         public string DockerComposeDirectory { get; init; } = "./";
         public string? DockerAuth { get; init; }
         public string? DockerRegistryUrl { get; init; }
-        public string MergerName { get; init; } = "deploy";
-        public string MergerEmail { get; init; } = "deploy@modelingeovlution.com";
+        
         public IList<DockerRegistryPat> DockerAuths { get; init; } = new List<DockerRegistryPat>();
 
         public DockerComposeConfiguration(string repositoryLocation, string repositoryUrl,
@@ -31,26 +33,24 @@ namespace ModelingEvolution.AutoUpdater
             DockerRegistryUrl = dockerRegistryUrl;
 
             // Add to DockerAuths if provided
-            if (!string.IsNullOrEmpty(dockerAuth))
-            {
-                var registry = dockerRegistryUrl ?? "https://index.docker.io/v1/";
-                DockerAuths.Add(new DockerRegistryPat(registry, dockerAuth));
-            }
+            if (string.IsNullOrEmpty(dockerAuth)) return;
+            
+            var registry = dockerRegistryUrl ?? "https://index.docker.io/v1/";
+            DockerAuths.Add(new DockerRegistryPat(registry, dockerAuth));
         }
 
         public DockerComposeConfiguration()
         {
             // Initialize DockerAuths from properties if set
-            if (!string.IsNullOrEmpty(DockerAuth))
-            {
-                var registry = DockerRegistryUrl ?? "https://index.docker.io/v1/";
-                DockerAuths.Add(new DockerRegistryPat(registry, DockerAuth));
-            }
+            if (string.IsNullOrEmpty(DockerAuth)) return;
+            
+            var registry = DockerRegistryUrl ?? "https://index.docker.io/v1/";
+            DockerAuths.Add(new DockerRegistryPat(registry, DockerAuth));
         }
 
         // Computed properties - simple data derivations only
         public string ComposeFolderPath => Path.Combine(RepositoryLocation, DockerComposeDirectory);
-        public string FriendlyName => Path.GetFileName(RepositoryLocation);
+        public PackageName FriendlyName => Path.GetFileName(RepositoryLocation);
         public bool IsGitVersioned => Directory.Exists(RepositoryLocation) &&
                                       Directory.Exists(Path.Combine(RepositoryLocation, ".git"));
 
@@ -79,30 +79,37 @@ namespace ModelingEvolution.AutoUpdater
             }
         }
 
-        // Status properties - require ILogger dependency injection
-        private static ILogger? _logger;
+       
+        private string _errorMessage = string.Empty;
+        private string? _availableUpgrade;
+        private bool _isUpgradeAvailable;
 
         /// <summary>
-        /// Sets the logger for status operations. Should be called during DI setup.
+        /// Error message for this package (managed externally)
         /// </summary>
-        public static void SetLogger(ILogger logger)
-        {
-            _logger = logger;
+        public string ErrorMessage 
+        { 
+            get => _errorMessage;
+            set => SetProperty(ref _errorMessage, value);
         }
 
         /// <summary>
-        /// Checks if an upgrade is available for this package
-        /// NOTE: This property is deprecated. Use IsUpgradeAvailableAsync extension method instead.
+        /// Available upgrade version
         /// </summary>
-        [Obsolete("Use IsUpgradeAvailableAsync extension method with IGitService instead")]
-        public bool IsUpgradeAvailable => false; // Placeholder to maintain compatibility
+        public string? AvailableUpgrade
+        {
+            get => _availableUpgrade;
+            set => SetProperty(ref _availableUpgrade, value);
+        }
 
         /// <summary>
-        /// Gets the available upgrade version if one exists
-        /// NOTE: This property is deprecated. Use AvailableUpgradeAsync extension method instead.
+        /// Whether an upgrade is available
         /// </summary>
-        [Obsolete("Use AvailableUpgradeAsync extension method with IGitService instead")]
-        public GitTagVersion? AvailableUpgrade => null; // Placeholder to maintain compatibility
+        public bool IsUpgradeAvailable
+        {
+            get => _isUpgradeAvailable;
+            set => SetProperty(ref _isUpgradeAvailable, value);
+        }
 
         /// <summary>
         /// Gets the status text for display purposes
@@ -111,12 +118,9 @@ namespace ModelingEvolution.AutoUpdater
         {
             get
             {
-                if (_logger == null) return "Status unavailable";
-                
                 if (IsUpgradeAvailable)
                 {
-                    var upgrade = AvailableUpgrade;
-                    return upgrade != null ? $"Upgrade available: {upgrade}" : "Upgrade available";
+                    return AvailableUpgrade != null ? $"Upgrade available: {AvailableUpgrade}" : "Upgrade available";
                 }
                 return "You have the latest version.";
             }
@@ -129,17 +133,45 @@ namespace ModelingEvolution.AutoUpdater
         {
             get
             {
-                if (_logger == null) return PackageStatusColor.Warning;
+                if (!string.IsNullOrEmpty(ErrorMessage))
+                    return PackageStatusColor.Error;
+                    
                 return IsUpgradeAvailable ? PackageStatusColor.Warning : PackageStatusColor.Success;
             }
         }
 
-        /// <summary>
-        /// Error message for this package (managed externally)
-        /// </summary>
-        public string ErrorMessage { get; set; } = string.Empty;
+        #region INotifyPropertyChanged Implementation
 
-      
+        public event PropertyChangedEventHandler? PropertyChanged;
+
+        protected virtual void OnPropertyChanged([CallerMemberName] string? propertyName = null)
+        {
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
+        }
+
+        protected bool SetProperty<T>(ref T field, T value, [CallerMemberName] string? propertyName = null)
+        {
+            if (EqualityComparer<T>.Default.Equals(field, value))
+                return false;
+                
+            field = value;
+            OnPropertyChanged(propertyName);
+            
+            // Notify dependent properties
+            if (propertyName == nameof(IsUpgradeAvailable) || propertyName == nameof(AvailableUpgrade))
+            {
+                OnPropertyChanged(nameof(StatusText));
+                OnPropertyChanged(nameof(StatusColor));
+            }
+            else if (propertyName == nameof(ErrorMessage))
+            {
+                OnPropertyChanged(nameof(StatusColor));
+            }
+            
+            return true;
+        }
+
+        #endregion
     }
 
     /// <summary>

@@ -17,7 +17,7 @@ public class PackageStatusInitializationService : IHostedService
     public Task StartAsync(CancellationToken cancellationToken)
     {
         // Set the static logger for DockerComposeConfiguration status operations
-        DockerComposeConfiguration.SetLogger(_logger);
+        
         return Task.CompletedTask;
     }
 

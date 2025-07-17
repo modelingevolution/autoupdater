@@ -1,0 +1,120 @@
+@using ModelingEvolution.AutoUpdater
+@using ModelingEvolution.AutoUpdater.Common
+@using ModelingEvolution.AutoUpdater.Common.Events
+@using ModelingEvolution.AutoUpdater.Services
+@inject IGitService GitService
+@inject DockerComposeConfigurationModel ConfigurationModel
+@inject IEventHub EventHub
+@inject ILogger<CheckPackageVersionButton> Logger
+@inject IInMemoryLoggerSink LoggerSink
+
+<MudTooltip Text="Check Package Version">
+    <MudIconButton Icon="@(_isChecking ? Icons.Material.Filled.HourglassEmpty : Icons.Material.Filled.Refresh)" 
+                   Color="Color.Default" 
+                   Size="Size.Small"
+                   OnClick="CheckVersionAsync"
+                   Disabled="@_isChecking" />
+</MudTooltip>
+
+@code {
+    [Parameter] public PackageName PackageName { get; set; }
+    
+    private bool _isChecking = false;
+
+    private async Task CheckVersionAsync()
+    {
+        if (_isChecking) return;
+        
+        // Clear logs and enable logging
+        LoggerSink.Clear();
+        LoggerSink.Enabled = true;
+        
+        _isChecking = true;
+        
+        try
+        {
+            Logger.LogInformation("Starting version check for package: {PackageName}", PackageName);
+            
+            // Run in background thread to avoid blocking UI
+            _= Task.Run(async () =>
+            {
+                try
+                {
+                    // Get the package configuration
+                    var packageConfig = ConfigurationModel.GetPackage(PackageName);
+                    if (packageConfig == null)
+                    {
+                        Logger.LogError("Package configuration not found for: {PackageName}", PackageName);
+                        
+                        var errorEvent = new VersionCheckCompletedEvent(
+                            PackageName,
+                            "Unknown",
+                            null,
+                            false,
+                            "Package configuration not found"
+                        );
+                        
+                        await EventHub.PublishAsync(errorEvent);
+                        return;
+                    }
+                    
+                    // Get current version from package
+                    var currentVersion = packageConfig.CurrentVersion ?? "Unknown";
+                    
+                    // Call real GitService to get available versions
+                    Logger.LogInformation("Checking versions for package: {PackageName} at {RepositoryLocation}", 
+                        PackageName, packageConfig.RepositoryLocation);
+                        
+                    var availableVersions = await GitService.GetAvailableVersionsAsync(packageConfig.RepositoryLocation);
+                    
+                    // Find the latest version
+                    var latestVersion = availableVersions
+                        .OrderByDescending(v => v.Version)
+                        .FirstOrDefault();
+                    
+                    var isUpgradeAvailable = false;
+                    if (latestVersion != null && !string.IsNullOrEmpty(currentVersion) && currentVersion != "Unknown")
+                    {
+                        if (Version.TryParse(currentVersion, out var current) && 
+                            latestVersion.Version > current)
+                        {
+                            isUpgradeAvailable = true;
+                        }
+                    }
+                    
+                    var versionCheckEvent = new VersionCheckCompletedEvent(
+                        PackageName,
+                        currentVersion,
+                        latestVersion?.FriendlyName,
+                        isUpgradeAvailable
+                    );
+                    
+                    await EventHub.PublishAsync(versionCheckEvent);
+                    Logger.LogInformation("Version check completed for package: {PackageName}, Current: {CurrentVersion}, Latest: {LatestVersion}, UpgradeAvailable: {UpgradeAvailable}", 
+                        PackageName, currentVersion, latestVersion?.FriendlyName, isUpgradeAvailable);
+                }
+                catch (Exception ex)
+                {
+                    Logger.LogError(ex, "Error during version check for package: {PackageName}", PackageName);
+                    
+                    var errorEvent = new VersionCheckCompletedEvent(
+                        PackageName,
+                        "Unknown",
+                        null,
+                        false,
+                        $"Version check failed: {ex.Message}"
+                    );
+                    
+                    await EventHub.PublishAsync(errorEvent);
+                }
+            });
+        }
+        finally
+        {
+            _isChecking = false;
+            
+            // Ensure UI update happens on UI thread
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+}

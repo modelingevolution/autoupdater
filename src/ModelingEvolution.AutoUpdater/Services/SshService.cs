@@ -2,6 +2,7 @@ using Microsoft.Extensions.Logging;
 using Renci.SshNet;
 using System;
 using System.IO;
+using System.Net.Mail;
 using System.Threading.Tasks;
 
 namespace ModelingEvolution.AutoUpdater.Services
@@ -13,13 +14,16 @@ namespace ModelingEvolution.AutoUpdater.Services
     {
         private readonly SshClient _sshClient;
         private readonly ScpClient _scpClient;
+        
+        private readonly SftpClient _sftpClient;
         private readonly ILogger<SshService> _logger;
         private bool _disposed;
 
-        public SshService(SshClient sshClient, ScpClient scpClient, ILogger<SshService> logger)
+        public SshService(SshClient sshClient, ScpClient scpClient, SftpClient sftpClient, ILogger<SshService> logger)
         {
             _sshClient = sshClient ?? throw new ArgumentNullException(nameof(sshClient));
             _scpClient = scpClient ?? throw new ArgumentNullException(nameof(scpClient));
+            _sftpClient = sftpClient ?? throw new ArgumentNullException(nameof(sftpClient));
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         }
 
@@ -119,7 +123,7 @@ namespace ModelingEvolution.AutoUpdater.Services
             }
         }
 
-        public async Task<string> GetArchitectureAsync()
+        public async Task<CpuArchitecture> GetArchitectureAsync()
         {
             var result = await ExecuteCommandAsync("uname -m");
             
@@ -132,10 +136,10 @@ namespace ModelingEvolution.AutoUpdater.Services
             var arch = result.Output.Trim().ToLowerInvariant();
             return arch switch
             {
-                "x86_64" or "amd64" => "x64",
-                "aarch64" or "arm64" => "arm64",
-                "armv7l" or "arm" => "arm",
-                _ => arch
+                "x86_64" or "amd64" => CpuArchitecture.X64,
+                "aarch64" or "arm64" => CpuArchitecture.Arm64,
+                "armv7l" or "arm" => CpuArchitecture.Arm,
+                _ => throw new NotSupportedException("Unsupported CPU architecture")
             };
         }
 
@@ -144,6 +148,30 @@ namespace ModelingEvolution.AutoUpdater.Services
             var command = $"test -f {filePath}";
             var result = await ExecuteCommandAsync(command);
             return result.IsSuccess;
+        }
+
+        public string[] GetFiles(string path, string pattern)
+        {
+            try
+            {
+                if (string.IsNullOrWhiteSpace(path)) throw new ArgumentException("Path cannot be null or empty.", nameof(path));
+
+                if (string.IsNullOrWhiteSpace(pattern))
+                    throw new ArgumentException("Pattern cannot be null or empty.", nameof(pattern));
+
+                var files = _sftpClient.ListDirectory(path)
+                    .Where(file => file.IsRegularFile && file.Name.Like(pattern))
+                    .Select(file => file.FullName)
+                    .ToArray();
+
+                return files;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "An error occurred while retrieving files from path '{Path}' with pattern '{Pattern}'.",
+                    path, pattern);
+                throw;
+            }
         }
 
         public async Task<bool> DirectoryExistsAsync(string directoryPath)

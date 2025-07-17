@@ -40,7 +40,7 @@ namespace ModelingEvolution.AutoUpdater.Services
         /// Detects the architecture of the remote host
         /// </summary>
         /// <returns>The architecture string (e.g., "x64", "arm64")</returns>
-        Task<string> GetArchitectureAsync();
+        Task<CpuArchitecture> GetArchitectureAsync();
 
         /// <summary>
         /// Checks if a file exists on the remote host
@@ -48,6 +48,8 @@ namespace ModelingEvolution.AutoUpdater.Services
         /// <param name="filePath">The path to the file to check</param>
         /// <returns>True if the file exists, false otherwise</returns>
         Task<bool> FileExistsAsync(string filePath);
+
+        string[] GetFiles(string path, string pattern);
 
         /// <summary>
         /// Checks if a directory exists on the remote host
