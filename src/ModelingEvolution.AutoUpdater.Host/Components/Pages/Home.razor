@@ -12,16 +12,19 @@
 
 <MudButton Variant="Variant.Filled" Size="Size.Large" Class="ma-4" OnClick="@OnClick">Update all</MudButton>
 
+<Observable Source="_logSink">
 @if (_logSink.Enabled)
 {
     <LogViewer/>
 }
+</Observable>
 
 @code {
 
 
 
     private string _lastError = string.Empty;
+   
 
     private async Task OnClick(MouseEventArgs e)
     {

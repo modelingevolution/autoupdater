@@ -3,7 +3,9 @@ using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
+using System.ComponentModel;
 using System.Linq;
+using System.Runtime.CompilerServices;
 
 namespace ModelingEvolution.AutoUpdater.Services
 {
@@ -15,11 +17,18 @@ namespace ModelingEvolution.AutoUpdater.Services
         private readonly ObservableCollection<LogEntry> _logs = new();
         private readonly int _maxEntries;
         private volatile LogEntry? _lastEntry;
+        private bool _enabled = true;
 
         public event Action<LogEntry>? LogAdded;
 
         public IReadOnlyList<LogEntry> LogEntries => _logs;
-        public bool Enabled { get; set; } = true;
+
+        public bool Enabled
+        {
+            get => _enabled;
+            set => SetField(ref _enabled, value);
+        }
+
         public InMemoryLoggerSink(int maxEntries = 1000)
         {
             _maxEntries = maxEntries;
@@ -67,6 +76,21 @@ namespace ModelingEvolution.AutoUpdater.Services
         public IEnumerable<LogEntry> GetRecentLogs(int count = 100)
         {
             return _logs.TakeLast(count);
+        }
+
+        public event PropertyChangedEventHandler? PropertyChanged;
+
+        protected virtual void OnPropertyChanged([CallerMemberName] string? propertyName = null)
+        {
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
+        }
+
+        protected bool SetField<T>(ref T field, T value, [CallerMemberName] string? propertyName = null)
+        {
+            if (EqualityComparer<T>.Default.Equals(field, value)) return false;
+            field = value;
+            OnPropertyChanged(propertyName);
+            return true;
         }
     }
 }

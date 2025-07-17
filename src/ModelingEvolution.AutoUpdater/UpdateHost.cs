@@ -475,7 +475,7 @@ public class UpdateHost : IHostedService
 
         await this._eventHub.PublishAsync(versionCheckEvent);
         _log.LogInformation("Version check completed for package: {PackageName}, Current: {CurrentVersion}, Latest: {LatestVersion}, UpgradeAvailable: {UpgradeAvailable}",
-            configuration.FriendlyName, st.Version, latest?.FriendlyName, result);
+            configuration.FriendlyName, st?.Version, latest?.FriendlyName, result);
         
         return result;
     }
