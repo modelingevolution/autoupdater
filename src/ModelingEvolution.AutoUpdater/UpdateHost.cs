@@ -464,7 +464,7 @@ public class UpdateHost : IHostedService
 
         await _gitService.FetchAsync(configuration.RepositoryLocation);
         var latest = await GetLatestVersion(configuration);
-        var result = st?.Version == (latest?.FriendlyName ?? "-");
+        var result = st?.Version != (latest?.FriendlyName ?? "-");
 
         var versionCheckEvent = new VersionCheckCompletedEvent(
             configuration.FriendlyName,
