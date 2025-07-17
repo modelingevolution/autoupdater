@@ -1,4 +1,5 @@
 using ModelingEvolution.AutoUpdater;
+using ModelingEvolution.AutoUpdater.Host;
 using ModelingEvolution.AutoUpdater.Host.Components;
 using ModelingEvolution.AutoUpdater.Host.Extensions;
 using ModelingEvolution.AutoUpdater.Extensions;
@@ -59,10 +60,43 @@ public class Program
         await app.RunAsync();
     }
 
+    private static string GetApplicationVersion()
+    {
+        try
+        {
+            // Priority 1: Check for app.version file
+            if (File.Exists("app.version"))
+            {
+                var fileVersion = File.ReadAllText("app.version").Trim();
+                return $"v{fileVersion}";
+            }
+            else
+            {
+                // Priority 2: Fallback to GitCommitShaAttribute
+                var assembly = Assembly.GetExecutingAssembly();
+                var gitCommitSha = assembly.GetCustomAttribute<GitCommitShaAttribute>();
+                
+                if (gitCommitSha != null)
+                {
+                    return $"dev-{gitCommitSha.ShortSha}";
+                }
+                else
+                {
+                    // Fallback to assembly version
+                    return assembly.GetName().Version?.ToString() ?? "Unknown";
+                }
+            }
+        }
+        catch
+        {
+            return "Unknown";
+        }
+    }
+
     private static void WriteConsoleHeader(WebApplicationBuilder builder)
     {
         var color = ForegroundColor;
-        string version = Assembly.GetExecutingAssembly().GetName().Version?.ToString() ?? "1.0";
+        string version = GetApplicationVersion();
         ForegroundColor = ConsoleColor.Cyan;
         WriteLine("*=================================================================*");
         WriteLine("*                                                                 *");
