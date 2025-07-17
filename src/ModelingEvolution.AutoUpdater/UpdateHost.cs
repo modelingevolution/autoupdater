@@ -198,7 +198,7 @@ public class UpdateHost : IHostedService
             _progressService.LogOperationProgress("Loading deployment state", 10, "Starting update process for {RepositoryLocation}", configuration.RepositoryLocation);
 
             // Step 1: Load current deployment state
-            var currentDeploymentState = await _deploymentStateProvider.GetDeploymentStateAsync(configuration.ComposeFolderPath);
+            var currentDeploymentState = await _deploymentStateProvider.GetDeploymentStateAsync(configuration.HostComposeFolderPath);
             currentVersion = currentDeploymentState?.Version;
 
             await ConfigureGitRepositoryIfNeeded(configuration);
@@ -232,10 +232,10 @@ public class UpdateHost : IHostedService
 
             // Phase 1: Backup Creation (Decision Point: Backup Script Exists?)
             _progressService.LogOperationProgress("Creating backup", 30);
-            if (await _backupService.BackupScriptExistsAsync(configuration.ComposeFolderPath))
+            if (await _backupService.BackupScriptExistsAsync(configuration.HostComposeFolderPath))
             {
                 _log.LogInformation("Creating backup before update");
-                backup = await _backupService.CreateBackupAsync(configuration.ComposeFolderPath);
+                backup = await _backupService.CreateBackupAsync(configuration.HostComposeFolderPath);
                 
                 if (!backup.Success)
                 {
@@ -255,20 +255,20 @@ public class UpdateHost : IHostedService
             // Step 4: Get architecture and compose files
             using var sshService = await _sshConnectionManager.CreateSshServiceAsync();
             var architecture = await sshService.GetArchitectureAsync();
-            var composeFiles = await _dockerComposeService.GetComposeFiles(configuration.ComposeFolderPath, architecture);
+            var composeFiles = await _dockerComposeService.GetComposeFiles(configuration.HostComposeFolderPath, architecture);
 
             // Phase 2: Stop Current Services
             _progressService.LogOperationProgress("Stopping services", 40, "Stopping current Docker Compose services");
             var isSelfUpdating = configuration.FriendlyName == "autoupdater";
             if (!isSelfUpdating) 
-                await _dockerComposeService.StopServicesAsync(composeFiles, configuration.ComposeFolderPath);
+                await _dockerComposeService.StopServicesAsync(composeFiles, configuration.HostComposeFolderPath);
             else _log.LogInformation("Self-updating service detected - skipping stop phase for {ServiceName}", configuration.FriendlyName);
             
                 // Phase 3: Migration Scripts (Decision Point: All Scripts Successful?)
                 _progressService.LogOperationProgress("Executing migration scripts", 50);
             try
             {
-                var allScripts = await _scriptMigrationService.DiscoverScriptsAsync(configuration.ComposeFolderPath);
+                var allScripts = await _scriptMigrationService.DiscoverScriptsAsync(configuration.HostComposeFolderPath);
                 var excludeVersions = currentDeploymentState?.Up ?? ImmutableSortedSet<SystemVersion>.Empty;
                 var scriptsToExecute = await _scriptMigrationService.FilterScriptsForMigrationAsync(
                     allScripts, currentVersion, latestVersion.FriendlyName, excludeVersions);
@@ -276,7 +276,7 @@ public class UpdateHost : IHostedService
                 if (scriptsToExecute.Any())
                 {
                     _log.LogInformation("Executing {Count} migration scripts", scriptsToExecute.Count());
-                    executedVersions.AddRange(await _scriptMigrationService.ExecuteScriptsAsync(scriptsToExecute, configuration.ComposeFolderPath));
+                    executedVersions.AddRange(await _scriptMigrationService.ExecuteScriptsAsync(scriptsToExecute, configuration.HostComposeFolderPath));
                     executedScripts.AddRange(scriptsToExecute.Select(s => s.FileName));
                     
                     _log.LogInformation("Migration scripts executed successfully");
@@ -290,7 +290,7 @@ public class UpdateHost : IHostedService
                 if (backup?.Success == true)
                 {
                     _log.LogInformation("Performing rollback with backup recovery");
-                    await PerformRollbackWithBackupAsync(executedVersions, backup, composeFiles, configuration.ComposeFolderPath);
+                    await PerformRollbackWithBackupAsync(executedVersions, backup, composeFiles, configuration.HostComposeFolderPath);
                     
                     return UpdateResult.CreateFailed($"Migration failed: {migrationEx.Message}", currentVersion, executedScripts, recoveryPerformed: true, backup.BackupFilePath);
                 }
@@ -306,8 +306,8 @@ public class UpdateHost : IHostedService
             {
                 _log.LogInformation("Starting new Docker Compose services");
                 if(!isSelfUpdating)
-                    await _dockerComposeService.StartServicesAsync(composeFiles, configuration.ComposeFolderPath);
-                else await _dockerComposeService.RestartServicesAsync(composeFiles, configuration.ComposeFolderPath,true);
+                    await _dockerComposeService.StartServicesAsync(composeFiles, configuration.HostComposeFolderPath);
+                else await _dockerComposeService.RestartServicesAsync(composeFiles, configuration.HostComposeFolderPath, true);
             }
             catch (Exception dockerEx)
             {
@@ -317,7 +317,7 @@ public class UpdateHost : IHostedService
                 if (backup?.Success == true)
                 {
                     _log.LogInformation("Docker startup failed - performing rollback with backup recovery");
-                    await PerformRollbackWithBackupAsync(executedVersions, backup, composeFiles, configuration.ComposeFolderPath);
+                    await PerformRollbackWithBackupAsync(executedVersions, backup, composeFiles, configuration.HostComposeFolderPath);
                     
                     return UpdateResult.CreateFailed($"Docker startup failed: {dockerEx.Message}", currentVersion, executedScripts, recoveryPerformed: true, backup.BackupFilePath);
                 }
@@ -329,7 +329,7 @@ public class UpdateHost : IHostedService
 
             // Phase 5: Health Check (Decision Point: All Services Healthy?)
             _progressService.LogOperationProgress("Performing health checks", 80, "Performing health check on all services");
-            var healthCheck = await _healthCheckService.CheckServicesHealthAsync(composeFiles, configuration.ComposeFolderPath);
+            var healthCheck = await _healthCheckService.CheckServicesHealthAsync(composeFiles, configuration.HostComposeFolderPath);
             
             if (!healthCheck.AllHealthy)
             {
@@ -340,7 +340,7 @@ public class UpdateHost : IHostedService
                 if (backup?.Success == true && healthCheck.CriticalFailure)
                 {
                     _log.LogInformation("Critical services failed - performing rollback with backup recovery");
-                    await PerformRollbackWithBackupAsync(executedVersions, backup, composeFiles, configuration.ComposeFolderPath);
+                    await PerformRollbackWithBackupAsync(executedVersions, backup, composeFiles, configuration.HostComposeFolderPath);
                     
                     return UpdateResult.CreateFailed(
                         "Critical services unhealthy after deployment",
@@ -349,7 +349,7 @@ public class UpdateHost : IHostedService
                 
                 // Partial success - keep running services
                 _log.LogInformation("Accepting partial deployment state - some services healthy");
-                await UpdateDeploymentStateAsync(currentDeploymentState, latestVersion.FriendlyName, executedVersions, configuration.ComposeFolderPath);
+                await UpdateDeploymentStateAsync(currentDeploymentState, latestVersion.FriendlyName, executedVersions, configuration.HostComposeFolderPath);
                 
                 return UpdateResult.CreatePartialSuccess(
                     latestVersion.FriendlyName, currentVersion, executedScripts, healthCheck);
@@ -357,7 +357,7 @@ public class UpdateHost : IHostedService
 
             // Phase 6: Complete Success
             _progressService.LogOperationProgress("Finalizing update", 90, "All services healthy - update completed successfully");
-            await UpdateDeploymentStateAsync(currentDeploymentState, latestVersion.FriendlyName, executedVersions, configuration.ComposeFolderPath);
+            await UpdateDeploymentStateAsync(currentDeploymentState, latestVersion.FriendlyName, executedVersions, configuration.HostComposeFolderPath);
             
             // Publish successful update completion event
             await _eventHub.PublishAsync(new UpdateCompletedEvent(
@@ -399,10 +399,9 @@ public class UpdateHost : IHostedService
                     _log.LogInformation("Attempting emergency rollback due to unexpected error");
                     using var sshService = await _sshConnectionManager.CreateSshServiceAsync();
                     var architecture = await sshService.GetArchitectureAsync();
-                    var composeFiles = await _dockerComposeService.GetComposeFiles(
-                        configuration.ComposeFolderPath, architecture);
+                    var composeFiles = await _dockerComposeService.GetComposeFiles(configuration.HostComposeFolderPath, architecture);
                     
-                    await PerformRollbackWithBackupAsync(executedVersions, backup, composeFiles, configuration.ComposeFolderPath);
+                    await PerformRollbackWithBackupAsync(executedVersions, backup, composeFiles, configuration.HostComposeFolderPath);
                     
                     return UpdateResult.CreateFailed(
                         $"Unexpected error: {ex.Message}",
@@ -459,7 +458,7 @@ public class UpdateHost : IHostedService
     {
         if (configuration == null) throw new ArgumentNullException(nameof(configuration));
         
-        var st = await _deploymentStateProvider.GetDeploymentStateAsync(configuration.ComposeFolderPath);
+        var st = await _deploymentStateProvider.GetDeploymentStateAsync(configuration.HostComposeFolderPath);
         await ConfigureGitRepositoryIfNeeded(configuration);
 
         await _gitService.FetchAsync(configuration.RepositoryLocation);

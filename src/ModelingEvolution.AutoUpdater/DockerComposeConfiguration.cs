@@ -48,8 +48,10 @@ namespace ModelingEvolution.AutoUpdater
             DockerAuths.Add(new DockerRegistryPat(registry, DockerAuth));
         }
 
+        public string HostRepositoriesRoot { get; set; } = "/var/docker/configuration";
         // Computed properties - simple data derivations only
-        public string ComposeFolderPath => Path.Combine(RepositoryLocation, DockerComposeDirectory);
+        public string LocalComposeFolderPath => Path.Combine(RepositoryLocation, DockerComposeDirectory);
+        public string HostComposeFolderPath => $"{HostRepositoriesRoot}/{FriendlyName}/{DockerComposeDirectory}";
         public PackageName FriendlyName => Path.GetFileName(RepositoryLocation);
         public bool IsGitVersioned => Directory.Exists(RepositoryLocation) &&
                                       Directory.Exists(Path.Combine(RepositoryLocation, ".git"));
@@ -64,7 +66,7 @@ namespace ModelingEvolution.AutoUpdater
             {
                 try
                 {
-                    var stateFile = Path.Combine(ComposeFolderPath, "deployment.state.json");
+                    var stateFile = Path.Combine(HostComposeFolderPath, "deployment.state.json");
                     if (!File.Exists(stateFile))
                         return null;
 

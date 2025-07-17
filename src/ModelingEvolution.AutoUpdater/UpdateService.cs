@@ -139,7 +139,7 @@ namespace ModelingEvolution.AutoUpdater
         {
             try
             {
-                var stateFile = Path.Combine(config.ComposeFolderPath, "deployment.state.json");
+                var stateFile = Path.Combine(config.HostComposeFolderPath, "deployment.state.json");
                 if (!File.Exists(stateFile))
                     return null;
 

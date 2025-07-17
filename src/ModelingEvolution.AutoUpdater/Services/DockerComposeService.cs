@@ -29,8 +29,8 @@ namespace ModelingEvolution.AutoUpdater.Services
         {
             try
             {
-                _logger.LogDebug("Getting compose files for architecture {Architecture} in {DirectoryPath}", 
-                    architecture, directoryPath);
+                
+                _logger.LogDebug("Getting compose files for architecture {Architecture} in {DirectoryPath}", architecture, directoryPath);
 
                 if (string.IsNullOrWhiteSpace(directoryPath))
                     throw new ArgumentException("Directory path cannot be null or whitespace", nameof(directoryPath));
@@ -44,9 +44,15 @@ namespace ModelingEvolution.AutoUpdater.Services
                 var composeFiles = _sshService
                     .GetFiles(directoryPath, "docker-compose*yml")
                     .Except(notValid)
-                    .OrderBy(x=>x.Length)
+                    .OrderBy(x => x.Length)
+                    .Select(Path.GetFileName)
                     .ToArray();
-                
+                //var composeFiles = Directory.GetFiles(directoryPath, "docker-compose*yml")
+                //    .Except(notValid)
+                //    .OrderBy(x=>x.Length)
+                //    .Select(Path.GetFileName)
+                //    .ToArray();
+
                 _logger.LogInformation("Found docker-compose files: {docker-compose-files}.", string.Join(',', composeFiles.Select(Path.GetFileName)));
                 
                 return composeFiles;
