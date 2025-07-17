@@ -2,9 +2,9 @@
 @using ModelingEvolution.AutoUpdater.Common
 @using ModelingEvolution.AutoUpdater.Common.Events
 @using ModelingEvolution.AutoUpdater.Services
-@inject IGitService GitService
+
 @inject DockerComposeConfigurationModel ConfigurationModel
-@inject IEventHub EventHub
+@inject UpdateHost _updateHost
 @inject ILogger<CheckPackageVersionButton> Logger
 @inject IInMemoryLoggerSink LoggerSink
 
@@ -41,71 +41,17 @@
                 try
                 {
                     // Get the package configuration
-                    var packageConfig = ConfigurationModel.GetPackage(PackageName);
-                    if (packageConfig == null)
+                    var dockerComposeConfiguration = ConfigurationModel?.GetPackage(PackageName);
+                    if(dockerComposeConfiguration == null)
                     {
-                        Logger.LogError("Package configuration not found for: {PackageName}", PackageName);
-                        
-                        var errorEvent = new VersionCheckCompletedEvent(
-                            PackageName,
-                            "Unknown",
-                            null,
-                            false,
-                            "Package configuration not found"
-                        );
-                        
-                        await EventHub.PublishAsync(errorEvent);
+                        Logger.LogWarning("No configuration found for package: {PackageName}", PackageName);
                         return;
                     }
-                    
-                    // Get current version from package
-                    var currentVersion = packageConfig.CurrentVersion ?? "Unknown";
-                    
-                    // Call real GitService to get available versions
-                    Logger.LogInformation("Checking versions for package: {PackageName} at {RepositoryLocation}", 
-                        PackageName, packageConfig.RepositoryLocation);
-                        
-                    var availableVersions = await GitService.GetAvailableVersionsAsync(packageConfig.RepositoryLocation);
-                    
-                    // Find the latest version
-                    var latestVersion = availableVersions
-                        .OrderByDescending(v => v.Version)
-                        .FirstOrDefault();
-                    
-                    var isUpgradeAvailable = false;
-                    if (latestVersion != null && !string.IsNullOrEmpty(currentVersion) && currentVersion != "Unknown")
-                    {
-                        if (Version.TryParse(currentVersion, out var current) && 
-                            latestVersion.Version > current)
-                        {
-                            isUpgradeAvailable = true;
-                        }
-                    }
-                    
-                    var versionCheckEvent = new VersionCheckCompletedEvent(
-                        PackageName,
-                        currentVersion,
-                        latestVersion?.FriendlyName,
-                        isUpgradeAvailable
-                    );
-                    
-                    await EventHub.PublishAsync(versionCheckEvent);
-                    Logger.LogInformation("Version check completed for package: {PackageName}, Current: {CurrentVersion}, Latest: {LatestVersion}, UpgradeAvailable: {UpgradeAvailable}", 
-                        PackageName, currentVersion, latestVersion?.FriendlyName, isUpgradeAvailable);
+                    await _updateHost.CheckIsUpdateAvailable(dockerComposeConfiguration);
                 }
                 catch (Exception ex)
                 {
                     Logger.LogError(ex, "Error during version check for package: {PackageName}", PackageName);
-                    
-                    var errorEvent = new VersionCheckCompletedEvent(
-                        PackageName,
-                        "Unknown",
-                        null,
-                        false,
-                        $"Version check failed: {ex.Message}"
-                    );
-                    
-                    await EventHub.PublishAsync(errorEvent);
                 }
             });
         }

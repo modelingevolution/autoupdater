@@ -1,6 +1,7 @@
 ﻿using Docker.DotNet;
 using Docker.DotNet.Models;
 using Ductus.FluentDocker.Common;
+using LibGit2Sharp;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
@@ -167,6 +168,7 @@ public class UpdateHost : IHostedService
     }
     private string _hostAddress = "172.17.0.1";
 
+    
     /// <summary>
     /// Orchestrates the update process following the complete decision tree workflow
     /// </summary>
@@ -199,44 +201,11 @@ public class UpdateHost : IHostedService
             var currentDeploymentState = await _deploymentStateProvider.GetDeploymentStateAsync(configuration.ComposeFolderPath);
             currentVersion = currentDeploymentState?.Version;
 
-            if (!_gitService.IsGitRepository(configuration.RepositoryLocation))
-            {
-                if (!Directory.Exists(configuration.RepositoryLocation))
-                {
-                    _progressService.LogOperationProgress("Cloning repository", null, "Repository not found at {RepositoryLocation}, cloning from {RepositoryUrl}", configuration.RepositoryLocation, configuration.RepositoryUrl);
-
-                    try
-                    {
-                        await _gitService.CloneRepositoryAsync(configuration.RepositoryUrl, configuration.RepositoryLocation);
-                        _log.LogInformation("Repository cloned successfully to {RepositoryLocation}", configuration.RepositoryLocation);
-                    }
-                    catch (Exception ex)
-                    {
-                        _log.LogError(ex, "Failed to clone repository from {RepositoryUrl} to {RepositoryLocation}", configuration.RepositoryUrl, configuration.RepositoryLocation);
-                        throw new InvalidOperationException($"Failed to clone repository: {ex.Message}", ex);
-                    }
-                }
-                else
-                {
-                    _progressService.LogOperationProgress("Initializing Git repository", null, "Directory exists at {RepositoryLocation} but is not a Git repository, initializing", configuration.RepositoryLocation);
-                    
-                    try
-                    {
-                        await _gitService.InitializeRepositoryAsync(configuration.RepositoryLocation, configuration.RepositoryUrl);
-                        _log.LogInformation("Git repository initialized successfully at {RepositoryLocation}", configuration.RepositoryLocation);
-                    }
-                    catch (Exception ex)
-                    {
-                        _log.LogError(ex, "Failed to initialize Git repository at {RepositoryLocation}", configuration.RepositoryLocation);
-                        throw new InvalidOperationException($"Failed to initialize Git repository: {ex.Message}", ex);
-                    }
-                }
-            }
+            await ConfigureGitRepositoryIfNeeded(configuration);
 
             await _gitService.FetchAsync(configuration.RepositoryLocation);
             
-            var availableVersions = await _gitService.GetAvailableVersionsAsync(configuration.RepositoryLocation);
-            latestVersion = availableVersions.OrderByDescending(v => v.Version).FirstOrDefault();
+            latestVersion = await GetLatestVersion(configuration);
 
             if (latestVersion == null)
             {
@@ -290,10 +259,13 @@ public class UpdateHost : IHostedService
 
             // Phase 2: Stop Current Services
             _progressService.LogOperationProgress("Stopping services", 40, "Stopping current Docker Compose services");
-            await _dockerComposeService.StopServicesAsync(composeFiles, configuration.ComposeFolderPath);
-
-            // Phase 3: Migration Scripts (Decision Point: All Scripts Successful?)
-            _progressService.LogOperationProgress("Executing migration scripts", 50);
+            var isSelfUpdating = configuration.FriendlyName == "autoupdater";
+            if (!isSelfUpdating) 
+                await _dockerComposeService.StopServicesAsync(composeFiles, configuration.ComposeFolderPath);
+            else _log.LogInformation("Self-updating service detected - skipping stop phase for {ServiceName}", configuration.FriendlyName);
+            
+                // Phase 3: Migration Scripts (Decision Point: All Scripts Successful?)
+                _progressService.LogOperationProgress("Executing migration scripts", 50);
             try
             {
                 var allScripts = await _scriptMigrationService.DiscoverScriptsAsync(configuration.ComposeFolderPath);
@@ -333,7 +305,9 @@ public class UpdateHost : IHostedService
             try
             {
                 _log.LogInformation("Starting new Docker Compose services");
-                await _dockerComposeService.StartServicesAsync(composeFiles, configuration.ComposeFolderPath);
+                if(!isSelfUpdating)
+                    await _dockerComposeService.StartServicesAsync(composeFiles, configuration.ComposeFolderPath);
+                else await _dockerComposeService.RestartServicesAsync(composeFiles, configuration.ComposeFolderPath,true);
             }
             catch (Exception dockerEx)
             {
@@ -457,6 +431,96 @@ public class UpdateHost : IHostedService
             _updateLock.Release();
         }
     }
+    /// <summary>
+    /// Checks if an update is available for the specified Docker Compose configuration.
+    /// </summary>
+    /// <param name="configuration">
+    /// The <see cref="DockerComposeConfiguration"/> containing the repository location and other configuration details.
+    /// </param>
+    /// <returns>
+    /// A <see cref="Task{TResult}"/> representing the asynchronous operation, with a result of <c>true</c> if an update is available; otherwise, <c>false</c>.
+    /// </returns>
+    /// <remarks>
+    /// This method performs the following steps:
+    /// 1. Retrieves the current deployment state.
+    /// 2. Fetches the latest changes from the repository.
+    /// 3. Determines the latest version available.
+    /// 4. Compares the current version with the latest version.
+    /// 5. Publishes a <see cref="VersionCheckCompletedEvent"/> to the event hub with the results of the version check.
+    /// 6. Logs the outcome of the version check.
+    /// </remarks>
+    /// <exception cref="ArgumentNullException">
+    /// Thrown if the <paramref name="configuration"/> is <c>null</c>.
+    /// </exception>
+    /// <exception cref="InvalidOperationException">
+    /// Thrown if the deployment state or latest version cannot be determined.
+    /// </exception>
+    public async Task<bool> CheckIsUpdateAvailable(DockerComposeConfiguration configuration)
+    {
+        if (configuration == null) throw new ArgumentNullException(nameof(configuration));
+        
+        var st = await _deploymentStateProvider.GetDeploymentStateAsync(configuration.ComposeFolderPath);
+        await _gitService.FetchAsync(configuration.RepositoryLocation);
+        var latest = await GetLatestVersion(configuration);
+        var result = st?.Version == (latest?.FriendlyName ?? "-");
+
+        var versionCheckEvent = new VersionCheckCompletedEvent(
+            configuration.FriendlyName,
+            st?.Version ?? "-",
+            latest?.FriendlyName ?? "-",
+            result
+        );
+
+        await this._eventHub.PublishAsync(versionCheckEvent);
+        _log.LogInformation("Version check completed for package: {PackageName}, Current: {CurrentVersion}, Latest: {LatestVersion}, UpgradeAvailable: {UpgradeAvailable}",
+            configuration.FriendlyName, st.Version, latest?.FriendlyName, result);
+        
+        return result;
+    }
+    public async Task<GitTagVersion?> GetLatestVersion(DockerComposeConfiguration configuration)
+    {
+        GitTagVersion? latestVersion;
+        var availableVersions = await _gitService.GetAvailableVersionsAsync(configuration.RepositoryLocation);
+        latestVersion = availableVersions.OrderByDescending(v => v.Version).FirstOrDefault();
+        return latestVersion;
+    }
+
+    private async Task ConfigureGitRepositoryIfNeeded(DockerComposeConfiguration configuration)
+    {
+        if (!_gitService.IsGitRepository(configuration.RepositoryLocation))
+        {
+            if (!Directory.Exists(configuration.RepositoryLocation))
+            {
+                _progressService.LogOperationProgress("Cloning repository", null, "Repository not found at {RepositoryLocation}, cloning from {RepositoryUrl}", configuration.RepositoryLocation, configuration.RepositoryUrl);
+
+                try
+                {
+                    await _gitService.CloneRepositoryAsync(configuration.RepositoryUrl, configuration.RepositoryLocation);
+                    _log.LogInformation("Repository cloned successfully to {RepositoryLocation}", configuration.RepositoryLocation);
+                }
+                catch (Exception ex)
+                {
+                    _log.LogError(ex, "Failed to clone repository from {RepositoryUrl} to {RepositoryLocation}", configuration.RepositoryUrl, configuration.RepositoryLocation);
+                    throw new InvalidOperationException($"Failed to clone repository: {ex.Message}", ex);
+                }
+            }
+            else
+            {
+                _progressService.LogOperationProgress("Initializing Git repository", null, "Directory exists at {RepositoryLocation} but is not a Git repository, initializing", configuration.RepositoryLocation);
+                    
+                try
+                {
+                    await _gitService.InitializeRepositoryAsync(configuration.RepositoryLocation, configuration.RepositoryUrl);
+                    _log.LogInformation("Git repository initialized successfully at {RepositoryLocation}", configuration.RepositoryLocation);
+                }
+                catch (Exception ex)
+                {
+                    _log.LogError(ex, "Failed to initialize Git repository at {RepositoryLocation}", configuration.RepositoryLocation);
+                    throw new InvalidOperationException($"Failed to initialize Git repository: {ex.Message}", ex);
+                }
+            }
+        }
+    }
 
     /// <summary>
     /// Performs complete rollback with backup restoration
@@ -528,4 +592,6 @@ public class UpdateHost : IHostedService
         _log.LogInformation("Deployment state updated to version {Version} with {ExecutedCount} executed scripts", 
             newVersion, executedVersions.Count);
     }
+
+   
 }

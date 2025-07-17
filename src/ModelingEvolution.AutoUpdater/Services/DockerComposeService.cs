@@ -6,6 +6,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
+using System.Xml;
 
 namespace ModelingEvolution.AutoUpdater.Services
 {
@@ -305,7 +306,7 @@ namespace ModelingEvolution.AutoUpdater.Services
             }
         }
 
-        public async Task RestartServicesAsync(string[] composeFiles, string workingDirectory)
+        public async Task RestartServicesAsync(string[] composeFiles, string workingDirectory, bool nohup=false)
         {
             try
             {
@@ -324,8 +325,13 @@ namespace ModelingEvolution.AutoUpdater.Services
 
                 // Build the docker-compose command with multiple -f flags
                 var composeFileArgs = string.Join(" ", composeFiles.Select(f => $"-f \"{f}\""));
-                var command = $"docker-compose {composeFileArgs} restart";
+                var command = $"docker-compose {composeFileArgs} down && docker-compose {composeFileArgs} up -d";
 
+                if (nohup)
+                {
+                    command = "nohup sh -c '" + command + "' > /dev/null 2>&1 &";
+                }
+                
                 _logger.LogDebug("Executing Docker Compose command: {Command}", command);
 
                 var result = await _sshService.ExecuteCommandAsync(command, workingDirectory);

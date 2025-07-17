@@ -69,9 +69,7 @@ namespace ModelingEvolution.AutoUpdater
                 var availableVersions = await config.AvailableVersionsAsync(_gitService, _logger);
                 var latestVersion = availableVersions.OrderByDescending(v => v.Version).FirstOrDefault();
                 
-                var upgradeAvailable = latestVersion != null &&
-                                     currentVersion != null &&
-                                     latestVersion.CompareTo(GitTagVersion.TryParse(currentVersion, out var parsed) ? parsed : null) > 0;
+                var upgradeAvailable = await _updateHost.CheckIsUpdateAvailable(config);
 
                 packages.Add(new PackageInfo
                 {

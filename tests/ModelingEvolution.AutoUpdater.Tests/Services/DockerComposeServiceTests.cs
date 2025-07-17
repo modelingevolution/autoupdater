@@ -198,7 +198,7 @@ namespace ModelingEvolution.AutoUpdater.Tests.Services
             // Arrange
             var composeFiles = new[] { "docker-compose.yml", "docker-compose.x64.yml" };
             const string workingDirectory = "/app";
-            const string expectedCommand = "docker-compose -f \"docker-compose.yml\" -f \"docker-compose.x64.yml\" restart";
+            const string expectedCommand = "docker-compose -f \"docker-compose.yml\" -f \"docker-compose.x64.yml\" down && docker-compose -f \"docker-compose.yml\" -f \"docker-compose.x64.yml\" up -d";
             
             _sshService.ExecuteCommandAsync(expectedCommand, workingDirectory).Returns(new SshCommandResult(expectedCommand, "Restarted successfully"));
 

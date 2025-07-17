@@ -35,11 +35,6 @@
                         <MudChip T="string" Text="@(_logEntries.Count.ToString())" Size="Size.Small" Class="ml-2" />
                     </div>
                     <div>
-                        <MudTooltip Text="Clear logs">
-                            <MudIconButton Icon="Icons.Material.Filled.Clear" 
-                                           OnClick="ClearLogs" 
-                                           Size="Size.Small" />
-                        </MudTooltip>
                         <MudTooltip Text="@(_autoScroll ? "Disable auto-scroll" : "Enable auto-scroll")">
                             <MudIconButton Icon="@(_autoScroll ? Icons.Material.Filled.PauseCircleFilled : Icons.Material.Filled.PlayCircleFilled)" 
                                            OnClick="ToggleAutoScroll" 
@@ -51,10 +46,10 @@
         </MudCardHeader>
         <MudCardContent Style="padding: 0;">
             <div class="log-container" style="height: 400px; overflow-y: auto; background-color: #1e1e1e; font-family: 'Courier New', monospace; font-size: 12px;" @ref="logContainer">
-                @if (_logEntries.Any())
+                @if (_logEntries.Count > 0)
                 {
-                    @foreach (var log in _logEntries.TakeLast(500))
-                    {
+                    <ObservableForEach Context="log" IsNotifyPropertyChangedEnabled="false" ItemSource="_logEntries">
+                    
                         <div class="log-entry" style="padding: 4px 12px; border-bottom: 1px solid #333; color: @GetLogColor(log.Level);">
                             <span style="color: #888; margin-right: 8px;">@log.Timestamp.ToString("HH:mm:ss.fff")</span>
                             <span style="color: @GetLevelColor(log.Level); margin-right: 8px; font-weight: bold;">[@log.Level.ToString().ToUpper()]</span>
@@ -67,7 +62,8 @@
                                 </div>
                             }
                         </div>
-                    }
+                    
+                    </ObservableForEach>
                 }
                 else
                 {
@@ -81,66 +77,27 @@
 </div>
 
 @code {
-    private List<LogEntry> _logEntries = new();
+    private IReadOnlyList<LogEntry> _logEntries;
     private ElementReference logContainer;
     private bool _autoScroll = true;
 
     protected override void OnInitialized()
     {
         // Load existing logs
-        _logEntries = LoggerSink.LogEntries.ToList();
+        _logEntries = LoggerSink.LogEntries;
         
-        // Subscribe to new logs
-        LoggerSink.LogAdded += OnLogAdded;
         ProgressService.Changed += OnProgressChanged;
     }
 
-    private async void OnLogAdded(LogEntry entry)
-    {
-        _logEntries.Add(entry);
-        
-        // Keep only last 1000 entries in memory for performance
-        if (_logEntries.Count > 1000)
-        {
-            _logEntries.RemoveAt(0);
-        }
-        
-        await InvokeAsync(StateHasChanged);
-        
-        if (_autoScroll)
-        {
-            await InvokeAsync(async () =>
-            {
-                await Task.Delay(50); // Small delay to ensure DOM is updated
-                await ScrollToBottom();
-            });
-        }
-    }
 
     private async void OnProgressChanged()
     {
         await InvokeAsync(StateHasChanged);
     }
 
-    private async Task ScrollToBottom()
-    {
-        try
-        {
-            await JSRuntime.InvokeVoidAsync("scrollToBottom", logContainer);
-        }
-        catch
-        {
-            // Ignore scroll errors
-        }
-    }
+   
 
-    private void ClearLogs()
-    {
-        LoggerSink.Clear();
-        _logEntries.Clear();
-        StateHasChanged();
-    }
-
+    
     private void ToggleAutoScroll()
     {
         _autoScroll = !_autoScroll;
@@ -171,7 +128,6 @@
 
     public void Dispose()
     {
-        LoggerSink.LogAdded -= OnLogAdded;
         ProgressService.Changed -= OnProgressChanged;
     }
 }

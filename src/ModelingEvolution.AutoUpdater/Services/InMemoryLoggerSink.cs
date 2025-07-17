@@ -2,6 +2,7 @@ using Microsoft.Extensions.Logging;
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Collections.ObjectModel;
 using System.Linq;
 
 namespace ModelingEvolution.AutoUpdater.Services
@@ -11,13 +12,13 @@ namespace ModelingEvolution.AutoUpdater.Services
     /// </summary>
     public class InMemoryLoggerSink : IInMemoryLoggerSink
     {
-        private readonly ConcurrentQueue<LogEntry> _logs = new();
+        private readonly ObservableCollection<LogEntry> _logs = new();
         private readonly int _maxEntries;
         private volatile LogEntry? _lastEntry;
 
         public event Action<LogEntry>? LogAdded;
 
-        public IReadOnlyList<LogEntry> LogEntries => _logs.ToList();
+        public IReadOnlyList<LogEntry> LogEntries => _logs;
         public bool Enabled { get; set; } = true;
         public InMemoryLoggerSink(int maxEntries = 1000)
         {
@@ -41,21 +42,20 @@ namespace ModelingEvolution.AutoUpdater.Services
                 return; // Skip duplicate message
             }
 
-            _logs.Enqueue(entry);
+            _logs.Add(entry);
             _lastEntry = entry;
             
             // Maintain max entries limit
             while (_logs.Count > _maxEntries)
             {
-                _logs.TryDequeue(out _);
+                _logs.RemoveAt(0);
             }
 
-            LogAdded?.Invoke(entry);
         }
 
         public void Clear()
         {
-            while (_logs.TryDequeue(out _)) { }
+            _logs.Clear();
             _lastEntry = null;
         }
 
