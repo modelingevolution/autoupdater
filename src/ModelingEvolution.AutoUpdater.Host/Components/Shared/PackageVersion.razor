@@ -1,7 +1,7 @@
 @using ModelingEvolution.AutoUpdater
-
-<MudField Label="Current version">@Package.CurrentVersion</MudField>
-
+<Observable Source="@Package">
+    <MudField Label="Current version">@Package.CurrentVersion</MudField>
+</Observable>
 @code {
     [Parameter] public DockerComposeConfiguration Package { get; set; } = null!;
 }

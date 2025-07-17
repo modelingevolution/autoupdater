@@ -46,7 +46,7 @@ namespace ModelingEvolution.AutoUpdater.Services
             {
                 _logger.LogInformation("Creating backup in directory {Directory}", directory);
 
-                var command = "./backup.sh --format=json";
+                var command = "sudo ./backup.sh --format=json";
                 var result = await _sshService.ExecuteCommandAsync(command, directory);
 
                 if (!result.IsSuccess)

@@ -84,7 +84,7 @@ namespace ModelingEvolution.AutoUpdater.Services
 
                 // Build the docker-compose command with multiple -f flags
                 var composeFileArgs = string.Join(" ", composeFiles.Select(f => $"-f \"{f}\""));
-                var command = $"docker-compose {composeFileArgs} up -d";
+                var command = $"sudo docker-compose {composeFileArgs} up -d";
 
                 _logger.LogDebug("Executing Docker Compose command: {Command}", command);
 
@@ -119,7 +119,7 @@ namespace ModelingEvolution.AutoUpdater.Services
 
                 // Build the docker-compose command with multiple -f flags
                 var composeFileArgs = string.Join(" ", composeFiles.Select(f => $"-f \"{f}\""));
-                var command = $"docker-compose {composeFileArgs} down";
+                var command = $"sudo docker-compose {composeFileArgs} down";
 
                 _logger.LogDebug("Executing Docker Compose command: {Command}", command);
 
@@ -146,7 +146,7 @@ namespace ModelingEvolution.AutoUpdater.Services
                     throw new ArgumentException("Project name cannot be null or whitespace", nameof(projectName));
                 }
 
-                var command = $"docker-compose -p \"{projectName}\" down";
+                var command = $"sudo docker-compose -p \"{projectName}\" down";
 
                 _logger.LogDebug("Executing Docker Compose command: {Command}", command);
 
@@ -173,7 +173,7 @@ namespace ModelingEvolution.AutoUpdater.Services
                     throw new ArgumentException("Project name cannot be null or whitespace", nameof(projectName));
                 }
 
-                var command = $"docker-compose -p \"{projectName}\" ps --format json";
+                var command = $"sudo docker-compose -p \"{projectName}\" ps --format json";
 
                 _logger.LogDebug("Executing Docker Compose command: {Command}", command);
 
@@ -221,7 +221,7 @@ namespace ModelingEvolution.AutoUpdater.Services
 
                 // Build the docker-compose command with multiple -f flags
                 var composeFileArgs = string.Join(" ", composeFiles.Select(f => $"-f \"{f}\""));
-                var command = $"docker-compose {composeFileArgs} pull";
+                var command = $"sudo docker-compose {composeFileArgs} pull";
 
                 _logger.LogDebug("Executing Docker Compose command: {Command}", command);
 
@@ -296,7 +296,7 @@ namespace ModelingEvolution.AutoUpdater.Services
 
                 // Build the docker-compose command with multiple -f flags
                 var composeFileArgs = string.Join(" ", composeFiles.Select(f => $"-f \"{f}\""));
-                var command = $"docker-compose {composeFileArgs} ps";
+                var command = $"sudo docker-compose {composeFileArgs} ps";
 
                 _logger.LogDebug("Executing Docker Compose command: {Command}", command);
 
@@ -332,7 +332,7 @@ namespace ModelingEvolution.AutoUpdater.Services
 
                 // Build the docker-compose command with multiple -f flags
                 var composeFileArgs = string.Join(" ", composeFiles.Select(f => $"-f \"{f}\""));
-                var command = $"docker-compose {composeFileArgs} down && docker-compose {composeFileArgs} up -d";
+                var command = $"sudo docker-compose {composeFileArgs} down && sudo docker-compose {composeFileArgs} up -d";
                 if(!string.IsNullOrWhiteSpace(cmd))
                     command += $" && {cmd}";
                 

@@ -150,6 +150,13 @@ namespace ModelingEvolution.AutoUpdater.Services
             return result.IsSuccess;
         }
 
+        public async Task<bool> IsExecutableAsync(string filePath)
+        {
+            var command = $"test -x {filePath}";
+            var result = await ExecuteCommandAsync(command);
+            return result.IsSuccess;
+        }
+
         public string[] GetFiles(string path, string pattern)
         {
             try

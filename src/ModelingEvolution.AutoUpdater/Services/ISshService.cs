@@ -52,6 +52,13 @@ namespace ModelingEvolution.AutoUpdater.Services
         string[] GetFiles(string path, string pattern);
 
         /// <summary>
+        /// Checks if a file is executable on the remote host
+        /// </summary>
+        /// <param name="filePath">The path to the file to check</param>
+        /// <returns>True if the file is executable, false otherwise</returns>
+        Task<bool> IsExecutableAsync(string filePath);
+
+        /// <summary>
         /// Checks if a directory exists on the remote host
         /// </summary>
         /// <param name="directoryPath">The path to the directory to check</param>

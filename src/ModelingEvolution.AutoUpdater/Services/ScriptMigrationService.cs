@@ -37,56 +37,49 @@ namespace ModelingEvolution.AutoUpdater.Services
                     return Enumerable.Empty<MigrationScript>();
                 }
 
-                // Check if directory exists using SSH
+                // Check if directory exists
                 if (!await _sshService.DirectoryExistsAsync(directoryPath))
                 {
                     _logger.LogWarning("Directory {DirectoryPath} does not exist on remote host", directoryPath);
                     return Enumerable.Empty<MigrationScript>();
                 }
 
+                // Get migration script files using SshService
+                var scriptFiles = _sshService.GetFiles(directoryPath, "*-*.sh");
                 var scripts = new List<MigrationScript>();
-                
-                // List .sh files in the directory using SSH
-                var listCommand = $"find \"{directoryPath}\" -maxdepth 1 -name \"*-*.sh\" -type f";
-                var result = await _sshService.ExecuteCommandAsync(listCommand);
-                
-                if (!result.IsSuccess)
-                {
-                    _logger.LogWarning("Failed to list script files in {DirectoryPath}: {Error}", directoryPath, result.Error);
-                    return Enumerable.Empty<MigrationScript>();
-                }
-
-                var scriptFiles = result.Output.Split('\n', StringSplitOptions.RemoveEmptyEntries);
 
                 foreach (var scriptFile in scriptFiles)
                 {
-                    var fileName = Path.GetFileName(scriptFile.Trim());
+                    var fileName = Path.GetFileName(scriptFile);
                     var match = ScriptNamePattern.Match(fileName);
 
-                    if (match.Success)
-                    {
-                        var directionStr = match.Groups[1].Value;
-                        var versionStr = match.Groups[2].Value;
-                        
-                        if (Version.TryParse(versionStr, out var version) &&
-                            Enum.TryParse<MigrationDirection>(directionStr, true, out var direction))
-                        {
-                            var isExecutable = await IsExecutableAsync(scriptFile.Trim());
-                            var script = new MigrationScript(fileName, scriptFile.Trim(), version, direction, isExecutable);
-                            scripts.Add(script);
-                            
-                            _logger.LogDebug("Discovered migration script: {FileName} (v{Version}, {Direction}, executable: {IsExecutable})", 
-                                fileName, version, direction, isExecutable);
-                        }
-                        else
-                        {
-                            _logger.LogWarning("Script file {FileName} has invalid version or direction", fileName);
-                        }
-                    }
-                    else
+                    if (!match.Success)
                     {
                         _logger.LogWarning("Script file {FileName} does not match expected naming pattern (up-X.Y.Z.sh or down-X.Y.Z.sh)", fileName);
+                        continue;
                     }
+
+                    var directionStr = match.Groups[1].Value;
+                    var versionStr = match.Groups[2].Value;
+                    
+                    if (!Version.TryParse(versionStr, out var version))
+                    {
+                        _logger.LogWarning("Script file {FileName} has invalid version format", fileName);
+                        continue;
+                    }
+
+                    if (!Enum.TryParse<MigrationDirection>(directionStr, true, out var direction))
+                    {
+                        _logger.LogWarning("Script file {FileName} has invalid direction format", fileName);
+                        continue;
+                    }
+
+                    var isExecutable = await _sshService.IsExecutableAsync(scriptFile);
+                    var script = new MigrationScript(fileName, scriptFile, version, direction, isExecutable);
+                    scripts.Add(script);
+                    
+                    _logger.LogDebug("Discovered migration script: {FileName} (v{Version}, {Direction}, executable: {IsExecutable})", 
+                        fileName, version, direction, isExecutable);
                 }
 
                 _logger.LogInformation("Discovered {Count} migration scripts in {DirectoryPath}", scripts.Count, directoryPath);
@@ -253,7 +246,7 @@ namespace ModelingEvolution.AutoUpdater.Services
                 await _sshService.MakeExecutableAsync(script.FilePath);
 
                 // Execute the script
-                var executeCommand = $"bash \"{script.FilePath}\"";
+                var executeCommand = $"sudo bash \"{script.FilePath}\"";
                 var result = await _sshService.ExecuteCommandAsync(executeCommand, workingDirectory);
                 
                 if (!result.IsSuccess)
@@ -309,7 +302,7 @@ namespace ModelingEvolution.AutoUpdater.Services
                     return false;
                 }
 
-                var isExecutable = await IsExecutableAsync(scriptPath);
+                var isExecutable = await _sshService.IsExecutableAsync(scriptPath);
                 if (!isExecutable)
                 {
                     _logger.LogWarning("Script {ScriptPath} is not executable", scriptPath);
@@ -322,22 +315,6 @@ namespace ModelingEvolution.AutoUpdater.Services
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Failed to validate script: {ScriptPath}", scriptPath);
-                return false;
-            }
-        }
-
-        private async Task<bool> IsExecutableAsync(string filePath)
-        {
-            try
-            {
-                // Check if file exists and has execute permissions
-                var command = $"test -x \"{filePath}\" && echo 'true' || echo 'false'";
-                var result = await _sshService.ExecuteCommandAsync(command, Path.GetDirectoryName(filePath));
-                return result.Output.Trim().Equals("true", StringComparison.OrdinalIgnoreCase);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogWarning(ex, "Failed to check if file {FilePath} is executable, assuming false", filePath);
                 return false;
             }
         }
