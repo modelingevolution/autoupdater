@@ -22,7 +22,7 @@
     {
         try
         {
-            var assembly = Assembly.GetExecutingAssembly();
+            var assembly = typeof(AssemblyVersionLabel).Assembly;
             var version = assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion
                          ?? assembly.GetCustomAttribute<AssemblyVersionAttribute>()?.Version
                          ?? assembly.GetName().Version?.ToString()
