@@ -43,6 +43,10 @@ jobs:
         
         echo "🔄 Promoting commit image to production tags..."
         
+        # Extract version from tag (remove 'v' prefix)
+        VERSION="${{ github.ref_name }}"
+        VERSION="${VERSION#v}"
+        
         # Extract short SHA from the tag commit and create master-{short_sha} format
         SHORT_SHA="${{ github.sha }}"
         SHORT_SHA="${SHORT_SHA:0:7}"
