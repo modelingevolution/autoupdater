@@ -1,7 +1,7 @@
 @using System.Reflection
 
 <div class="assembly-version">
-    <small class="text-muted">
+    <small class="text-muted" title="@_tooltip">
         v@_version
     </small>
 </div>
@@ -17,31 +17,45 @@
 
 @code {
     private string _version = string.Empty;
+    private string _tooltip = string.Empty;
 
     protected override void OnInitialized()
     {
         try
         {
-            var assembly = typeof(AssemblyVersionLabel).Assembly;
-            var version = assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion
-                         ?? assembly.GetCustomAttribute<AssemblyVersionAttribute>()?.Version
-                         ?? assembly.GetName().Version?.ToString()
-                         ?? "Unknown";
-            
-            // If version contains git hash, format it nicely
-            if (version.Contains('+'))
+            // Priority 1: Check for app.version file
+            if (File.Exists("app.version"))
             {
-                var parts = version.Split('+');
-                _version = $"{parts[0]} ({parts[1][..Math.Min(7, parts[1].Length)]})";
+                var fileVersion = File.ReadAllText("app.version").Trim();
+                _version = fileVersion;
+                
+                // Try to get short SHA for tooltip
+                var assembly = typeof(AssemblyVersionLabel).Assembly;
+                var gitCommitSha = assembly.GetCustomAttribute<GitCommitShaAttribute>();
+                _tooltip = gitCommitSha?.ShortSha ?? "Release build";
             }
             else
             {
-                _version = version;
+                // Priority 2: Fallback to GitCommitShaAttribute
+                var assembly = typeof(AssemblyVersionLabel).Assembly;
+                var gitCommitSha = assembly.GetCustomAttribute<GitCommitShaAttribute>();
+                
+                if (gitCommitSha != null)
+                {
+                    _version = $"dev-{gitCommitSha.ShortSha}";
+                    _tooltip = gitCommitSha.ShortSha;
+                }
+                else
+                {
+                    _version = "Unknown";
+                    _tooltip = "Version information not available";
+                }
             }
         }
         catch
         {
             _version = "Unknown";
+            _tooltip = "Error reading version information";
         }
     }
 }

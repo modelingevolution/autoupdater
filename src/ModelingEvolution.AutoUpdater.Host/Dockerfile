@@ -46,7 +46,7 @@ VOLUME /data
 FROM mcr.microsoft.com/dotnet/sdk:9.0 AS build
 ARG BUILD_CONFIGURATION=Debug
 ARG ASSEMBLY_VERSION=1.0.0.0
-ARG ASSEMBLY_INFORMATIONAL_VERSION=1.0.0+dev
+ARG SHA=dev
 WORKDIR /src
 COPY ["src/ModelingEvolution.AutoUpdater.Host/ModelingEvolution.AutoUpdater.Host.csproj", "src/ModelingEvolution.AutoUpdater.Host/"]
 COPY ["src/ModelingEvolution.AutoUpdater/ModelingEvolution.AutoUpdater.csproj", "src/ModelingEvolution.AutoUpdater/"]
@@ -54,20 +54,21 @@ COPY ["src/Submodules/runtime-configuration/src/ModelingEvolution.RuntimeConfigu
 RUN dotnet restore "./src/ModelingEvolution.AutoUpdater.Host/ModelingEvolution.AutoUpdater.Host.csproj"
 COPY . .
 WORKDIR "/src/src/ModelingEvolution.AutoUpdater.Host"
+# Generate Version.cs with SHA information
+RUN SHORT_SHA=$(echo $SHA | cut -c1-7) && \
+    sed -i "s/__FULL_SHA__/$SHA/g" Version.cs && \
+    sed -i "s/__SHORT_SHA__/$SHORT_SHA/g" Version.cs
 RUN dotnet build "./ModelingEvolution.AutoUpdater.Host.csproj" -c $BUILD_CONFIGURATION -o /app/build \
     /p:AssemblyVersion=$ASSEMBLY_VERSION \
-    /p:FileVersion=$ASSEMBLY_VERSION \
-    /p:AssemblyInformationalVersion=$ASSEMBLY_INFORMATIONAL_VERSION
+    /p:FileVersion=$ASSEMBLY_VERSION
 
 # This stage is used to publish the service project to be copied to the final stage
 FROM build AS publish
 ARG BUILD_CONFIGURATION=Debug
 ARG ASSEMBLY_VERSION=1.0.0.0
-ARG ASSEMBLY_INFORMATIONAL_VERSION=1.0.0+dev
 RUN dotnet publish "./ModelingEvolution.AutoUpdater.Host.csproj" -c $BUILD_CONFIGURATION -o /app/publish /p:UseAppHost=false \
     /p:AssemblyVersion=$ASSEMBLY_VERSION \
-    /p:FileVersion=$ASSEMBLY_VERSION \
-    /p:AssemblyInformationalVersion=$ASSEMBLY_INFORMATIONAL_VERSION
+    /p:FileVersion=$ASSEMBLY_VERSION
 
 # This stage is used in production or when running from VS in regular mode (Default when not using the Debug configuration)
 FROM base AS final

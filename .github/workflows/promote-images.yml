@@ -55,6 +55,7 @@ jobs:
         echo "Source image: $SOURCE_TAG"
         echo "GitHub SHA: ${{ github.sha }}"
         echo "Short SHA: $SHORT_SHA"
+        echo "Version: $VERSION"
         
         # Verify source image exists
         if ! docker buildx imagetools inspect "$SOURCE_TAG" > /dev/null 2>&1; then
@@ -64,17 +65,42 @@ jobs:
           exit 1
         fi
         
-        # Create manifest list for each production tag using the master-{short_sha} reference
+        # Create temporary directory for build context
+        mkdir -p /tmp/promote-context
+        
+        # Create app.version file with semantic version
+        echo "$VERSION" > /tmp/promote-context/app.version
+        
+        # Create simple Dockerfile to add app.version file
+        cat > /tmp/promote-context/Dockerfile << 'EOF'
+        FROM __SOURCE_IMAGE__
+        COPY app.version /app/app.version
+        EOF
+        
+        # Replace placeholder with actual source image
+        sed -i "s|__SOURCE_IMAGE__|$SOURCE_TAG|g" /tmp/promote-context/Dockerfile
+        
+        # Create production tags by building new image with app.version
         echo "Creating production tags..."
         TAGS_JSON='${{ steps.meta.outputs.json }}'
-        echo "$TAGS_JSON" | jq -r '.tags[]' | while read tag; do
+        
+        # Build new image with app.version and tag it with all production tags
+        TAGS_ARGS=""
+        while read tag; do
           if [[ -n "$tag" && "$tag" != *":-"* ]]; then
-            echo "Creating tag: $tag"
-            docker buildx imagetools create \
-              --tag "$tag" \
-              "$SOURCE_TAG"
+            TAGS_ARGS="$TAGS_ARGS --tag $tag"
           fi
-        done
+        done < <(echo "$TAGS_JSON" | jq -r '.tags[]')
+        
+        # Build and push the final image with all tags
+        docker buildx build \
+          --platform linux/amd64,linux/arm64 \
+          --push \
+          $TAGS_ARGS \
+          /tmp/promote-context
+        
+        # Cleanup
+        rm -rf /tmp/promote-context
         
         echo "✅ Promotion completed successfully"
         echo "Production tags created:"
