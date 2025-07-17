@@ -56,8 +56,10 @@ COPY . .
 WORKDIR "/src/src/ModelingEvolution.AutoUpdater.Host"
 # Generate Version.cs with SHA information
 RUN SHORT_SHA=$(echo $SHA | cut -c1-7) && \
-    sed -i "s/__FULL_SHA__/$SHA/g" Version.cs && \
-    sed -i "s/__SHORT_SHA__/$SHORT_SHA/g" Version.cs
+    echo "using System.Reflection;" > Version.cs && \
+    echo "using ModelingEvolution.AutoUpdater.Host;" >> Version.cs && \
+    echo "" >> Version.cs && \
+    echo "[assembly: GitCommitSha(\"$SHA\", \"$SHORT_SHA\")]" >> Version.cs
 RUN dotnet build "./ModelingEvolution.AutoUpdater.Host.csproj" -c $BUILD_CONFIGURATION -o /app/build \
     /p:AssemblyVersion=$ASSEMBLY_VERSION \
     /p:FileVersion=$ASSEMBLY_VERSION
