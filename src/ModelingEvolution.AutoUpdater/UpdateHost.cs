@@ -307,7 +307,15 @@ public class UpdateHost : IHostedService
                 _log.LogInformation("Starting new Docker Compose services");
                 if(!isSelfUpdating)
                     await _dockerComposeService.StartServicesAsync(composeFiles, configuration.HostComposeFolderPath);
-                else await _dockerComposeService.RestartServicesAsync(composeFiles, configuration.HostComposeFolderPath, true);
+                else
+                {
+                    string tmpDeploymentPath = $"/tmp/{configuration.FriendlyName}";
+                    await UpdateDeploymentStateAsync(currentDeploymentState, latestVersion.FriendlyName, executedVersions, tmpDeploymentPath);
+                    string tmpDeploymentStatePath = Path.Combine(tmpDeploymentPath, DeploymentStateProvider.StateFileName);
+                    string onUpSuccessCommand =
+                        $"cp {tmpDeploymentStatePath} {configuration.HostComposeFolderPath}/{DeploymentStateProvider.StateFileName}";
+                    await _dockerComposeService.RestartServicesAsync(composeFiles, configuration.HostComposeFolderPath, true, onUpSuccessCommand);
+                }
             }
             catch (Exception dockerEx)
             {

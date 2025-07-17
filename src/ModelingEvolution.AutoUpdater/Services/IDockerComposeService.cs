@@ -71,6 +71,8 @@ namespace ModelingEvolution.AutoUpdater.Services
         /// </summary>
         /// <param name="composeFiles">The compose files to restart</param>
         /// <param name="workingDirectory">The working directory for the compose command</param>
-        Task RestartServicesAsync(string[] composeFiles, string workingDirectory, bool nohup = false);
+        /// <param name="nohup"></param>
+        /// <param name="cmd"></param>
+        Task RestartServicesAsync(string[] composeFiles, string workingDirectory, bool nohup = false, string? cmd = null);
     }
 }

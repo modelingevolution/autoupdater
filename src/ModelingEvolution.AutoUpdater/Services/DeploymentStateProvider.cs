@@ -13,7 +13,7 @@ namespace ModelingEvolution.AutoUpdater.Services
     {
         private readonly ISshService _sshService;
         private readonly ILogger<DeploymentStateProvider> _logger;
-        private const string StateFileName = "deployment.state.json";
+        public const string StateFileName = "deployment.state.json";
 
         public DeploymentStateProvider(ISshService sshService, ILogger<DeploymentStateProvider> logger)
         {

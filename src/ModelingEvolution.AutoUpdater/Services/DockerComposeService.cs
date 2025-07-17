@@ -312,7 +312,8 @@ namespace ModelingEvolution.AutoUpdater.Services
             }
         }
 
-        public async Task RestartServicesAsync(string[] composeFiles, string workingDirectory, bool nohup=false)
+        public async Task RestartServicesAsync(string[] composeFiles, string workingDirectory, bool nohup = false,
+            string? cmd = null)
         {
             try
             {
@@ -332,13 +333,15 @@ namespace ModelingEvolution.AutoUpdater.Services
                 // Build the docker-compose command with multiple -f flags
                 var composeFileArgs = string.Join(" ", composeFiles.Select(f => $"-f \"{f}\""));
                 var command = $"docker-compose {composeFileArgs} down && docker-compose {composeFileArgs} up -d";
-
+                if(!string.IsNullOrWhiteSpace(cmd))
+                    command += $" && {cmd}";
+                
                 if (nohup)
                 {
-                    command = "nohup sh -c '" + command + "' > /dev/null 2>&1 &";
+                    command = $"nohup sh -c '{command}' > /dev/null 2>&1 &";
                 }
                 
-                _logger.LogDebug("Executing Docker Compose command: {Command}", command);
+                _logger.LogInformation("Executing Docker Compose command: {Command}", command);
 
                 var result = await _sshService.ExecuteCommandAsync(command, workingDirectory);
 

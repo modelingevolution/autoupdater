@@ -15,6 +15,8 @@ namespace ModelingEvolution.AutoUpdater
     /// </summary>
     public class DockerComposeConfiguration : INotifyPropertyChanged
     {
+        
+        // This is local repository location, not host repository path.
         public string RepositoryLocation { get; init; } = string.Empty;
         public string RepositoryUrl { get; init; } = string.Empty;
         public string DockerComposeDirectory { get; init; } = "./";
