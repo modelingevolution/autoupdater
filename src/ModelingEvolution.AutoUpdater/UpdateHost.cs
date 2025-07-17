@@ -460,6 +460,8 @@ public class UpdateHost : IHostedService
         if (configuration == null) throw new ArgumentNullException(nameof(configuration));
         
         var st = await _deploymentStateProvider.GetDeploymentStateAsync(configuration.ComposeFolderPath);
+        await ConfigureGitRepositoryIfNeeded(configuration);
+
         await _gitService.FetchAsync(configuration.RepositoryLocation);
         var latest = await GetLatestVersion(configuration);
         var result = st?.Version == (latest?.FriendlyName ?? "-");
