@@ -2,7 +2,7 @@
 
 <div class="assembly-version">
     <small class="text-muted" title="@_tooltip">
-        v@_version
+        @_version
     </small>
 </div>
 
@@ -27,7 +27,7 @@
             if (File.Exists("app.version"))
             {
                 var fileVersion = File.ReadAllText("app.version").Trim();
-                _version = fileVersion;
+                _version = $"v{fileVersion}";
                 
                 // Try to get short SHA for tooltip
                 var assembly = typeof(AssemblyVersionLabel).Assembly;
