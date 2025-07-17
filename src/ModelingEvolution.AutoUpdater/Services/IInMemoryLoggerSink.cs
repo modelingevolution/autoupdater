@@ -1,6 +1,7 @@
 using Microsoft.Extensions.Logging;
 using System;
 using System.Collections.Generic;
+using System.ComponentModel;
 
 namespace ModelingEvolution.AutoUpdater.Services
 {
@@ -17,7 +18,7 @@ namespace ModelingEvolution.AutoUpdater.Services
     /// <summary>
     /// Interface for in-memory logger sink
     /// </summary>
-    public interface IInMemoryLoggerSink
+    public interface IInMemoryLoggerSink : INotifyPropertyChanged
     {
         /// <summary>
         /// Event triggered when new log entry is added
