@@ -67,7 +67,7 @@ namespace ModelingEvolution.AutoUpdater.Services
                     var version = PackageVersion.Parse(versionStr);
                     if (!version.IsValid)
                     {
-                        _logger.LogWarning("Script file {FileName} has invalid version format", fileName);
+                        _logger.LogWarning("Script file {FileName} has invalid version format: '{Version}'", fileName, versionStr);
                         continue;
                     }
 

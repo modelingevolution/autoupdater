@@ -380,6 +380,21 @@ public class PackageVersionTests
             result.Should().BeTrue();
             parsed.ToString().Should().Be(input);
         }
+        
+        [Theory]
+        [InlineData("ver1.0.0", "v1.0.0")]
+        [InlineData("ver2.3.4-beta", "v2.3.4-beta")]
+        [InlineData("VER1.0.0", "v1.0.0")]
+        public void Parse_Should_Support_Legacy_Ver_Prefix(string input, string expected)
+        {
+            // Act
+            var version = PackageVersion.Parse(input);
+            
+            // Assert
+            version.IsValid.Should().BeTrue();
+            version.ToString().Should().Be(expected);
+            version.HasVPrefix.Should().BeTrue();
+        }
     }
 
     public class ImplicitConversionTests
