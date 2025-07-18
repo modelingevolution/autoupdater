@@ -16,6 +16,7 @@ namespace ModelingEvolution.AutoUpdater.Services
         /// <returns>The result of the SSH command execution</returns>
         Task<SshCommandResult> ExecuteCommandAsync(string command, string? workingDirectory = null);
 
+
         /// <summary>
         /// Reads the content of a file on the remote host
         /// </summary>

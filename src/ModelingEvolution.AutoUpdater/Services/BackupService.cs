@@ -46,7 +46,7 @@ namespace ModelingEvolution.AutoUpdater.Services
             {
                 _logger.LogInformation("Creating backup in directory {Directory}", directory);
 
-                var command = "sudo ./backup.sh --format=json";
+                var command = "sudo bash ./backup.sh --format=json";
                 var result = await _sshService.ExecuteCommandAsync(command, directory);
 
                 if (!result.IsSuccess)
@@ -99,7 +99,7 @@ namespace ModelingEvolution.AutoUpdater.Services
                 var restoreScriptPath = Path.Combine(directory, "restore.sh");
                 var exists = await _sshService.FileExistsAsync(restoreScriptPath);
                 
-                _logger.LogDebug("restore.sh exists: {Exists} in {Directory}", exists, directory);
+                _logger.LogDebug("sudo bash restore.sh exists: {Exists} in {Directory}", exists, directory);
                 return exists;
             }
             catch (Exception ex)
@@ -116,7 +116,7 @@ namespace ModelingEvolution.AutoUpdater.Services
                 _logger.LogInformation("Restoring backup from {BackupFile} in directory {Directory}", 
                     backupFilePath, directory);
 
-                var command = $"./restore.sh --file=\"{backupFilePath}\" --format=json";
+                var command = $"sudo bash ./restore.sh --file=\"{backupFilePath}\" --format=json";
                 var result = await _sshService.ExecuteCommandAsync(command, directory);
 
                 if (!result.IsSuccess)
