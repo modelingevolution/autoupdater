@@ -74,5 +74,11 @@ namespace ModelingEvolution.AutoUpdater.Services
         /// <param name="nohup"></param>
         /// <param name="cmd"></param>
         Task RestartServicesAsync(string[] composeFiles, string workingDirectory, bool nohup = false, string? cmd = null);
+
+        /// <summary>
+        /// Gets the status of all Docker Compose projects
+        /// </summary>
+        /// <returns>Dictionary mapping project names to their status</returns>
+        Task<Dictionary<PackageName, ComposeProjectStatus>> GetDockerComposeStatusAsync();
     }
 }

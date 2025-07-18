@@ -1,7 +1,46 @@
+@using System.ComponentModel
 @using ModelingEvolution.AutoUpdater
-<Observable Source="@Package">
-    <MudField Label="Current version">@Package.CurrentVersion</MudField>
-</Observable>
+@using ModelingEvolution.AutoUpdater.Services
+@implements IDisposable
+@inject DeploymentStateProvider _dsp
+
+<MudField Label="Current version">@_currentVersion</MudField>
+
 @code {
+
+    private DockerComposeConfiguration? _package;
     [Parameter] public DockerComposeConfiguration Package { get; set; } = null!;
+
+
+    private string? _currentVersion;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (_package == Package) return;
+
+        _currentVersion = await _dsp.GetCurrentVersionAsync(Package.HostComposeFolderPath);
+        if (_package != null)
+            _package.PropertyChanged -= OnPropertyChanged;
+        _package = Package;
+        if (_package != null)
+            _package.PropertyChanged += OnPropertyChanged;
+    }
+
+    private void OnPropertyChanged(object? sender, PropertyChangedEventArgs propertyChangedEventArgs)
+    {
+        Task.Run(async () =>
+        {
+            if (_package == null!) return;
+            var tmp = await _dsp.GetCurrentVersionAsync(_package.HostComposeFolderPath);
+            if (_currentVersion != tmp)
+                await this.InvokeAsync(this.StateHasChanged);
+        });
+    }
+
+    public void Dispose()
+    {
+        if (_package != null)
+            _package.PropertyChanged -= OnPropertyChanged;
+    }
+
 }

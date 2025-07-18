@@ -58,30 +58,7 @@ namespace ModelingEvolution.AutoUpdater
         public bool IsGitVersioned => Directory.Exists(RepositoryLocation) &&
                                       Directory.Exists(Path.Combine(RepositoryLocation, ".git"));
 
-        /// <summary>
-        /// Gets the current deployed version from deployment state file
-        /// This is kept as a computed property since it's a simple file read
-        /// </summary>
-        public string? CurrentVersion
-        {
-            get
-            {
-                try
-                {
-                    var stateFile = Path.Combine(HostComposeFolderPath, "deployment.state.json");
-                    if (!File.Exists(stateFile))
-                        return null;
-
-                    var stateContent = File.ReadAllText(stateFile);
-                    var state = JsonSerializer.Deserialize<DeploymentState>(stateContent);
-                    return state?.Version;
-                }
-                catch
-                {
-                    return null;
-                }
-            }
-        }
+       
 
        
         private string _errorMessage = string.Empty;

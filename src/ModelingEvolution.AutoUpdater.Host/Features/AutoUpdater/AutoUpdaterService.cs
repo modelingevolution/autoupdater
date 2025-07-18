@@ -3,6 +3,7 @@ using System.Text.Json;
 using ModelingEvolution.AutoUpdater.Extensions;
 using ModelingEvolution.AutoUpdater.Services;
 using ModelingEvolution.AutoUpdater;
+using ModelingEvolution.AutoUpdater.Models;
 
 namespace ModelingEvolution.AutoUpdater.Host.Features.AutoUpdater;
 
@@ -10,6 +11,7 @@ public class AutoUpdaterService
 {
     private readonly UpdateService _updateService;
     private readonly ISshConnectionManager _sshManager;
+    private readonly IDockerComposeService _dockerComposeService;
     private readonly ILogger<AutoUpdaterService> _logger;
     
     private static readonly JsonSerializerOptions JsonOptions = new()
@@ -20,21 +22,22 @@ public class AutoUpdaterService
     public AutoUpdaterService(
         UpdateService updateService,
         ISshConnectionManager sshManager,
+        IDockerComposeService dockerComposeService,
         ILogger<AutoUpdaterService> logger)
     {
         _updateService = updateService;
         _sshManager = sshManager;
+        _dockerComposeService = dockerComposeService;
         _logger = logger;
     }
 
     public async Task<PackagesResponse> GetPackagesAsync()
     {
         // Get both data sources concurrently
-        var composeStatusTask = GetDockerComposeStatusAsync();
-        var packageInfosTask = _updateService.GetPackagesAsync();
+        var composeStatusMap = await _dockerComposeService.GetDockerComposeStatusAsync();
+        var packageInfos = await _updateService.GetPackagesAsync();
         
-        var composeStatusMap = await composeStatusTask;
-        var packageInfos = await packageInfosTask;
+        
         
         var packages = packageInfos.Select(packageInfo => new PackageStatus
         {
@@ -48,47 +51,6 @@ public class AutoUpdaterService
         return new PackagesResponse { Packages = packages };
     }
 
-    private async Task<Dictionary<PackageName, ComposeProjectStatus>> GetDockerComposeStatusAsync()
-    {
-        try
-        {
-            var command = "sudo docker-compose ls --format json";
-            using var client = await _sshManager.CreateSshServiceAsync();
-            var ret = await client.ExecuteCommandAsync(command);
-            
-            if (string.IsNullOrWhiteSpace(ret.Output))
-            {
-                _logger.LogWarning("No output from docker-compose ls command");
-                return [];
-            }
-
-            var composeProjects = JsonSerializer.Deserialize<ComposeProject[]>(ret.Output, JsonOptions);
-
-            if (composeProjects == null)
-            {
-                _logger.LogWarning("Failed to deserialize docker-compose ls output");
-                return [];
-            }
-
-            var statusMap = composeProjects.ToDictionary(
-                project => (PackageName)project.Name,
-                project => new ComposeProjectStatus
-                {
-                    Status = project.Status,
-                    ConfigFiles = project.ConfigFiles,
-                    RunningServices = project.Status.Contains("running", StringComparison.OrdinalIgnoreCase) ? 1 : 0,
-                    TotalServices = 1
-                });
-
-            _logger.LogDebug("Retrieved status for {Count} compose projects", statusMap.Count);
-            return statusMap;
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Failed to get Docker Compose status via SSH");
-            return [];
-        }
-    }
 
     private string GetPackageStatus(PackageName packageName, Dictionary<PackageName, ComposeProjectStatus> composeStatusMap)
     {

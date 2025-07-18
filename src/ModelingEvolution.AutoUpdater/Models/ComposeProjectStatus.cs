@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using System.Collections.Immutable;
 
 namespace ModelingEvolution.AutoUpdater.Models
 {
@@ -7,7 +8,7 @@ namespace ModelingEvolution.AutoUpdater.Models
     /// </summary>
     public record ComposeProjectStatus(
         string Status,
-        IReadOnlyList<string> ConfigFiles,
+        ImmutableArray<string> ConfigFiles,
         int RunningServices,
         int TotalServices
     );

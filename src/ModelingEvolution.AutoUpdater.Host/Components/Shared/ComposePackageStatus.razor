@@ -1,0 +1,124 @@
+@using Ductus.FluentDocker.Services
+@using ModelingEvolution.AutoUpdater.Models
+@using ModelingEvolution.AutoUpdater
+@using ModelingEvolution.AutoUpdater.Services
+@inject IDockerComposeService _dcs
+@implements IDisposable
+@if (_status != null)
+{
+    <MudText Color="@GetStatusColor()" Class="mt-2">
+        <MudIcon Icon="@GetStatusIcon()" Class="mr-1" />
+        @GetStatusText()
+    </MudText>
+
+
+    @if (_status.TotalServices > 0)
+    {
+        <MudText Typo="Typo.caption">
+            Services: @_status.RunningServices/@_status.TotalServices running
+        </MudText>
+    }
+}
+else
+{
+    <MudText Color="Color.Default" Class="mt-2">
+        <MudIcon Icon="Icons.Material.Filled.Help" Class="mr-1" />
+        Not deployed
+    </MudText>
+}
+
+
+@code {
+    [Parameter] public PackageName PackageName { get; set; } = null!;
+
+    private ComposeProjectStatus? _status;
+    private Timer? _timer;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        this._status = (await _dcs.GetDockerComposeStatusAsync())[PackageName];
+    }
+
+    protected override void OnAfterRender(bool firstRender)
+    {
+        if (firstRender)
+            this._timer = new Timer(OnRefresh, null, TimeSpan.FromSeconds(10), TimeSpan.FromSeconds(30));
+    }
+
+    private void OnRefresh(object? state)
+    {
+        _ = Task.Run(async () =>
+        {
+            var tmp = await _dcs.GetDockerComposeStatusAsync();
+            if (tmp == null!) return;
+            if(tmp.TryGetValue(PackageName, out var st))
+            {
+                if (st != _status)
+                {
+                    _status = st;
+                    await this.InvokeAsync(this.StateHasChanged);
+                }
+            }
+            else
+            {
+                _status = null;
+            }
+        });
+    }
+
+    private Color GetStatusColor()
+    {
+        if (_status == null) return Color.Default;
+        
+        return _status.Status.ToLowerInvariant() switch
+        {
+            var s when s.Contains("running") => Color.Success,
+            var s when s.Contains("exited") => Color.Warning,
+            var s when s.Contains("paused") => Color.Info,
+            var s when s.Contains("restarting") => Color.Warning,
+            var s when s.Contains("dead") => Color.Error,
+            _ => Color.Default
+        };
+    }
+
+    private string GetStatusIcon()
+    {
+        if (_status == null) return Icons.Material.Filled.Help;
+        
+        return _status.Status.ToLowerInvariant() switch
+        {
+            var s when s.Contains("running") => Icons.Material.Filled.PlayArrow,
+            var s when s.Contains("exited") => Icons.Material.Filled.Stop,
+            var s when s.Contains("paused") => Icons.Material.Filled.Pause,
+            var s when s.Contains("restarting") => Icons.Material.Filled.Refresh,
+            var s when s.Contains("dead") => Icons.Material.Filled.Error,
+            _ => Icons.Material.Filled.QuestionMark
+        };
+    }
+
+    private string GetStatusText()
+    {
+        if (_status == null) return "Not deployed";
+        
+        return _status.Status.ToLowerInvariant() switch
+        {
+            var s when s.Contains("running") => "Running",
+            var s when s.Contains("exited") => "Stopped",
+            var s when s.Contains("paused") => "Paused",
+            var s when s.Contains("restarting") => "Restarting",
+            var s when s.Contains("dead") => "Failed",
+            _ => _status.Status
+        };
+    }
+
+    public void Dispose()
+    {
+        _timer?.Dispose();
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        if (_timer != null) await _timer.DisposeAsync();
+    }
+
+}

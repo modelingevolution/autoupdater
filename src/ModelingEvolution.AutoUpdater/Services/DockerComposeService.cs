@@ -3,8 +3,10 @@ using Microsoft.Extensions.Logging;
 using ModelingEvolution.AutoUpdater.Models;
 using System;
 using System.Collections.Generic;
+using System.Collections.Immutable;
 using System.IO;
 using System.Linq;
+using System.Text.Json;
 using System.Threading.Tasks;
 using System.Xml;
 
@@ -17,6 +19,12 @@ namespace ModelingEvolution.AutoUpdater.Services
     {
         private readonly ISshService _sshService;
         private readonly ILogger<DockerComposeService> _logger;
+        
+        // Caching for GetDockerComposeStatusAsync
+        private Dictionary<PackageName, ComposeProjectStatus>? _cachedStatus;
+        private DateTime _lastCacheTime = DateTime.MinValue;
+        private static readonly TimeSpan CacheTimeout = TimeSpan.FromSeconds(5);
+        private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNameCaseInsensitive = true };
 
         public DockerComposeService(ISshService sshService, ILogger<DockerComposeService> logger)
         {
@@ -182,7 +190,7 @@ namespace ModelingEvolution.AutoUpdater.Services
                 if (!result.IsSuccess)
                 {
                     _logger.LogWarning("Failed to get project status for {ProjectName}: {Error}", projectName, result.Error);
-                    return new ComposeProjectStatus("unknown", new List<string>(), 0, 0);
+                    return new ComposeProjectStatus("unknown", [], 0, 0);
                 }
 
                 // Parse the JSON output to determine project status
@@ -193,12 +201,12 @@ namespace ModelingEvolution.AutoUpdater.Services
                 var totalServices = isRunning ? 1 : 0;   // Simplified - would need JSON parsing for accurate count
 
                 _logger.LogDebug("Project {ProjectName} status: {Status}", projectName, status);
-                return new ComposeProjectStatus(status, new List<string>(), runningServices, totalServices);
+                return new ComposeProjectStatus(status, [], runningServices, totalServices);
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Failed to get status for Docker Compose project: {ProjectName}", projectName);
-                return new ComposeProjectStatus("error", new List<string>(), 0, 0);
+                return new ComposeProjectStatus("error", [], 0, 0);
             }
         }
 
@@ -355,5 +363,67 @@ namespace ModelingEvolution.AutoUpdater.Services
             }
         }
 
+        public async Task<Dictionary<PackageName, ComposeProjectStatus>> GetDockerComposeStatusAsync()
+        {
+            try
+            {
+                // Check if we have cached data that's still valid
+                if (_cachedStatus != null && DateTime.Now - _lastCacheTime < CacheTimeout)
+                {
+                    _logger.LogDebug("Returning cached Docker Compose status (age: {Age}ms)", 
+                        (DateTime.Now - _lastCacheTime).TotalMilliseconds);
+                    return _cachedStatus;
+                }
+
+                _logger.LogDebug("Fetching fresh Docker Compose status");
+                
+                var command = "sudo docker-compose ls --format json";
+                var result = await _sshService.ExecuteCommandAsync(command);
+                
+                if (!result.IsSuccess || string.IsNullOrWhiteSpace(result.Output))
+                {
+                    _logger.LogWarning("No output from docker-compose ls command");
+                    return new Dictionary<PackageName, ComposeProjectStatus>();
+                }
+
+                // Define ComposeProject record locally since it might not be available here
+                var composeProjects = JsonSerializer.Deserialize<ComposeProjectInfo[]>(result.Output, JsonOptions);
+
+                if (composeProjects == null)
+                {
+                    _logger.LogWarning("Failed to deserialize docker-compose ls output");
+                    return new Dictionary<PackageName, ComposeProjectStatus>();
+                }
+
+                var statusMap = composeProjects.ToDictionary(
+                    project => new PackageName(project.Name),
+                    project => new ComposeProjectStatus(
+                        project.Status,
+                        project.ConfigFiles?.Split(',').ToImmutableArray() ?? [],
+                        project.Status.Contains("running", StringComparison.OrdinalIgnoreCase) ? 1 : 0,
+                        1
+                    ));
+
+                // Update cache
+                _cachedStatus = statusMap;
+                _lastCacheTime = DateTime.Now;
+
+                _logger.LogDebug("Retrieved and cached status for {Count} compose projects", statusMap.Count);
+                return statusMap;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to get Docker Compose status via SSH");
+                return new Dictionary<PackageName, ComposeProjectStatus>();
+            }
+        }
+
+        // Local record for JSON deserialization
+        private record ComposeProjectInfo
+        {
+            public string Name { get; init; } = string.Empty;
+            public string Status { get; init; } = string.Empty;
+            public string? ConfigFiles { get; init; }
+        }
     }
 }

@@ -157,7 +157,7 @@ namespace ModelingEvolution.AutoUpdater
 
     public record PackageInfo
     {
-        public string Name { get; init; } = string.Empty;
+        public PackageName Name { get; init; } = string.Empty;
         public string RepositoryUrl { get; init; } = string.Empty;
         public string CurrentVersion { get; init; } = string.Empty;
         public string LatestVersion { get; init; } = string.Empty;
