@@ -2,7 +2,7 @@
 @using ModelingEvolution.AutoUpdater
 @using ModelingEvolution.AutoUpdater.Services
 @implements IDisposable
-@inject DeploymentStateProvider _dsp
+@inject IDeploymentStateProvider _dsp
 
 <MudField Label="Current version">@_currentVersion</MudField>
 

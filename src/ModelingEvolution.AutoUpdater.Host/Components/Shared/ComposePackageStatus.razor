@@ -6,37 +6,48 @@
 @implements IDisposable
 @if (_status != null)
 {
-    <MudText Color="@GetStatusColor()" Class="mt-2">
-        <MudIcon Icon="@GetStatusIcon()" Class="mr-1" />
-        @GetStatusText()
-    </MudText>
-
+    <div style="display: flex; align-items: center; justify-content: center; margin-top: 8px;">
+        <MudIcon Icon="@GetStatusIcon()" Color="@GetStatusColor()" Class="mr-1" />
+        <MudText Color="@GetStatusColor()" Style="margin: 0;">
+            @GetStatusText()
+        </MudText>
+    </div>
 
     @if (_status.TotalServices > 0)
     {
-        <MudText Typo="Typo.caption">
+        <MudText Typo="Typo.caption" Align="Align.Center">
             Services: @_status.RunningServices/@_status.TotalServices running
         </MudText>
     }
 }
 else
 {
-    <MudText Color="Color.Default" Class="mt-2">
-        <MudIcon Icon="Icons.Material.Filled.Help" Class="mr-1" />
-        Not deployed
-    </MudText>
+    <div style="display: flex; align-items: center; justify-content: center; margin-top: 8px;">
+        <MudIcon Icon="Icons.Material.Filled.Help" Color="Color.Default" Class="mr-1" />
+        <MudText Color="Color.Default" Style="margin: 0;">
+            Not deployed
+        </MudText>
+    </div>
 }
 
 
 @code {
-    [Parameter] public PackageName PackageName { get; set; } = null!;
+    [Parameter] public PackageName? PackageName { get; set; } = null!;
 
     private ComposeProjectStatus? _status;
     private Timer? _timer;
 
     protected override async Task OnParametersSetAsync()
     {
-        this._status = (await _dcs.GetDockerComposeStatusAsync())[PackageName];
+        var tmp = await _dcs.GetDockerComposeStatusAsync();
+        if(PackageName != null && tmp.TryGetValue(PackageName.Value, out var st))
+        {
+            if (!st.Equals(_status))
+                _status = st;
+        }
+        else
+            _status = null;
+        
     }
 
     protected override void OnAfterRender(bool firstRender)
@@ -51,9 +62,9 @@ else
         {
             var tmp = await _dcs.GetDockerComposeStatusAsync();
             if (tmp == null!) return;
-            if(tmp.TryGetValue(PackageName, out var st))
+            if(PackageName != null && tmp.TryGetValue(PackageName.Value, out var st))
             {
-                if (st != _status)
+                if (!st.Equals(_status))
                 {
                     _status = st;
                     await this.InvokeAsync(this.StateHasChanged);

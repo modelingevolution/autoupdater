@@ -15,9 +15,15 @@
             </MudTooltip>
         </div>
     </div>
-    <PackageVersion Package="@Package" />
-    <UpgradePackageStatus Package="@Package" />
-    <ComposePackageStatus PackageName="@Package.FriendlyName" />
+    <MudGrid>
+        <MudItem xs="6">
+            <PackageVersion Package="@Package"/>
+            <UpgradePackageStatus Package="@Package"/>
+        </MudItem>
+        <MudItem xs="6" Style="text-align: center;">
+            <ComposePackageStatus PackageName="@Package.FriendlyName"/>
+        </MudItem>
+    </MudGrid>
 </MudPaper>
 
 @code {
