@@ -75,7 +75,8 @@ namespace ModelingEvolution.AutoUpdater.Services
                     }
 
                     var isExecutable = await _sshService.IsExecutableAsync(scriptFile);
-                    var script = new MigrationScript(fileName, scriptFile, version, direction, isExecutable);
+                    //var script = new MigrationScript(fileName, scriptFile, version, direction, isExecutable);
+                    var script = new MigrationScript(fileName, scriptFile, version, direction);
                     scripts.Add(script);
                     
                     _logger.LogDebug("Discovered migration script: {FileName} (v{Version}, {Direction}, executable: {IsExecutable})", 
@@ -107,14 +108,14 @@ namespace ModelingEvolution.AutoUpdater.Services
                 if (!Version.TryParse(targetVersion, out var target))
                 {
                     _logger.LogError("Invalid target version format: {TargetVersion}", targetVersion);
-                    return Enumerable.Empty<MigrationScript>();
+                    return [];
                 }
 
                 Version? from = null;
                 if (fromVersion != "-" && !string.IsNullOrEmpty(fromVersion) && !Version.TryParse(fromVersion, out from))
                 {
                     _logger.LogError("Invalid from version format: {FromVersion}", fromVersion);
-                    return Enumerable.Empty<MigrationScript>();
+                    return [];
                 }
 
                 List<MigrationScript> filteredScripts;
@@ -148,7 +149,8 @@ namespace ModelingEvolution.AutoUpdater.Services
                         }
 
                         // Only include executable scripts
-                        return script.IsExecutable;
+                        //return script.IsExecutable;
+                        return true;
                     }).OrderBy(s => s.Version).ToList();
                 }
                 else if (target < from)
@@ -175,7 +177,8 @@ namespace ModelingEvolution.AutoUpdater.Services
                         }
 
                         // Only include executable scripts
-                        return script.IsExecutable;
+                        //return script.IsExecutable;
+                        return true;
                     }).OrderByDescending(s => s.Version).ToList(); // Execute in reverse order for rollback
                 }
                 else
@@ -238,13 +241,13 @@ namespace ModelingEvolution.AutoUpdater.Services
                 _logger.LogInformation("Executing {Direction} migration script: {FileName} (v{Version})", 
                     script.Direction, script.FileName, script.Version);
 
-                if (!script.IsExecutable)
-                {
-                    throw new InvalidOperationException($"Script {script.FileName} is not executable");
-                }
+                //if (!script.IsExecutable)
+                //{
+                //    throw new InvalidOperationException($"Script {script.FileName} is not executable");
+                //}
 
                 // Make script executable if it isn't already
-                await _sshService.MakeExecutableAsync(script.FilePath);
+                // await _sshService.MakeExecutableAsync(script.FilePath);
 
                 // Execute the script
                 var executeCommand = $"sudo bash \"{script.FilePath}\"";

@@ -43,6 +43,11 @@ namespace ModelingEvolution.AutoUpdater
                     await UpdatePackageAsync(package);
                     _logger.LogInformation("Successfully updated package: {PackageName}", package.FriendlyName);
                 }
+                catch (RestartPendingException ex)
+                {
+                    _logger.LogInformation("Package: {PackageName} triggers restart.", package.FriendlyName);
+                    break;
+                }
                 catch (Exception ex)
                 {
                     _logger.LogError(ex, "Failed to update package: {PackageName}", package.FriendlyName);

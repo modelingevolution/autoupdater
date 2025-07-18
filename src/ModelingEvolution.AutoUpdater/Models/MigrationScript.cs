@@ -25,7 +25,7 @@ namespace ModelingEvolution.AutoUpdater.Models
         string FileName,
         string FilePath,
         Version Version,
-        MigrationDirection Direction,
-        bool IsExecutable
+        MigrationDirection Direction//,
+        //bool IsExecutable
     );
 }

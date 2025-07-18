@@ -107,7 +107,7 @@ namespace ModelingEvolution.AutoUpdater.Tests.FeatureTests
             _migrationScriptsExist = true;
             var migrationScripts = new[]
             {
-                new MigrationScript("up-1.0.1.sh", "/path/up-1.0.1.sh", new Version(1, 0, 1), MigrationDirection.Up, true)
+                new MigrationScript("up-1.0.1.sh", "/path/up-1.0.1.sh", new Version(1, 0, 1), MigrationDirection.Up)
             };
 
             _scriptService.DiscoverScriptsAsync(Arg.Any<string>()).Returns(migrationScripts);

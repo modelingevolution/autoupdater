@@ -82,13 +82,17 @@
                         Logger.LogError("Package configuration not found for: {PackageName}", PackageName);
                         return;
                     }
-                    
+
                     // Call the real UpdateHost service
                     Logger.LogInformation("Starting real update for package: {PackageName}", PackageName);
                     var updateResult = await UpdateHost.UpdateAsync(packageConfig);
-                    
-                    Logger.LogInformation("Update completed for package: {PackageName}, Status: {Status}, Success: {Success}", 
+
+                    Logger.LogInformation("Update completed for package: {PackageName}, Status: {Status}, Success: {Success}",
                         PackageName, updateResult.Status, updateResult.Success);
+                }
+                catch (RestartPendingException ex)
+                {
+                    Logger.LogInformation("Restart pending...");
                 }
                 catch (Exception ex)
                 {

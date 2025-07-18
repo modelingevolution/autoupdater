@@ -196,10 +196,12 @@ public class UpdateHost : IHostedService
 
             try
             {
-                _progressService.LogOperationProgress("Loading deployment state", 10, "Starting update process for {RepositoryLocation}", configuration.RepositoryLocation);
+                _progressService.LogOperationProgress("Loading deployment state", 10,
+                    "Starting update process for {RepositoryLocation}", configuration.RepositoryLocation);
 
                 // Step 1: Load current deployment state
-                var currentDeploymentState = await _deploymentStateProvider.GetDeploymentStateAsync(configuration.HostComposeFolderPath);
+                var currentDeploymentState =
+                    await _deploymentStateProvider.GetDeploymentStateAsync(configuration.HostComposeFolderPath);
                 currentVersion = currentDeploymentState?.Version;
 
                 await ConfigureGitRepositoryIfNeeded(configuration);
@@ -211,7 +213,8 @@ public class UpdateHost : IHostedService
                 if (latestVersion == null)
                 {
                     _log.LogWarning("No versions found in repository {RepositoryUrl}", configuration.RepositoryUrl);
-                    return UpdateResult.CreateSuccess(currentVersion ?? "unknown", currentVersion, executedScripts, HealthCheckResult.Healthy(new List<string>()));
+                    return UpdateResult.CreateSuccess(currentVersion ?? "unknown", currentVersion, executedScripts,
+                        HealthCheckResult.Healthy(new List<string>()));
                 }
 
                 // Step 2: Check if update is needed
@@ -222,10 +225,12 @@ public class UpdateHost : IHostedService
                         HealthCheckResult.Healthy(new List<string>()));
                 }
 
-                _log.LogInformation("Updating from {CurrentVersion} to {TargetVersion}", currentVersion ?? "initial", latestVersion.FriendlyName);
+                _log.LogInformation("Updating from {CurrentVersion} to {TargetVersion}", currentVersion ?? "initial",
+                    latestVersion.FriendlyName);
 
                 // Publish update started event
-                await _eventHub.PublishAsync(new UpdateStartedEvent(configuration.FriendlyName, currentVersion, latestVersion.FriendlyName));
+                await _eventHub.PublishAsync(new UpdateStartedEvent(configuration.FriendlyName, currentVersion,
+                    latestVersion.FriendlyName));
 
                 // Step 3: Checkout the target version
                 _progressService.LogOperationProgress("Checking out target version", 20);
@@ -263,20 +268,25 @@ public class UpdateHost : IHostedService
                 // Step 4: Get architecture and compose files
                 using var sshService = await _sshConnectionManager.CreateSshServiceAsync();
                 var architecture = await sshService.GetArchitectureAsync();
-                var composeFiles = await _dockerComposeService.GetComposeFiles(configuration.HostComposeFolderPath, architecture);
+                var composeFiles =
+                    await _dockerComposeService.GetComposeFiles(configuration.HostComposeFolderPath, architecture);
 
                 // Phase 2: Stop Current Services
-                _progressService.LogOperationProgress("Stopping services", 40, "Stopping current Docker Compose services");
+                _progressService.LogOperationProgress("Stopping services", 40,
+                    "Stopping current Docker Compose services");
                 var isSelfUpdating = configuration.FriendlyName == "autoupdater";
                 if (!isSelfUpdating)
                     await _dockerComposeService.StopServicesAsync(composeFiles, configuration.HostComposeFolderPath);
-                else _log.LogInformation("Self-updating service detected - skipping stop phase for {ServiceName}", configuration.FriendlyName);
+                else
+                    _log.LogInformation("Self-updating service detected - skipping stop phase for {ServiceName}",
+                        configuration.FriendlyName);
 
                 // Phase 3: Migration Scripts (Decision Point: All Scripts Successful?)
                 _progressService.LogOperationProgress("Executing migration scripts", 50);
                 try
                 {
-                    var allScripts = await _scriptMigrationService.DiscoverScriptsAsync(configuration.HostComposeFolderPath);
+                    var allScripts =
+                        await _scriptMigrationService.DiscoverScriptsAsync(configuration.HostComposeFolderPath);
                     var excludeVersions = currentDeploymentState?.Up ?? ImmutableSortedSet<SystemVersion>.Empty;
                     var scriptsToExecute = await _scriptMigrationService.FilterScriptsForMigrationAsync(
                         allScripts, currentVersion, latestVersion.FriendlyName, excludeVersions);
@@ -284,7 +294,8 @@ public class UpdateHost : IHostedService
                     if (scriptsToExecute.Any())
                     {
                         _log.LogInformation("Executing {Count} migration scripts", scriptsToExecute.Count());
-                        executedVersions.AddRange(await _scriptMigrationService.ExecuteScriptsAsync(scriptsToExecute, configuration.HostComposeFolderPath));
+                        executedVersions.AddRange(await _scriptMigrationService.ExecuteScriptsAsync(scriptsToExecute,
+                            configuration.HostComposeFolderPath));
                         executedScripts.AddRange(scriptsToExecute.Select(s => s.FileName));
 
                         _log.LogInformation("Migration scripts executed successfully");
@@ -298,13 +309,17 @@ public class UpdateHost : IHostedService
                     if (backup?.Success == true)
                     {
                         _log.LogInformation("Performing rollback with backup recovery");
-                        await PerformRollbackWithBackupAsync(executedVersions, backup, composeFiles, configuration.HostComposeFolderPath);
+                        await PerformRollbackWithBackupAsync(executedVersions, backup, composeFiles,
+                            configuration.HostComposeFolderPath);
 
-                        return UpdateResult.CreateFailed($"Migration failed: {migrationEx.Message}", currentVersion, executedScripts, recoveryPerformed: true, backup.BackupFilePath);
+                        return UpdateResult.CreateFailed($"Migration failed: {migrationEx.Message}", currentVersion,
+                            executedScripts, recoveryPerformed: true, backup.BackupFilePath);
                     }
                     else
                     {
-                        return UpdateResult.CreateFailed($"Migration failed: {migrationEx.Message} - No recovery possible without backup", currentVersion, executedScripts, recoveryPerformed: false);
+                        return UpdateResult.CreateFailed(
+                            $"Migration failed: {migrationEx.Message} - No recovery possible without backup",
+                            currentVersion, executedScripts, recoveryPerformed: false);
                     }
                 }
 
@@ -314,16 +329,26 @@ public class UpdateHost : IHostedService
                 {
                     _log.LogInformation("Starting new Docker Compose services");
                     if (!isSelfUpdating)
-                        await _dockerComposeService.StartServicesAsync(composeFiles, configuration.HostComposeFolderPath);
+                        await _dockerComposeService.StartServicesAsync(composeFiles,
+                            configuration.HostComposeFolderPath);
                     else
                     {
                         string tmpDeploymentPath = $"/tmp/{configuration.FriendlyName}";
-                        await UpdateDeploymentStateAsync(currentDeploymentState, latestVersion.FriendlyName, executedVersions, tmpDeploymentPath);
-                        string tmpDeploymentStatePath = Path.Combine(tmpDeploymentPath, DeploymentStateProvider.StateFileName);
+                        await UpdateDeploymentStateAsync(currentDeploymentState, latestVersion.FriendlyName,
+                            executedVersions, tmpDeploymentPath);
+                        string tmpDeploymentStatePath =
+                            Path.Combine(tmpDeploymentPath, DeploymentStateProvider.StateFileName);
                         string onUpSuccessCommand =
                             $"cp {tmpDeploymentStatePath} {configuration.HostComposeFolderPath}/{DeploymentStateProvider.StateFileName}";
-                        await _dockerComposeService.RestartServicesAsync(composeFiles, configuration.HostComposeFolderPath, true, onUpSuccessCommand);
+                        await _dockerComposeService.RestartServicesAsync(composeFiles,
+                            configuration.HostComposeFolderPath, true, onUpSuccessCommand);
+                        throw new RestartPendingException("Restart pending");
                     }
+                }
+                catch (RestartPendingException)
+                {
+                    throw;
+                    
                 }
                 catch (Exception dockerEx)
                 {
@@ -333,19 +358,26 @@ public class UpdateHost : IHostedService
                     if (backup?.Success == true)
                     {
                         _log.LogInformation("Docker startup failed - performing rollback with backup recovery");
-                        await PerformRollbackWithBackupAsync(executedVersions, backup, composeFiles, configuration.HostComposeFolderPath);
+                        await PerformRollbackWithBackupAsync(executedVersions, backup, composeFiles,
+                            configuration.HostComposeFolderPath);
 
-                        return UpdateResult.CreateFailed($"Docker startup failed: {dockerEx.Message}", currentVersion, executedScripts, recoveryPerformed: true, backup.BackupFilePath);
+                        return UpdateResult.CreateFailed($"Docker startup failed: {dockerEx.Message}", currentVersion,
+                            executedScripts, recoveryPerformed: true, backup.BackupFilePath);
                     }
                     else
                     {
-                        return UpdateResult.CreateFailed($"Docker startup failed: {dockerEx.Message} - No recovery possible without backup", currentVersion, executedScripts, recoveryPerformed: false);
+                        return UpdateResult.CreateFailed(
+                            $"Docker startup failed: {dockerEx.Message} - No recovery possible without backup",
+                            currentVersion, executedScripts, recoveryPerformed: false);
                     }
                 }
 
                 // Phase 5: Health Check (Decision Point: All Services Healthy?)
-                _progressService.LogOperationProgress("Performing health checks", 80, "Performing health check on all services");
-                var healthCheck = await _healthCheckService.CheckServicesHealthAsync(composeFiles, configuration.HostComposeFolderPath);
+                _progressService.LogOperationProgress("Performing health checks", 80,
+                    "Performing health check on all services");
+                var healthCheck =
+                    await _healthCheckService.CheckServicesHealthAsync(composeFiles,
+                        configuration.HostComposeFolderPath);
 
                 if (!healthCheck.AllHealthy)
                 {
@@ -356,7 +388,8 @@ public class UpdateHost : IHostedService
                     if (backup?.Success == true && healthCheck.CriticalFailure)
                     {
                         _log.LogInformation("Critical services failed - performing rollback with backup recovery");
-                        await PerformRollbackWithBackupAsync(executedVersions, backup, composeFiles, configuration.HostComposeFolderPath);
+                        await PerformRollbackWithBackupAsync(executedVersions, backup, composeFiles,
+                            configuration.HostComposeFolderPath);
 
                         return UpdateResult.CreateFailed(
                             "Critical services unhealthy after deployment",
@@ -365,15 +398,18 @@ public class UpdateHost : IHostedService
 
                     // Partial success - keep running services
                     _log.LogInformation("Accepting partial deployment state - some services healthy");
-                    await UpdateDeploymentStateAsync(currentDeploymentState, latestVersion.FriendlyName, executedVersions, configuration.HostComposeFolderPath);
+                    await UpdateDeploymentStateAsync(currentDeploymentState, latestVersion.FriendlyName,
+                        executedVersions, configuration.HostComposeFolderPath);
 
                     return UpdateResult.CreatePartialSuccess(
                         latestVersion.FriendlyName, currentVersion, executedScripts, healthCheck);
                 }
 
                 // Phase 6: Complete Success
-                _progressService.LogOperationProgress("Finalizing update", 90, "All services healthy - update completed successfully");
-                await UpdateDeploymentStateAsync(currentDeploymentState, latestVersion.FriendlyName, executedVersions, configuration.HostComposeFolderPath);
+                _progressService.LogOperationProgress("Finalizing update", 90,
+                    "All services healthy - update completed successfully");
+                await UpdateDeploymentStateAsync(currentDeploymentState, latestVersion.FriendlyName, executedVersions,
+                    configuration.HostComposeFolderPath);
 
                 // Publish successful update completion event
                 await _eventHub.PublishAsync(new UpdateCompletedEvent(
@@ -393,6 +429,10 @@ public class UpdateHost : IHostedService
 
                 return UpdateResult.CreateSuccess(
                     latestVersion.FriendlyName, currentVersion, executedScripts, healthCheck, backup?.BackupFilePath);
+            }
+            catch (RestartPendingException)
+            {
+                throw;
             }
             catch (Exception ex)
             {
@@ -628,3 +668,5 @@ public class UpdateHost : IHostedService
 
 
 }
+
+public class RestartPendingException(string msg) : Exception(msg);
