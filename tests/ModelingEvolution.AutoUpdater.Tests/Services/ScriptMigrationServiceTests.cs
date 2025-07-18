@@ -57,19 +57,24 @@ namespace ModelingEvolution.AutoUpdater.Tests.Services
         }
 
         [Fact]
-        public async Task FilterScriptsForMigrationAsync_WithInvalidFromVersion_ShouldReturnEmpty()
+        public async Task FilterScriptsForMigrationAsync_WithInvalidFromVersion_ShouldTreatAsInitialMigration()
         {
             // Arrange
             var scripts = new[]
             {
-                new MigrationScript("up-1.0.0.sh", "/path/up-1.0.0.sh", new PackageVersion("1.0.0"), MigrationDirection.Up)
+                new MigrationScript("up-1.0.0.sh", "/path/up-1.0.0.sh", new PackageVersion("1.0.0"), MigrationDirection.Up),
+                new MigrationScript("up-2.0.0.sh", "/path/up-2.0.0.sh", new PackageVersion("2.0.0"), MigrationDirection.Up),
+                new MigrationScript("up-3.0.0.sh", "/path/up-3.0.0.sh", new PackageVersion("3.0.0"), MigrationDirection.Up)
             };
 
-            // Act
+            // Act - invalid version is normalized to Empty, so treated as initial migration
             var result = await _service.FilterScriptsForMigrationAsync(scripts, new PackageVersion("invalid-version"), new PackageVersion("2.0.0"));
 
-            // Assert
-            result.Should().BeEmpty();
+            // Assert - should include all scripts up to target version
+            result.Should().HaveCount(2);
+            var filteredScripts = result.ToList();
+            filteredScripts[0].Version.Should().Be(new PackageVersion("1.0.0"));
+            filteredScripts[1].Version.Should().Be(new PackageVersion("2.0.0"));
         }
         [Fact]
         public async Task FilterScriptsForMigrationAsync_WithSingle_ShouldSingle()

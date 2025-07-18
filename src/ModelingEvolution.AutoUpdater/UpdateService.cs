@@ -73,8 +73,7 @@ namespace ModelingEvolution.AutoUpdater
                 var packageName = config.FriendlyName;
                 var currentVersion = await GetCurrentVersionAsync(config);
                 var availableVersions = await config.AvailableVersionsAsync(_gitService, _logger);
-                var latestVersionOpt = availableVersions.OrderByDescending(v => v).Cast<PackageVersion?>().FirstOrDefault();
-                var latestVersion = latestVersionOpt ?? PackageVersion.Empty;
+                var latestVersion = availableVersions.OrderByDescending(v => v).FirstOrDefault();
                 
                 var upgradeAvailable = await _updateHost.CheckIsUpdateAvailable(config);
 
@@ -101,8 +100,7 @@ namespace ModelingEvolution.AutoUpdater
 
             var currentVersion = await GetCurrentVersionAsync(config);
             var availableVersions = await config.AvailableVersionsAsync(_gitService, _logger);
-            var latestVersionOpt = availableVersions.OrderByDescending(v => v).Cast<PackageVersion?>().FirstOrDefault();
-            var latestVersion = latestVersionOpt ?? PackageVersion.Empty;
+            var latestVersion = availableVersions.OrderByDescending(v => v).FirstOrDefault();
             
             var upgradeAvailable = !latestVersion.IsEmpty &&
                                  currentVersion != null &&

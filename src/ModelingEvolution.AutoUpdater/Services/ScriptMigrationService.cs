@@ -115,7 +115,7 @@ namespace ModelingEvolution.AutoUpdater.Services
                 }
 
                 // Handle fromVersion - null or Empty means initial migration
-                var from = fromVersion.HasValue && fromVersion.Value.IsValid ? fromVersion.Value : (PackageVersion?)null;
+                var from = fromVersion.HasValue && !fromVersion.Value.IsEmpty ? fromVersion : null;
 
                 List<MigrationScript> filteredScripts;
 
