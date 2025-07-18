@@ -15,7 +15,8 @@ namespace ModelingEvolution.AutoUpdater
     public readonly struct PackageName :  IParsable<PackageName>
     {
         private readonly string _value;
-
+        public static readonly PackageName Empty = new PackageName("-");
+        
         public PackageName(string value)
         {
             if (string.IsNullOrWhiteSpace(value))

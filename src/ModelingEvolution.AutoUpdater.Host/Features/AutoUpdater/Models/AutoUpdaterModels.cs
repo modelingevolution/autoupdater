@@ -7,7 +7,7 @@ public record PackagesResponse
 
 public record PackageStatus
 {
-    public PackageName Name { get; init; } = string.Empty;
+    public PackageName Name { get; init; } = PackageName.Empty;
     public string RepositoryUrl { get; init; } = string.Empty;
     public string CurrentVersion { get; init; } = string.Empty;
     public DateTime LastChecked { get; init; }
@@ -16,7 +16,7 @@ public record PackageStatus
 
 public record UpgradeStatusResponse
 {
-    public PackageName PackageName { get; init; } = string.Empty;
+    public PackageName PackageName { get; init; } = PackageName.Empty;
     public string CurrentVersion { get; init; } = string.Empty;
     public string AvailableVersion { get; init; } = string.Empty;
     public bool UpgradeAvailable { get; init; }
@@ -25,7 +25,7 @@ public record UpgradeStatusResponse
 
 public record UpdateResponse
 {
-    public PackageName PackageName { get; init; } = string.Empty;
+    public PackageName PackageName { get; init; } = PackageName.Empty;
     public string UpdateId { get; init; } = string.Empty;
     public string Status { get; init; } = string.Empty;
     public string Message { get; init; } = string.Empty;
@@ -33,7 +33,7 @@ public record UpdateResponse
 
 public record UpdateInfo
 {
-    public PackageName PackageName { get; init; } = string.Empty;
+    public PackageName PackageName { get; init; } = PackageName.Empty;
     public string UpdateId { get; init; } = string.Empty;
     public string FromVersion { get; init; } = string.Empty;
     public string ToVersion { get; init; } = string.Empty;
@@ -41,7 +41,7 @@ public record UpdateInfo
 
 public record SkippedPackage
 {
-    public PackageName PackageName { get; init; } = string.Empty;
+    public PackageName PackageName { get; init; } = PackageName.Empty;
     public string Reason { get; init; } = string.Empty;
 }
 
@@ -60,7 +60,7 @@ public record UpdateProcessResult
 // Models for Docker Compose status checking
 public record ComposeProject
 {
-    public PackageName Name { get; init; } = string.Empty;
+    public PackageName Name { get; init; } = PackageName.Empty;
     public string Status { get; init; } = string.Empty;
     public string ConfigFiles { get; init; } = string.Empty;
 }
