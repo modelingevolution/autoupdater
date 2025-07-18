@@ -45,7 +45,7 @@ namespace ModelingEvolution.AutoUpdater.Tests.Services
             _deploymentStateProvider.GetDeploymentStateAsync(Arg.Any<string>())
                       .Returns(existingDeploymentState);
             _gitService.GetAvailableVersionsAsync(Arg.Any<string>())
-                      .Returns(new[] { new GitTagVersion("1.1.0", new PackageVersion("1.1.0")) });
+                      .Returns(new[] { new PackageVersion("1.1.0") });
 
             var migrationScripts = new[]
             {
@@ -105,7 +105,7 @@ namespace ModelingEvolution.AutoUpdater.Tests.Services
             _deploymentStateProvider.GetDeploymentStateAsync(Arg.Any<string>())
                       .Returns(existingDeploymentState);
             _gitService.GetAvailableVersionsAsync(Arg.Any<string>())
-                      .Returns(new[] { new GitTagVersion("1.0.0", new PackageVersion("1.0.0")) });
+                      .Returns(new[] { new PackageVersion("1.0.0") });
 
             var updateHost = new UpdateHost(_configuration, _logger, _gitService, _scriptService, _sshConnectionManager, _dockerService, _deploymentStateProvider, _backupService, _healthCheckService, _progressService, _eventHub);
 
@@ -139,7 +139,7 @@ namespace ModelingEvolution.AutoUpdater.Tests.Services
             _deploymentStateProvider.GetDeploymentStateAsync(Arg.Any<string>())
                       .Returns(existingDeploymentState);
             _gitService.GetAvailableVersionsAsync(Arg.Any<string>())
-                      .Returns(new[] { new GitTagVersion("1.1.0", new PackageVersion("1.1.0")) });
+                      .Returns(new[] { new PackageVersion("1.1.0") });
 
             var migrationScripts = new[]
             {
@@ -195,7 +195,7 @@ namespace ModelingEvolution.AutoUpdater.Tests.Services
             _deploymentStateProvider.GetDeploymentStateAsync(Arg.Any<string>())
                       .Returns(existingDeploymentState);
             _gitService.GetAvailableVersionsAsync(Arg.Any<string>())
-                      .Returns(new[] { new GitTagVersion("1.1.0", new PackageVersion("1.1.0")) });
+                      .Returns(new[] { new PackageVersion("1.1.0") });
 
             // Test decision point: Backup Script Exists? YES, but fails
             _backupService.BackupScriptExistsAsync(Arg.Any<string>()).Returns(true);
@@ -232,7 +232,7 @@ namespace ModelingEvolution.AutoUpdater.Tests.Services
             _deploymentStateProvider.GetDeploymentStateAsync(Arg.Any<string>())
                       .Returns(existingDeploymentState);
             _gitService.GetAvailableVersionsAsync(Arg.Any<string>())
-                      .Returns(new[] { new GitTagVersion("1.1.0", new PackageVersion("1.1.0")) });
+                      .Returns(new[] { new PackageVersion("1.1.0") });
 
             var migrationScripts = new[]
             {
@@ -293,7 +293,7 @@ namespace ModelingEvolution.AutoUpdater.Tests.Services
             _deploymentStateProvider.GetDeploymentStateAsync(Arg.Any<string>())
                       .Returns(existingDeploymentState);
             _gitService.GetAvailableVersionsAsync(Arg.Any<string>())
-                      .Returns(new[] { new GitTagVersion("1.1.0", new PackageVersion("1.1.0")) });
+                      .Returns(new[] { new PackageVersion("1.1.0") });
 
             var migrationScripts = new[]
             {
@@ -362,7 +362,7 @@ namespace ModelingEvolution.AutoUpdater.Tests.Services
             _deploymentStateProvider.GetDeploymentStateAsync(Arg.Any<string>())
                       .Returns(existingDeploymentState);
             _gitService.GetAvailableVersionsAsync(Arg.Any<string>())
-                      .Returns(new[] { new GitTagVersion("1.1.0", new PackageVersion("1.1.0")) });
+                      .Returns(new[] { new PackageVersion("1.1.0") });
 
             var migrationScripts = new[]
             {
@@ -427,7 +427,7 @@ namespace ModelingEvolution.AutoUpdater.Tests.Services
             _deploymentStateProvider.GetDeploymentStateAsync(Arg.Any<string>())
                       .Returns(existingDeploymentState);
             _gitService.GetAvailableVersionsAsync(Arg.Any<string>())
-                      .Returns(new[] { new GitTagVersion("1.1.0", new PackageVersion("1.1.0")) });
+                      .Returns(new[] { new PackageVersion("1.1.0") });
 
             var migrationScripts = new[]
             {
@@ -494,7 +494,7 @@ namespace ModelingEvolution.AutoUpdater.Tests.Services
             _deploymentStateProvider.GetDeploymentStateAsync(Arg.Any<string>())
                       .Returns(existingDeploymentState);
             _gitService.GetAvailableVersionsAsync(Arg.Any<string>())
-                      .Returns(new[] { new GitTagVersion("1.1.0", new PackageVersion("1.1.0")) });
+                      .Returns(new[] { new PackageVersion("1.1.0") });
 
             var mockSshService = Substitute.For<ISshService>();
             mockSshService.GetArchitectureAsync().Returns(CpuArchitecture.X64);

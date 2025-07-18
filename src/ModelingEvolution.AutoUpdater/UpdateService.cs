@@ -1,4 +1,5 @@
 using Microsoft.Extensions.Logging;
+using ModelingEvolution.AutoUpdater.Common;
 using ModelingEvolution.AutoUpdater.Extensions;
 using ModelingEvolution.AutoUpdater.Models;
 using ModelingEvolution.AutoUpdater.Services;
@@ -72,7 +73,8 @@ namespace ModelingEvolution.AutoUpdater
                 var packageName = config.FriendlyName;
                 var currentVersion = await GetCurrentVersionAsync(config);
                 var availableVersions = await config.AvailableVersionsAsync(_gitService, _logger);
-                var latestVersion = availableVersions.OrderByDescending(v => v.Version).FirstOrDefault();
+                var latestVersionOpt = availableVersions.OrderByDescending(v => v).Cast<PackageVersion?>().FirstOrDefault();
+                var latestVersion = latestVersionOpt ?? PackageVersion.Empty;
                 
                 var upgradeAvailable = await _updateHost.CheckIsUpdateAvailable(config);
 
@@ -81,7 +83,7 @@ namespace ModelingEvolution.AutoUpdater
                     Name = packageName,
                     RepositoryUrl = config.RepositoryUrl,
                     CurrentVersion = currentVersion ?? "unknown",
-                    LatestVersion = latestVersion?.FriendlyName ?? "unknown",
+                    LatestVersion = latestVersion.IsEmpty ? "unknown" : latestVersion.ToString(),
                     UpgradeAvailable = upgradeAvailable,
                     LastChecked = DateTime.UtcNow
                 });
@@ -99,18 +101,19 @@ namespace ModelingEvolution.AutoUpdater
 
             var currentVersion = await GetCurrentVersionAsync(config);
             var availableVersions = await config.AvailableVersionsAsync(_gitService, _logger);
-            var latestVersion = availableVersions.OrderByDescending(v => v.Version).FirstOrDefault();
+            var latestVersionOpt = availableVersions.OrderByDescending(v => v).Cast<PackageVersion?>().FirstOrDefault();
+            var latestVersion = latestVersionOpt ?? PackageVersion.Empty;
             
-            var upgradeAvailable = latestVersion != null &&
+            var upgradeAvailable = !latestVersion.IsEmpty &&
                                  currentVersion != null &&
-                                 latestVersion.CompareTo(GitTagVersion.TryParse(currentVersion, out var parsed) ? parsed : null) > 0;
+                                 PackageVersion.TryParse(currentVersion, out var parsed) && latestVersion.CompareTo(parsed) > 0;
 
             return new PackageInfo
             {
                 Name = config.FriendlyName,
                 RepositoryUrl = config.RepositoryUrl,
                 CurrentVersion = currentVersion ?? "unknown",
-                LatestVersion = latestVersion?.FriendlyName ?? "unknown",
+                LatestVersion = latestVersion.IsEmpty ? "unknown" : latestVersion.ToString(),
                 UpgradeAvailable = upgradeAvailable,
                 LastChecked = DateTime.UtcNow
             };
@@ -150,7 +153,7 @@ namespace ModelingEvolution.AutoUpdater
 
                 var stateContent = await File.ReadAllTextAsync(stateFile);
                 var state = JsonSerializer.Deserialize<DeploymentState>(stateContent);
-                return state?.Version;
+                return state?.Version.ToString();
             }
             catch (Exception ex)
             {

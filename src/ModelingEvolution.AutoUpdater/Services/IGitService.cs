@@ -1,3 +1,4 @@
+using ModelingEvolution.AutoUpdater.Common;
 using System.Collections.Generic;
 using System.Threading.Tasks;
 
@@ -35,7 +36,7 @@ namespace ModelingEvolution.AutoUpdater.Services
         /// </summary>
         /// <param name="repositoryPath">The local path of the Git repository</param>
         /// <returns>Collection of available versions ordered by semantic version (descending)</returns>
-        Task<IReadOnlyList<GitTagVersion>> GetAvailableVersionsAsync(string repositoryPath);
+        Task<IReadOnlyList<PackageVersion>> GetAvailableVersionsAsync(string repositoryPath);
 
 
         /// <summary>

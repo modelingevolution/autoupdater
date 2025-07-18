@@ -1,4 +1,5 @@
 using Microsoft.Extensions.Logging;
+using ModelingEvolution.AutoUpdater.Common;
 using ModelingEvolution.AutoUpdater.Services;
 using System;
 using System.Collections.Generic;
@@ -19,12 +20,12 @@ namespace ModelingEvolution.AutoUpdater.Extensions
 
         
 
-        public static async Task<IReadOnlyList<GitTagVersion>> AvailableVersionsAsync(this DockerComposeConfiguration config, IGitService gitService, ILogger logger)
+        public static async Task<IReadOnlyList<PackageVersion>> AvailableVersionsAsync(this DockerComposeConfiguration config, IGitService gitService, ILogger logger)
         {
             return await gitService.GetAvailableVersionsAsync(config.RepositoryLocation);
         }
 
-        public static async Task<GitTagVersion[]> VersionsAsync(this DockerComposeConfiguration config, IGitService gitService, ILogger logger)
+        public static async Task<PackageVersion[]> VersionsAsync(this DockerComposeConfiguration config, IGitService gitService, ILogger logger)
         {
             var versions = await gitService.GetAvailableVersionsAsync(config.RepositoryLocation);
             return versions.ToArray();
@@ -35,9 +36,9 @@ namespace ModelingEvolution.AutoUpdater.Extensions
             return await gitService.PullLatestAsync(config.RepositoryLocation);
         }
 
-        public static async Task CheckoutAsync(this DockerComposeConfiguration config, GitTagVersion version, IGitService gitService, ILogger logger)
+        public static async Task CheckoutAsync(this DockerComposeConfiguration config, PackageVersion version, IGitService gitService, ILogger logger)
         {
-            await gitService.CheckoutVersionAsync(config.RepositoryLocation, version.FriendlyName);
+            await gitService.CheckoutVersionAsync(config.RepositoryLocation, version.ToString());
         }
     }
 }

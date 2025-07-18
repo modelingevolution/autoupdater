@@ -97,8 +97,8 @@ namespace ModelingEvolution.AutoUpdater.Tests.FeatureTests
         public void GivenANewVersionIsAvailable(string version)
         {
             _targetVersion = version;
-            var gitVersion = new GitTagVersion(version, new PackageVersion(version));
-            _gitService.GetAvailableVersionsAsync(Arg.Any<string>()).Returns(new[] { gitVersion });
+            var packageVersion = new PackageVersion(version);
+            _gitService.GetAvailableVersionsAsync(Arg.Any<string>()).Returns(new[] { packageVersion });
         }
 
         [Given(@"migration scripts exist for the update")]
