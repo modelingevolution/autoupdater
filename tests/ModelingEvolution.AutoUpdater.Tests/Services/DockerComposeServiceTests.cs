@@ -266,5 +266,68 @@ namespace ModelingEvolution.AutoUpdater.Tests.Services
             await act.Should().ThrowAsync<ArgumentException>()
                 .WithParameterName("composeFiles");
         }
+
+        [Fact]
+        public async Task GetComposeFiles_WithArm64Architecture_ShouldReturnCorrectFiles()
+        {
+            // Arrange
+            const string directoryPath = "/var/docker/configuration/rocket-welder";
+            var architecture = CpuArchitecture.Arm64;
+
+            // Setup mock to return all compose files including ARM64 specific ones
+            _sshService.GetFiles(directoryPath, "docker-compose*yml")
+                .Returns([
+                    "/var/docker/configuration/rocket-welder/docker-compose.yml",
+                    "/var/docker/configuration/rocket-welder/docker-compose.arm64.yml",
+                    "/var/docker/configuration/rocket-welder/docker-compose.x64.yml"
+                ]);
+
+            // Act
+            var result = await _service.GetComposeFiles(directoryPath, architecture);
+
+            // Assert
+            result.Should().HaveCount(2);
+            result[0].Should().Be("docker-compose.yml");
+            result[1].Should().Be("docker-compose.arm64.yml");
+            
+            // Should exclude x64 file for ARM64 architecture
+            result.Should().NotContain("docker-compose.x64.yml");
+        }
+
+        [Fact]
+        public async Task StartServicesAsync_WithArm64ComposeFiles_ShouldExecuteCorrectCommand()
+        {
+            // Arrange - This reproduces the exact scenario from the logs
+            var composeFiles = new[] { "docker-compose.yml", "docker-compose.arm64.yml" };
+            const string workingDirectory = "/var/docker/configuration/rocket-welder";
+            const string expectedCommand = "sudo docker-compose -f \"docker-compose.yml\" -f \"docker-compose.arm64.yml\" up -d";
+            
+            _sshService.ExecuteCommandAsync(expectedCommand, workingDirectory)
+                .Returns(new SshCommandResult(expectedCommand, "Started successfully"));
+
+            // Act
+            await _service.StartServicesAsync(composeFiles, workingDirectory);
+
+            // Assert
+            await _sshService.Received(1).ExecuteCommandAsync(expectedCommand, workingDirectory);
+        }
+
+        [Fact]
+        public async Task RestartServicesAsync_WithArm64ComposeFiles_ShouldExecuteCorrectCommand()
+        {
+            // Arrange - This reproduces the exact scenario from the system logs
+            var composeFiles = new[] { "docker-compose.yml", "docker-compose.arm64.yml" };
+            const string workingDirectory = "/var/docker/configuration/rocket-welder";
+            const string expectedCommand = "sudo docker-compose -f \"docker-compose.yml\" -f \"docker-compose.arm64.yml\" down && sudo docker-compose -f \"docker-compose.yml\" -f \"docker-compose.arm64.yml\" up -d";
+            
+            _sshService.ExecuteCommandAsync(expectedCommand, workingDirectory)
+                .Returns(new SshCommandResult(expectedCommand, "Restarted successfully"));
+
+            // Act
+            await _service.RestartServicesAsync(composeFiles, workingDirectory);
+
+            // Assert
+            await _sshService.Received(1).ExecuteCommandAsync(expectedCommand, workingDirectory);
+        }
     }
 }

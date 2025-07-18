@@ -46,12 +46,12 @@ namespace ModelingEvolution.AutoUpdater.Services
                 
                 var notValid = CpuArchitecture.All
                     .Where(x => x != architecture)
-                    .Select(x=> Path.Combine(directoryPath, $"docker-compose.{x}.yml"))
+                    .Select(x=> $".{x}.")
                     .ToHashSet();
 
                 var composeFiles = _sshService
                     .GetFiles(directoryPath, "docker-compose*yml")
-                    .Except(notValid)
+                    .Where(x => !notValid.Any(x.Contains))
                     .OrderBy(x => x.Length)
                     .Select(Path.GetFileName)
                     .ToArray();
