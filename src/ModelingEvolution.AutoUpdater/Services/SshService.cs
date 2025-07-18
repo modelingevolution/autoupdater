@@ -96,19 +96,106 @@ namespace ModelingEvolution.AutoUpdater.Services
                 _logger.LogDebug("Writing file via SCP: {FilePath}", filePath);
                 
                 using var memoryStream = new MemoryStream();
-                using var writer = new StreamWriter(memoryStream);
+                await using var writer = new StreamWriter(memoryStream);
                 await writer.WriteAsync(content);
                 await writer.FlushAsync();
                 
                 memoryStream.Position = 0;
-                await Task.Run(() => _scpClient.Upload(memoryStream, filePath));
                 
-                _logger.LogDebug("Successfully wrote file: {FilePath}", filePath);
+                // Check if we can write directly to the file
+                var canWriteDirectly = await CanWriteToFileAsync(filePath);
+                
+                if (canWriteDirectly)
+                {
+                    // Direct write using SCP
+                    await Task.Run(() => _scpClient.Upload(memoryStream, filePath));
+                    _logger.LogDebug("Successfully wrote file directly: {FilePath}", filePath);
+                }
+                else
+                {
+                    // Write to temp file first, then move with sudo to preserve permissions
+                    var tempFilePath = $"/tmp/{Path.GetFileName(filePath)}.{Guid.NewGuid():N}";
+                    
+                    try
+                    {
+                        // Upload to temp location
+                        await Task.Run(() => _scpClient.Upload(memoryStream, tempFilePath));
+                        
+                        // Get original file permissions and ownership if file exists
+                        string? originalPermissions = null;
+                        string? originalOwnership = null;
+                        if (await _sftpClient.ExistsAsync(filePath))
+                        {
+                            var statResult = await ExecuteCommandAsync($"stat -c '%a:%U:%G' {filePath}");
+                            if (statResult.IsSuccess)
+                            {
+                                var parts = statResult.Output.Trim().Split(':');
+                                if (parts.Length >= 3)
+                                {
+                                    originalPermissions = parts[0];
+                                    originalOwnership = $"{parts[1]}:{parts[2]}";
+                                }
+                            }
+                        }
+                        
+                        // Set permissions on temp file before moving
+                        if (!string.IsNullOrEmpty(originalPermissions)) 
+                            await ExecuteCommandAsync($"chmod {originalPermissions} {tempFilePath}");
+                        
+                        // Set ownership on temp file if we have it (requires sudo)
+                        if (!string.IsNullOrEmpty(originalOwnership)) 
+                            await ExecuteCommandAsync($"sudo chown {originalOwnership} {tempFilePath}");
+                        
+                        // Move file with sudo (preserves the permissions we just set)
+                        var moveResult = await ExecuteCommandAsync($"sudo mv {tempFilePath} {filePath}");
+                        if (!moveResult.IsSuccess)
+                            throw new InvalidOperationException($"Failed to move file: {moveResult.Error}");
+                        
+                        _logger.LogDebug("Successfully wrote file via sudo: {FilePath}", filePath);
+                    }
+                    finally
+                    {
+                        // Clean up temp file if it still exists
+                        await ExecuteCommandAsync($"rm -f {tempFilePath}");
+                    }
+                }
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Failed to write file: {FilePath}", filePath);
                 throw new InvalidOperationException($"Failed to write file {filePath}: {ex.Message}", ex);
+            }
+        }
+        
+        private async Task<bool> CanWriteToFileAsync(string filePath)
+        {
+            try
+            {
+                // Check if directory exists and is writable
+                var directory = Path.GetDirectoryName(filePath);
+                if (!string.IsNullOrEmpty(directory))
+                {
+                    var result = await ExecuteCommandAsync($"test -w {directory}");
+                    if (!result.IsSuccess)
+                    {
+                        return false;
+                    }
+                }
+                
+                // If file exists, check if it's writable
+                if (_sftpClient.Exists(filePath))
+                {
+                    var result = await ExecuteCommandAsync($"test -w {filePath}");
+                    return result.IsSuccess;
+                }
+                
+                // File doesn't exist, but directory is writable
+                return true;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Error checking write permissions for {FilePath}, assuming no write access", filePath);
+                return false;
             }
         }
 

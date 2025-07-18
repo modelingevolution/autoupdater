@@ -55,7 +55,7 @@ namespace ModelingEvolution.AutoUpdater.Services
 
                     if (!match.Success)
                     {
-                        _logger.LogWarning("Script file {FileName} does not match expected naming pattern (up-X.Y.Z.sh or down-X.Y.Z.sh)", fileName);
+                        _logger.LogInformation("Script file {FileName} does not match expected naming pattern (up-X.Y.Z.sh or down-X.Y.Z.sh), ignoring.", fileName);
                         continue;
                     }
 
@@ -100,9 +100,10 @@ namespace ModelingEvolution.AutoUpdater.Services
         {
             try
             {
+                targetVersion = targetVersion.TrimStart('v');
                 _logger.LogDebug("Filtering migration scripts from {FromVersion} to {TargetVersion}", 
                     fromVersion ?? "initial", targetVersion);
-
+                
                 if (!Version.TryParse(targetVersion, out var target))
                 {
                     _logger.LogError("Invalid target version format: {TargetVersion}", targetVersion);
