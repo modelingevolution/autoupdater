@@ -13,7 +13,7 @@ namespace ModelingEvolution.AutoUpdater.Common;
 [JsonConverter(typeof(JsonParsableConverter<PackageVersion>))]
 public readonly record struct PackageVersion : IComparable<PackageVersion>, IComparable, IParsable<PackageVersion>
 {
-    private static readonly Regex VersionRegex = new(@"^v?(\d+)\.(\d+)\.(\d+)(?:-([a-zA-Z0-9\-\.]+))?$", RegexOptions.Compiled);
+    private static readonly Regex VersionRegex = new(@"^v?(\d+)\.(\d+)\.(\d+)(?:-([a-zA-Z0-9]+(?:[a-zA-Z0-9\-\.]*[a-zA-Z0-9]+)*))?$", RegexOptions.Compiled);
     
     /// <summary>
     /// Represents an empty/no version state (displayed as "-")
@@ -84,7 +84,7 @@ public readonly record struct PackageVersion : IComparable<PackageVersion>, ICom
     /// <summary>
     /// Gets whether this version is valid (follows semantic versioning)
     /// </summary>
-    public bool IsValid => !string.IsNullOrEmpty(_value) && _value != "-" && VersionRegex.IsMatch(_value);
+    public bool IsValid => !IsEmpty && !string.IsNullOrEmpty(_value) && VersionRegex.IsMatch(_value);
     
     /// <summary>
     /// Gets whether this version is empty (no version)
@@ -203,8 +203,6 @@ public readonly record struct PackageVersion : IComparable<PackageVersion>, ICom
         throw new ArgumentException($"Object is not a {nameof(PackageVersion)}", nameof(obj));
     }
     
-    
-    
     /// <summary>
     /// Returns the string representation of this version
     /// </summary>
@@ -225,10 +223,22 @@ public readonly record struct PackageVersion : IComparable<PackageVersion>, ICom
     /// </summary>
     public static implicit operator string(PackageVersion version) => version._value;
     
+    // Override Equals to use semantic comparison
+    public bool Equals(PackageVersion other) => CompareTo(other) == 0;
+    
+    // Override GetHashCode to be consistent with Equals
+    public override int GetHashCode()
+    {
+        if (IsEmpty) return 0;
+        if (!IsValid) return 0;
+        
+        // Hash based on semantic version components, not the string representation
+        return HashCode.Combine(Major, Minor, Patch, PreRelease?.ToLowerInvariant());
+    }
+    
     // Comparison operators
     public static bool operator >(PackageVersion left, PackageVersion right) => left.CompareTo(right) > 0;
     public static bool operator <(PackageVersion left, PackageVersion right) => left.CompareTo(right) < 0;
     public static bool operator >=(PackageVersion left, PackageVersion right) => left.CompareTo(right) >= 0;
     public static bool operator <=(PackageVersion left, PackageVersion right) => left.CompareTo(right) <= 0;
-    
 }
