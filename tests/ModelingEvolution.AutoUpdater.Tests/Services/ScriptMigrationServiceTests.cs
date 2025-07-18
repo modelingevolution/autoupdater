@@ -155,7 +155,7 @@ namespace ModelingEvolution.AutoUpdater.Tests.Services
 
             // Assert
             await _sshService.Received(2).MakeExecutableAsync(Arg.Any<string>());
-            await _sshService.Received(2).ExecuteCommandAsync(Arg.Is<string>(cmd => cmd.StartsWith("bash")), "/test");
+            await _sshService.Received(2).ExecuteCommandAsync(Arg.Is<string>(cmd => cmd.StartsWith("sudo bash")), "/test");
         }
 
         [Fact]
@@ -191,8 +191,7 @@ namespace ModelingEvolution.AutoUpdater.Tests.Services
         {
             // Arrange
             const string scriptPath = "/path/up-1.0.0.sh";
-            _sshService.ExecuteCommandAsync(Arg.Any<string>(), Arg.Any<string>())
-                      .Returns(new SshCommandResult("test", "true"));
+            _sshService.IsExecutableAsync(Arg.Any<string>()).Returns(true);
 
             // Act
             var result = await _service.ValidateScriptAsync(scriptPath);
@@ -272,8 +271,7 @@ namespace ModelingEvolution.AutoUpdater.Tests.Services
         {
             // Arrange
             const string scriptPath = "/path/down-1.0.0.sh";
-            _sshService.ExecuteCommandAsync(Arg.Any<string>(), Arg.Any<string>())
-                      .Returns(new SshCommandResult("test", "true"));
+            _sshService.IsExecutableAsync(Arg.Any<string>()).Returns(true);
 
             // Act
             var result = await _service.ValidateScriptAsync(scriptPath);

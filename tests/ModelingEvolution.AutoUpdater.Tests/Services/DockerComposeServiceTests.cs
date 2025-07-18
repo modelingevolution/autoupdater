@@ -67,8 +67,8 @@ namespace ModelingEvolution.AutoUpdater.Tests.Services
 
             // Assert
             result.Should().HaveCount(2);
-            result[0].Should().Be("/app/docker-compose.yml");
-            result[1].Should().Be("/app/docker-compose.x64.yml");
+            result[0].Should().Be("docker-compose.yml");
+            result[1].Should().Be("docker-compose.x64.yml");
         }
 
         [Fact]
@@ -110,7 +110,7 @@ namespace ModelingEvolution.AutoUpdater.Tests.Services
             // Arrange
             var composeFiles = new[] { "docker-compose.yml" };
             const string workingDirectory = "/app";
-            const string expectedCommand = "docker-compose -f \"docker-compose.yml\" up -d";
+            const string expectedCommand = "sudo docker-compose -f \"docker-compose.yml\" up -d";
             
             _sshService.ExecuteCommandAsync(expectedCommand, workingDirectory).Returns(new SshCommandResult(expectedCommand,"Started successfully"));
 
@@ -127,7 +127,7 @@ namespace ModelingEvolution.AutoUpdater.Tests.Services
             // Arrange
             var composeFiles = new[] { "docker-compose.yml", "docker-compose.x64.yml" };
             const string workingDirectory = "/app";
-            const string expectedCommand = "docker-compose -f \"docker-compose.yml\" -f \"docker-compose.x64.yml\" up -d";
+            const string expectedCommand = "sudo docker-compose -f \"docker-compose.yml\" -f \"docker-compose.x64.yml\" up -d";
             
             _sshService.ExecuteCommandAsync(expectedCommand, workingDirectory).Returns(new SshCommandResult(expectedCommand, "Started successfully"));
 
@@ -144,7 +144,7 @@ namespace ModelingEvolution.AutoUpdater.Tests.Services
             // Arrange
             var composeFiles = new[] { "docker-compose.yml", "docker-compose.arm64.yml" };
             const string workingDirectory = "/app";
-            const string expectedCommand = "docker-compose -f \"docker-compose.yml\" -f \"docker-compose.arm64.yml\" down";
+            const string expectedCommand = "sudo docker-compose -f \"docker-compose.yml\" -f \"docker-compose.arm64.yml\" down";
             
             _sshService.ExecuteCommandAsync(expectedCommand, workingDirectory).Returns(new SshCommandResult(expectedCommand,"Stopped successfully"));
 
@@ -162,7 +162,7 @@ namespace ModelingEvolution.AutoUpdater.Tests.Services
             // Arrange
             var composeFiles = new[] { "docker-compose.yml" };
             const string workingDirectory = "/app";
-            const string expectedCommand = "docker-compose -f \"docker-compose.yml\" pull";
+            const string expectedCommand = "sudo docker-compose -f \"docker-compose.yml\" pull";
             
             _sshService.ExecuteCommandAsync(expectedCommand, workingDirectory).Returns(new SshCommandResult(expectedCommand,"Pulled successfully"));
 
@@ -179,7 +179,7 @@ namespace ModelingEvolution.AutoUpdater.Tests.Services
             // Arrange
             var composeFiles = new[] { "docker-compose.yml" };
             const string workingDirectory = "/app";
-            const string expectedCommand = "docker-compose -f \"docker-compose.yml\" ps";
+            const string expectedCommand = "sudo docker-compose -f \"docker-compose.yml\" ps";
             const string expectedOutput = "service1  running\nservice2  stopped";
             
             _sshService.ExecuteCommandAsync(expectedCommand, workingDirectory).Returns(new SshCommandResult(expectedCommand, expectedOutput));
@@ -198,7 +198,7 @@ namespace ModelingEvolution.AutoUpdater.Tests.Services
             // Arrange
             var composeFiles = new[] { "docker-compose.yml", "docker-compose.x64.yml" };
             const string workingDirectory = "/app";
-            const string expectedCommand = "docker-compose -f \"docker-compose.yml\" -f \"docker-compose.x64.yml\" down && docker-compose -f \"docker-compose.yml\" -f \"docker-compose.x64.yml\" up -d";
+            const string expectedCommand = "sudo docker-compose -f \"docker-compose.yml\" -f \"docker-compose.x64.yml\" down && sudo docker-compose -f \"docker-compose.yml\" -f \"docker-compose.x64.yml\" up -d";
             
             _sshService.ExecuteCommandAsync(expectedCommand, workingDirectory).Returns(new SshCommandResult(expectedCommand, "Restarted successfully"));
 
