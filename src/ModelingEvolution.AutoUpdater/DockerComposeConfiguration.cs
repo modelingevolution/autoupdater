@@ -123,7 +123,7 @@ namespace ModelingEvolution.AutoUpdater
         {
             get
             {
-                if (!string.IsNullOrEmpty(OperationMessage))
+                if (IsPackageValid)
                     return PackageStatusColor.Error;
                     
                 return IsUpgradeAvailable ? PackageStatusColor.Warning : PackageStatusColor.Success;

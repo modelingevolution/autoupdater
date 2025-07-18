@@ -91,7 +91,7 @@ namespace ModelingEvolution.AutoUpdater.Services
                 return Enumerable.Empty<MigrationScript>();
             }
         }
-
+        
         public async Task<IEnumerable<MigrationScript>> FilterScriptsForMigrationAsync(
             IEnumerable<MigrationScript> allScripts, 
             string? fromVersion, 
@@ -111,7 +111,7 @@ namespace ModelingEvolution.AutoUpdater.Services
                 }
 
                 Version? from = null;
-                if (!string.IsNullOrEmpty(fromVersion) && !Version.TryParse(fromVersion, out from))
+                if (fromVersion != "-" && !string.IsNullOrEmpty(fromVersion) && !Version.TryParse(fromVersion, out from))
                 {
                     _logger.LogError("Invalid from version format: {FromVersion}", fromVersion);
                     return Enumerable.Empty<MigrationScript>();
