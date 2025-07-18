@@ -1,5 +1,6 @@
 using FluentAssertions;
 using Microsoft.Extensions.Logging;
+using ModelingEvolution.AutoUpdater.Common;
 using ModelingEvolution.AutoUpdater.Models;
 using ModelingEvolution.AutoUpdater.Services;
 using NSubstitute;
@@ -45,11 +46,11 @@ namespace ModelingEvolution.AutoUpdater.Tests.Services
             // Arrange
             var scripts = new[]
             {
-                new MigrationScript("up-1.0.0.sh", "/path/up-1.0.0.sh", new Version(1, 0, 0), MigrationDirection.Up)
+                new MigrationScript("up-1.0.0.sh", "/path/up-1.0.0.sh", new PackageVersion("1.0.0"), MigrationDirection.Up)
             };
 
             // Act
-            var result = await _service.FilterScriptsForMigrationAsync(scripts, null, "invalid-version");
+            var result = await _service.FilterScriptsForMigrationAsync(scripts, null, new PackageVersion("invalid-version"));
 
             // Assert
             result.Should().BeEmpty();
@@ -61,11 +62,11 @@ namespace ModelingEvolution.AutoUpdater.Tests.Services
             // Arrange
             var scripts = new[]
             {
-                new MigrationScript("up-1.0.0.sh", "/path/up-1.0.0.sh", new Version(1, 0, 0), MigrationDirection.Up)
+                new MigrationScript("up-1.0.0.sh", "/path/up-1.0.0.sh", new PackageVersion("1.0.0"), MigrationDirection.Up)
             };
 
             // Act
-            var result = await _service.FilterScriptsForMigrationAsync(scripts, "invalid-version", "2.0.0");
+            var result = await _service.FilterScriptsForMigrationAsync(scripts, new PackageVersion("invalid-version"), new PackageVersion("2.0.0"));
 
             // Assert
             result.Should().BeEmpty();
@@ -76,11 +77,11 @@ namespace ModelingEvolution.AutoUpdater.Tests.Services
             // Arrange
             var scripts = new[]
             {
-                new MigrationScript("up-1.0.0.sh", "/path/up-1.0.0.sh", new Version(1, 0, 0), MigrationDirection.Up)
+                new MigrationScript("up-1.0.0.sh", "/path/up-1.0.0.sh", new PackageVersion("1.0.0"), MigrationDirection.Up)
             };
 
             // Act
-            var result = await _service.FilterScriptsForMigrationAsync(scripts, "-", "1.0.0");
+            var result = await _service.FilterScriptsForMigrationAsync(scripts, PackageVersion.Empty, new PackageVersion("1.0.0"));
 
             // Assert
             result.Should().HaveCount(1);
@@ -91,23 +92,23 @@ namespace ModelingEvolution.AutoUpdater.Tests.Services
             // Arrange
             var scripts = new[]
             {
-                new MigrationScript("up-0.5.0.sh", "/path/up-0.5.0.sh", new Version(0, 5, 0), MigrationDirection.Up),
-                new MigrationScript("up-1.0.0.sh", "/path/up-1.0.0.sh", new Version(1, 0, 0), MigrationDirection.Up),
-                new MigrationScript("up-1.5.0.sh", "/path/up-1.5.0.sh", new Version(1, 5, 0), MigrationDirection.Up),
-                new MigrationScript("up-2.0.0.sh", "/path/up-2.0.0.sh", new Version(2, 0, 0), MigrationDirection.Up),
-                new MigrationScript("up-1.2.0.sh", "/path/up-1.2.0.sh", new Version(1, 2, 0), MigrationDirection.Up), // not executable
-                new MigrationScript("down-1.0.0.sh", "/path/down-1.0.0.sh", new Version(1, 0, 0), MigrationDirection.Down) // should be ignored for forward migration
+                new MigrationScript("up-0.5.0.sh", "/path/up-0.5.0.sh", new PackageVersion("0.5.0"), MigrationDirection.Up),
+                new MigrationScript("up-1.0.0.sh", "/path/up-1.0.0.sh", new PackageVersion("1.0.0"), MigrationDirection.Up),
+                new MigrationScript("up-1.5.0.sh", "/path/up-1.5.0.sh", new PackageVersion("1.5.0"), MigrationDirection.Up),
+                new MigrationScript("up-2.0.0.sh", "/path/up-2.0.0.sh", new PackageVersion("2.0.0"), MigrationDirection.Up),
+                new MigrationScript("up-1.2.0.sh", "/path/up-1.2.0.sh", new PackageVersion("1.2.0"), MigrationDirection.Up), // not executable
+                new MigrationScript("down-1.0.0.sh", "/path/down-1.0.0.sh", new PackageVersion("1.0.0"), MigrationDirection.Down) // should be ignored for forward migration
             };
 
             // Act
-            var result = await _service.FilterScriptsForMigrationAsync(scripts, null, "1.5.0");
+            var result = await _service.FilterScriptsForMigrationAsync(scripts, null, new PackageVersion("1.5.0"));
 
             // Assert
             result.Should().HaveCount(4);
             var filteredScripts = result.ToList();
-            filteredScripts[0].Version.Should().Be(new Version(0, 5, 0));
-            filteredScripts[1].Version.Should().Be(new Version(1, 0, 0));
-            filteredScripts[2].Version.Should().Be(new Version(1, 2, 0));
+            filteredScripts[0].Version.Should().Be(new PackageVersion("0.5.0"));
+            filteredScripts[1].Version.Should().Be(new PackageVersion("1.0.0"));
+            filteredScripts[2].Version.Should().Be(new PackageVersion("1.2.0"));
         }
 
         [Fact]
@@ -116,20 +117,20 @@ namespace ModelingEvolution.AutoUpdater.Tests.Services
             // Arrange
             var scripts = new[]
             {
-                new MigrationScript("up-0.5.0.sh", "/path/up-0.5.0.sh", new Version(0, 5, 0), MigrationDirection.Up),
-                new MigrationScript("up-1.0.0.sh", "/path/up-1.0.0.sh", new Version(1, 0, 0), MigrationDirection.Up),
-                new MigrationScript("up-1.2.0.sh", "/path/up-1.2.0.sh", new Version(1, 2, 0), MigrationDirection.Up),
-                new MigrationScript("up-1.5.0.sh", "/path/up-1.5.0.sh", new Version(1, 5, 0), MigrationDirection.Up)
+                new MigrationScript("up-0.5.0.sh", "/path/up-0.5.0.sh", new PackageVersion("0.5.0"), MigrationDirection.Up),
+                new MigrationScript("up-1.0.0.sh", "/path/up-1.0.0.sh", new PackageVersion("1.0.0"), MigrationDirection.Up),
+                new MigrationScript("up-1.2.0.sh", "/path/up-1.2.0.sh", new PackageVersion("1.2.0"), MigrationDirection.Up),
+                new MigrationScript("up-1.5.0.sh", "/path/up-1.5.0.sh", new PackageVersion("1.5.0"), MigrationDirection.Up)
             };
 
             // Act
-            var result = await _service.FilterScriptsForMigrationAsync(scripts, "1.0.0", "1.5.0");
+            var result = await _service.FilterScriptsForMigrationAsync(scripts, new PackageVersion("1.0.0"), new PackageVersion("1.5.0"));
 
             // Assert
             result.Should().HaveCount(2);
             var filteredScripts = result.ToList();
-            filteredScripts[0].Version.Should().Be(new Version(1, 2, 0));
-            filteredScripts[1].Version.Should().Be(new Version(1, 5, 0));
+            filteredScripts[0].Version.Should().Be(new PackageVersion("1.2.0"));
+            filteredScripts[1].Version.Should().Be(new PackageVersion("1.5.0"));
         }
 
         
@@ -140,8 +141,8 @@ namespace ModelingEvolution.AutoUpdater.Tests.Services
             // Arrange
             var scripts = new[]
             {
-                new MigrationScript("up-1.0.0.sh", "/path/up-1.0.0.sh", new Version(1, 0, 0), MigrationDirection.Up),
-                new MigrationScript("up-1.1.0.sh", "/path/up-1.1.0.sh", new Version(1, 1, 0), MigrationDirection.Up)
+                new MigrationScript("up-1.0.0.sh", "/path/up-1.0.0.sh", new PackageVersion("1.0.0"), MigrationDirection.Up),
+                new MigrationScript("up-1.1.0.sh", "/path/up-1.1.0.sh", new PackageVersion("1.1.0"), MigrationDirection.Up)
             };
 
             _sshService.ExecuteCommandAsync(Arg.Any<string>(), Arg.Any<string>())
@@ -212,18 +213,18 @@ namespace ModelingEvolution.AutoUpdater.Tests.Services
             // Arrange
             var scripts = new[]
             {
-                new MigrationScript("up-1.0.0.sh", "/path/up-1.0.0.sh", new Version(1, 0, 0), MigrationDirection.Up),
-                new MigrationScript("up-1.5.0.sh", "/path/up-1.5.0.sh", new Version(1, 5, 0), MigrationDirection.Up),
-                new MigrationScript("down-1.0.0.sh", "/path/down-1.0.0.sh", new Version(1, 0, 0), MigrationDirection.Down),
-                new MigrationScript("down-1.5.0.sh", "/path/down-1.5.0.sh", new Version(1, 5, 0), MigrationDirection.Down),
-                new MigrationScript("down-2.0.0.sh", "/path/down-2.0.0.sh", new Version(2, 0, 0), MigrationDirection.Down)
+                new MigrationScript("up-1.0.0.sh", "/path/up-1.0.0.sh", new PackageVersion("1.0.0"), MigrationDirection.Up),
+                new MigrationScript("up-1.5.0.sh", "/path/up-1.5.0.sh", new PackageVersion("1.5.0"), MigrationDirection.Up),
+                new MigrationScript("down-1.0.0.sh", "/path/down-1.0.0.sh", new PackageVersion("1.0.0"), MigrationDirection.Down),
+                new MigrationScript("down-1.5.0.sh", "/path/down-1.5.0.sh", new PackageVersion("1.5.0"), MigrationDirection.Down),
+                new MigrationScript("down-2.0.0.sh", "/path/down-2.0.0.sh", new PackageVersion("2.0.0"), MigrationDirection.Down)
             };
 
             // Previously executed UP scripts (simulates that 1.0.0 and 1.5.0 were applied)
-            var executedVersions = ImmutableSortedSet.Create(new Version(1, 0, 0), new Version(1, 5, 0));
+            var executedVersions = ImmutableSortedSet.Create(new PackageVersion("1.0.0"), new PackageVersion("1.5.0"));
 
             // Act - rollback from 1.5.0 to 1.0.0
-            var result = await _service.FilterScriptsForMigrationAsync(scripts, "1.5.0", "1.0.0", executedVersions);
+            var result = await _service.FilterScriptsForMigrationAsync(scripts, new PackageVersion("1.5.0"), new PackageVersion("1.0.0"), executedVersions);
 
             // Assert
             result.Should().HaveCount(1);
@@ -238,12 +239,12 @@ namespace ModelingEvolution.AutoUpdater.Tests.Services
             // Arrange
             var scripts = new[]
             {
-                new MigrationScript("up-1.0.0.sh", "/path/up-1.0.0.sh", new Version(1, 0, 0), MigrationDirection.Up),
-                new MigrationScript("down-1.0.0.sh", "/path/down-1.0.0.sh", new Version(1, 0, 0), MigrationDirection.Down)
+                new MigrationScript("up-1.0.0.sh", "/path/up-1.0.0.sh", new PackageVersion("1.0.0"), MigrationDirection.Up),
+                new MigrationScript("down-1.0.0.sh", "/path/down-1.0.0.sh", new PackageVersion("1.0.0"), MigrationDirection.Down)
             };
 
             // Act
-            var result = await _service.FilterScriptsForMigrationAsync(scripts, "1.0.0", "1.0.0");
+            var result = await _service.FilterScriptsForMigrationAsync(scripts, new PackageVersion("1.0.0"), new PackageVersion("1.0.0"));
 
             // Assert
             result.Should().BeEmpty();

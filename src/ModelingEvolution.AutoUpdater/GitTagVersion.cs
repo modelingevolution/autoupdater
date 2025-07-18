@@ -1,6 +1,8 @@
-﻿namespace ModelingEvolution.AutoUpdater;
+﻿using ModelingEvolution.AutoUpdater.Common;
 
-public record GitTagVersion(string FriendlyName, System.Version Version) : IComparable<GitTagVersion> 
+namespace ModelingEvolution.AutoUpdater;
+
+public record GitTagVersion(string FriendlyName, PackageVersion Version) : IComparable<GitTagVersion> 
 {
     public static implicit operator string(GitTagVersion v)
     {
@@ -8,7 +10,7 @@ public record GitTagVersion(string FriendlyName, System.Version Version) : IComp
     }
     public static bool TryParse(string? text, out GitTagVersion? p)
     {
-        if (text != null && System.Version.TryParse(text.Replace("ver", "").Replace("v", ""), out var v))
+        if (text != null && PackageVersion.TryParse(text, out var v))
         { 
             p = new GitTagVersion(text, v);  
             return true; 

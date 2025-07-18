@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 using System.Collections.Immutable;
 using System.Threading.Tasks;
+using ModelingEvolution.AutoUpdater.Common;
 using ModelingEvolution.AutoUpdater.Models;
 
 namespace ModelingEvolution.AutoUpdater.Services
@@ -27,9 +28,9 @@ namespace ModelingEvolution.AutoUpdater.Services
         /// <returns>Scripts that should be executed, ordered by version</returns>
         Task<IEnumerable<MigrationScript>> FilterScriptsForMigrationAsync(
             IEnumerable<MigrationScript> scripts, 
-            string? fromVersion, 
-            string toVersion,
-            ImmutableSortedSet<Version>? excludeVersions = null);
+            PackageVersion? fromVersion, 
+            PackageVersion toVersion,
+            ImmutableSortedSet<PackageVersion>? excludeVersions = null);
 
         /// <summary>
         /// Executes a collection of migration scripts in order
@@ -37,7 +38,7 @@ namespace ModelingEvolution.AutoUpdater.Services
         /// <param name="scripts">The scripts to execute, should be pre-ordered</param>
         /// <param name="workingDirectory">The working directory for script execution</param>
         /// <returns>Collection of successfully executed script versions</returns>
-        Task<IEnumerable<Version>> ExecuteScriptsAsync(IEnumerable<MigrationScript> scripts, string workingDirectory);
+        Task<IEnumerable<PackageVersion>> ExecuteScriptsAsync(IEnumerable<MigrationScript> scripts, string workingDirectory);
 
         /// <summary>
         /// Validates that a script file can be executed

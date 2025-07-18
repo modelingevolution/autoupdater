@@ -84,10 +84,10 @@ namespace ModelingEvolution.AutoUpdater.Tests.FeatureTests
         public void GivenTheCurrentDeploymentVersionIs(string version)
         {
             _currentVersion = version;
-            var deploymentState = new DeploymentState(version, DateTime.Now)
+            var deploymentState = new DeploymentState(new PackageVersion(version), DateTime.Now)
             {
-                Up = ImmutableSortedSet<Version>.Empty,
-                Failed = ImmutableSortedSet<Version>.Empty
+                Up = ImmutableSortedSet<PackageVersion>.Empty,
+                Failed = ImmutableSortedSet<PackageVersion>.Empty
             };
             _deploymentStateProvider.GetDeploymentStateAsync(Arg.Any<string>()).Returns(deploymentState);
         }
@@ -97,7 +97,7 @@ namespace ModelingEvolution.AutoUpdater.Tests.FeatureTests
         public void GivenANewVersionIsAvailable(string version)
         {
             _targetVersion = version;
-            var gitVersion = new GitTagVersion(version, new Version(version));
+            var gitVersion = new GitTagVersion(version, new PackageVersion(version));
             _gitService.GetAvailableVersionsAsync(Arg.Any<string>()).Returns(new[] { gitVersion });
         }
 
@@ -107,15 +107,15 @@ namespace ModelingEvolution.AutoUpdater.Tests.FeatureTests
             _migrationScriptsExist = true;
             var migrationScripts = new[]
             {
-                new MigrationScript("up-1.0.1.sh", "/path/up-1.0.1.sh", new Version(1, 0, 1), MigrationDirection.Up)
+                new MigrationScript("up-1.0.1.sh", "/path/up-1.0.1.sh", new PackageVersion("1.0.1"), MigrationDirection.Up)
             };
 
             _scriptService.DiscoverScriptsAsync(Arg.Any<string>()).Returns(migrationScripts);
             _scriptService.FilterScriptsForMigrationAsync(
                 Arg.Any<IEnumerable<MigrationScript>>(), 
-                Arg.Any<string>(), 
-                Arg.Any<string>(), 
-                Arg.Any<ImmutableSortedSet<Version>?>()).Returns(migrationScripts);
+                Arg.Any<PackageVersion?>(), 
+                Arg.Any<PackageVersion>(), 
+                Arg.Any<ImmutableSortedSet<PackageVersion>?>()).Returns(migrationScripts);
         }
 
         [Given(@"no backup script is present")]
@@ -156,7 +156,7 @@ namespace ModelingEvolution.AutoUpdater.Tests.FeatureTests
         {
             _migrationExecutionSucceeds = true;
             _scriptService.ExecuteScriptsAsync(Arg.Any<IEnumerable<MigrationScript>>(), Arg.Any<string>())
-                         .Returns(new[] { new Version(1, 0, 1) });
+                         .Returns(new[] { new PackageVersion("1.0.1") });
         }
 
         [Given(@"migration script execution fails")]
@@ -239,7 +239,7 @@ namespace ModelingEvolution.AutoUpdater.Tests.FeatureTests
             if (_migrationScriptsExist && _migrationExecutionSucceeds)
             {
                 _scriptService.ExecuteScriptsAsync(Arg.Any<IEnumerable<MigrationScript>>(), Arg.Any<string>())
-                             .Returns(new[] { new Version(1, 0, 1) });
+                             .Returns(new[] { new PackageVersion("1.0.1") });
             }
 
             _result = await _updateHost.UpdateAsync(_config);

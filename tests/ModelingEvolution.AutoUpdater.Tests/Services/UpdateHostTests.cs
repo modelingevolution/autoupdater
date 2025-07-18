@@ -35,29 +35,29 @@ namespace ModelingEvolution.AutoUpdater.Tests.Services
         {
             // Arrange
             var config = CreateTestConfiguration();
-            var existingDeploymentState = new DeploymentState("1.0.0", DateTime.Now)
+            var existingDeploymentState = new DeploymentState(new PackageVersion("1.0.0"), DateTime.Now)
             {
-                Up = ImmutableSortedSet<Version>.Empty,
-                Failed = ImmutableSortedSet<Version>.Empty
+                Up = ImmutableSortedSet<PackageVersion>.Empty,
+                Failed = ImmutableSortedSet<PackageVersion>.Empty
             };
             
             // Setup basic flow mocks
             _deploymentStateProvider.GetDeploymentStateAsync(Arg.Any<string>())
                       .Returns(existingDeploymentState);
             _gitService.GetAvailableVersionsAsync(Arg.Any<string>())
-                      .Returns(new[] { new GitTagVersion("1.1.0", new Version(1, 1, 0)) });
+                      .Returns(new[] { new GitTagVersion("1.1.0", new PackageVersion("1.1.0")) });
 
             var migrationScripts = new[]
             {
-                new MigrationScript("up-1.0.1.sh", "/path/up-1.0.1.sh", new Version(1, 0, 1), MigrationDirection.Up)
+                new MigrationScript("up-1.0.1.sh", "/path/up-1.0.1.sh", new PackageVersion("1.0.1"), MigrationDirection.Up)
             };
 
             _scriptService.DiscoverScriptsAsync(Arg.Any<string>())
                          .Returns(migrationScripts);
-            _scriptService.FilterScriptsForMigrationAsync(Arg.Any<IEnumerable<MigrationScript>>(), "1.0.0", "1.1.0", Arg.Any<ImmutableSortedSet<Version>?>())
+            _scriptService.FilterScriptsForMigrationAsync(Arg.Any<IEnumerable<MigrationScript>>(), Arg.Any<PackageVersion?>(), Arg.Any<PackageVersion>(), Arg.Any<ImmutableSortedSet<PackageVersion>?>())
                          .Returns(migrationScripts);
             _scriptService.ExecuteScriptsAsync(Arg.Any<IEnumerable<MigrationScript>>(), Arg.Any<string>())
-                         .Returns(new[] { new Version(1, 0, 1) });
+                         .Returns(new[] { new PackageVersion("1.0.1") });
 
             var mockSshService = Substitute.For<ISshService>();
             mockSshService.GetArchitectureAsync().Returns(CpuArchitecture.X64);
@@ -97,15 +97,15 @@ namespace ModelingEvolution.AutoUpdater.Tests.Services
         {
             // Arrange
             var config = CreateTestConfiguration();
-            var existingDeploymentState = new DeploymentState("1.0.0", DateTime.Now)
+            var existingDeploymentState = new DeploymentState(new PackageVersion("1.0.0"), DateTime.Now)
             {
-                Up = ImmutableSortedSet<Version>.Empty,
-                Failed = ImmutableSortedSet<Version>.Empty
+                Up = ImmutableSortedSet<PackageVersion>.Empty,
+                Failed = ImmutableSortedSet<PackageVersion>.Empty
             };
             _deploymentStateProvider.GetDeploymentStateAsync(Arg.Any<string>())
                       .Returns(existingDeploymentState);
             _gitService.GetAvailableVersionsAsync(Arg.Any<string>())
-                      .Returns(new[] { new GitTagVersion("1.0.0", new Version(1, 0, 0)) });
+                      .Returns(new[] { new GitTagVersion("1.0.0", new PackageVersion("1.0.0")) });
 
             var updateHost = new UpdateHost(_configuration, _logger, _gitService, _scriptService, _sshConnectionManager, _dockerService, _deploymentStateProvider, _backupService, _healthCheckService, _progressService, _eventHub);
 
@@ -131,24 +131,24 @@ namespace ModelingEvolution.AutoUpdater.Tests.Services
         {
             // Arrange
             var config = CreateTestConfiguration();
-            var existingDeploymentState = new DeploymentState("1.0.0", DateTime.Now)
+            var existingDeploymentState = new DeploymentState(new PackageVersion("1.0.0"), DateTime.Now)
             {
-                Up = ImmutableSortedSet<Version>.Empty,
-                Failed = ImmutableSortedSet<Version>.Empty
+                Up = ImmutableSortedSet<PackageVersion>.Empty,
+                Failed = ImmutableSortedSet<PackageVersion>.Empty
             };
             _deploymentStateProvider.GetDeploymentStateAsync(Arg.Any<string>())
                       .Returns(existingDeploymentState);
             _gitService.GetAvailableVersionsAsync(Arg.Any<string>())
-                      .Returns(new[] { new GitTagVersion("1.1.0", new Version(1, 1, 0)) });
+                      .Returns(new[] { new GitTagVersion("1.1.0", new PackageVersion("1.1.0")) });
 
             var migrationScripts = new[]
             {
-                new MigrationScript("up-1.0.1.sh", "/path/up-1.0.1.sh", new Version(1, 0, 1), MigrationDirection.Up)
+                new MigrationScript("up-1.0.1.sh", "/path/up-1.0.1.sh", new PackageVersion("1.0.1"), MigrationDirection.Up)
             };
 
             _scriptService.DiscoverScriptsAsync(Arg.Any<string>())
                          .Returns(migrationScripts);
-            _scriptService.FilterScriptsForMigrationAsync(Arg.Any<IEnumerable<MigrationScript>>(), "1.0.0", "1.1.0", Arg.Any<ImmutableSortedSet<Version>?>())
+            _scriptService.FilterScriptsForMigrationAsync(Arg.Any<IEnumerable<MigrationScript>>(), Arg.Any<PackageVersion?>(), Arg.Any<PackageVersion>(), Arg.Any<ImmutableSortedSet<PackageVersion>?>())
                          .Returns(migrationScripts);
             _scriptService.When(x => x.ExecuteScriptsAsync(Arg.Any<IEnumerable<MigrationScript>>(), Arg.Any<string>()))
                          .Do(x => throw new Exception("Script execution failed"));
@@ -186,16 +186,16 @@ namespace ModelingEvolution.AutoUpdater.Tests.Services
         {
             // Arrange
             var config = CreateTestConfiguration();
-            var existingDeploymentState = new DeploymentState("1.0.0", DateTime.Now)
+            var existingDeploymentState = new DeploymentState(new PackageVersion("1.0.0"), DateTime.Now)
             {
-                Up = ImmutableSortedSet<Version>.Empty,
-                Failed = ImmutableSortedSet<Version>.Empty
+                Up = ImmutableSortedSet<PackageVersion>.Empty,
+                Failed = ImmutableSortedSet<PackageVersion>.Empty
             };
             
             _deploymentStateProvider.GetDeploymentStateAsync(Arg.Any<string>())
                       .Returns(existingDeploymentState);
             _gitService.GetAvailableVersionsAsync(Arg.Any<string>())
-                      .Returns(new[] { new GitTagVersion("1.1.0", new Version(1, 1, 0)) });
+                      .Returns(new[] { new GitTagVersion("1.1.0", new PackageVersion("1.1.0")) });
 
             // Test decision point: Backup Script Exists? YES, but fails
             _backupService.BackupScriptExistsAsync(Arg.Any<string>()).Returns(true);
@@ -223,25 +223,25 @@ namespace ModelingEvolution.AutoUpdater.Tests.Services
         {
             // Arrange
             var config = CreateTestConfiguration();
-            var existingDeploymentState = new DeploymentState("1.0.0", DateTime.Now)
+            var existingDeploymentState = new DeploymentState(new PackageVersion("1.0.0"), DateTime.Now)
             {
-                Up = ImmutableSortedSet<Version>.Empty,
-                Failed = ImmutableSortedSet<Version>.Empty
+                Up = ImmutableSortedSet<PackageVersion>.Empty,
+                Failed = ImmutableSortedSet<PackageVersion>.Empty
             };
             
             _deploymentStateProvider.GetDeploymentStateAsync(Arg.Any<string>())
                       .Returns(existingDeploymentState);
             _gitService.GetAvailableVersionsAsync(Arg.Any<string>())
-                      .Returns(new[] { new GitTagVersion("1.1.0", new Version(1, 1, 0)) });
+                      .Returns(new[] { new GitTagVersion("1.1.0", new PackageVersion("1.1.0")) });
 
             var migrationScripts = new[]
             {
-                new MigrationScript("up-1.0.1.sh", "/path/up-1.0.1.sh", new Version(1, 0, 1), MigrationDirection.Up)
+                new MigrationScript("up-1.0.1.sh", "/path/up-1.0.1.sh", new PackageVersion("1.0.1"), MigrationDirection.Up)
             };
 
             _scriptService.DiscoverScriptsAsync(Arg.Any<string>())
                          .Returns(migrationScripts);
-            _scriptService.FilterScriptsForMigrationAsync(Arg.Any<IEnumerable<MigrationScript>>(), "1.0.0", "1.1.0", Arg.Any<ImmutableSortedSet<Version>?>())
+            _scriptService.FilterScriptsForMigrationAsync(Arg.Any<IEnumerable<MigrationScript>>(), Arg.Any<PackageVersion?>(), Arg.Any<PackageVersion>(), Arg.Any<ImmutableSortedSet<PackageVersion>?>())
                          .Returns(migrationScripts);
             _scriptService.When(x => x.ExecuteScriptsAsync(Arg.Any<IEnumerable<MigrationScript>>(), Arg.Any<string>()))
                          .Do(x => throw new Exception("Migration script execution failed"));
@@ -284,28 +284,28 @@ namespace ModelingEvolution.AutoUpdater.Tests.Services
         {
             // Arrange
             var config = CreateTestConfiguration();
-            var existingDeploymentState = new DeploymentState("1.0.0", DateTime.Now)
+            var existingDeploymentState = new DeploymentState(new PackageVersion("1.0.0"), DateTime.Now)
             {
-                Up = ImmutableSortedSet<Version>.Empty,
-                Failed = ImmutableSortedSet<Version>.Empty
+                Up = ImmutableSortedSet<PackageVersion>.Empty,
+                Failed = ImmutableSortedSet<PackageVersion>.Empty
             };
             
             _deploymentStateProvider.GetDeploymentStateAsync(Arg.Any<string>())
                       .Returns(existingDeploymentState);
             _gitService.GetAvailableVersionsAsync(Arg.Any<string>())
-                      .Returns(new[] { new GitTagVersion("1.1.0", new Version(1, 1, 0)) });
+                      .Returns(new[] { new GitTagVersion("1.1.0", new PackageVersion("1.1.0")) });
 
             var migrationScripts = new[]
             {
-                new MigrationScript("up-1.0.1.sh", "/path/up-1.0.1.sh", new Version(1, 0, 1), MigrationDirection.Up)
+                new MigrationScript("up-1.0.1.sh", "/path/up-1.0.1.sh", new PackageVersion("1.0.1"), MigrationDirection.Up)
             };
 
             _scriptService.DiscoverScriptsAsync(Arg.Any<string>())
                          .Returns(migrationScripts);
-            _scriptService.FilterScriptsForMigrationAsync(Arg.Any<IEnumerable<MigrationScript>>(), "1.0.0", "1.1.0", Arg.Any<ImmutableSortedSet<Version>?>())
+            _scriptService.FilterScriptsForMigrationAsync(Arg.Any<IEnumerable<MigrationScript>>(), Arg.Any<PackageVersion?>(), Arg.Any<PackageVersion>(), Arg.Any<ImmutableSortedSet<PackageVersion>?>())
                          .Returns(migrationScripts);
             _scriptService.ExecuteScriptsAsync(Arg.Any<IEnumerable<MigrationScript>>(), Arg.Any<string>())
-                         .Returns(new[] { new Version(1, 0, 1) });
+                         .Returns(new[] { new PackageVersion("1.0.1") });
 
             var mockSshService = Substitute.For<ISshService>();
             mockSshService.GetArchitectureAsync().Returns(CpuArchitecture.X64);
@@ -353,28 +353,28 @@ namespace ModelingEvolution.AutoUpdater.Tests.Services
         {
             // Arrange
             var config = CreateTestConfiguration();
-            var existingDeploymentState = new DeploymentState("1.0.0", DateTime.Now)
+            var existingDeploymentState = new DeploymentState(new PackageVersion("1.0.0"), DateTime.Now)
             {
-                Up = ImmutableSortedSet<Version>.Empty,
-                Failed = ImmutableSortedSet<Version>.Empty
+                Up = ImmutableSortedSet<PackageVersion>.Empty,
+                Failed = ImmutableSortedSet<PackageVersion>.Empty
             };
             
             _deploymentStateProvider.GetDeploymentStateAsync(Arg.Any<string>())
                       .Returns(existingDeploymentState);
             _gitService.GetAvailableVersionsAsync(Arg.Any<string>())
-                      .Returns(new[] { new GitTagVersion("1.1.0", new Version(1, 1, 0)) });
+                      .Returns(new[] { new GitTagVersion("1.1.0", new PackageVersion("1.1.0")) });
 
             var migrationScripts = new[]
             {
-                new MigrationScript("up-1.0.1.sh", "/path/up-1.0.1.sh", new Version(1, 0, 1), MigrationDirection.Up)
+                new MigrationScript("up-1.0.1.sh", "/path/up-1.0.1.sh", new PackageVersion("1.0.1"), MigrationDirection.Up)
             };
 
             _scriptService.DiscoverScriptsAsync(Arg.Any<string>())
                          .Returns(migrationScripts);
-            _scriptService.FilterScriptsForMigrationAsync(Arg.Any<IEnumerable<MigrationScript>>(), "1.0.0", "1.1.0", Arg.Any<ImmutableSortedSet<Version>?>())
+            _scriptService.FilterScriptsForMigrationAsync(Arg.Any<IEnumerable<MigrationScript>>(), Arg.Any<PackageVersion?>(), Arg.Any<PackageVersion>(), Arg.Any<ImmutableSortedSet<PackageVersion>?>())
                          .Returns(migrationScripts);
             _scriptService.ExecuteScriptsAsync(Arg.Any<IEnumerable<MigrationScript>>(), Arg.Any<string>())
-                         .Returns(new[] { new Version(1, 0, 1) });
+                         .Returns(new[] { new PackageVersion("1.0.1") });
 
             var mockSshService = Substitute.For<ISshService>();
             mockSshService.GetArchitectureAsync().Returns(CpuArchitecture.X64);
@@ -418,28 +418,28 @@ namespace ModelingEvolution.AutoUpdater.Tests.Services
         {
             // Arrange
             var config = CreateTestConfiguration();
-            var existingDeploymentState = new DeploymentState("1.0.0", DateTime.Now)
+            var existingDeploymentState = new DeploymentState(new PackageVersion("1.0.0"), DateTime.Now)
             {
-                Up = ImmutableSortedSet<Version>.Empty,
-                Failed = ImmutableSortedSet<Version>.Empty
+                Up = ImmutableSortedSet<PackageVersion>.Empty,
+                Failed = ImmutableSortedSet<PackageVersion>.Empty
             };
             
             _deploymentStateProvider.GetDeploymentStateAsync(Arg.Any<string>())
                       .Returns(existingDeploymentState);
             _gitService.GetAvailableVersionsAsync(Arg.Any<string>())
-                      .Returns(new[] { new GitTagVersion("1.1.0", new Version(1, 1, 0)) });
+                      .Returns(new[] { new GitTagVersion("1.1.0", new PackageVersion("1.1.0")) });
 
             var migrationScripts = new[]
             {
-                new MigrationScript("up-1.0.1.sh", "/path/up-1.0.1.sh", new Version(1, 0, 1), MigrationDirection.Up)
+                new MigrationScript("up-1.0.1.sh", "/path/up-1.0.1.sh", new PackageVersion("1.0.1"), MigrationDirection.Up)
             };
 
             _scriptService.DiscoverScriptsAsync(Arg.Any<string>())
                          .Returns(migrationScripts);
-            _scriptService.FilterScriptsForMigrationAsync(Arg.Any<IEnumerable<MigrationScript>>(), "1.0.0", "1.1.0", Arg.Any<ImmutableSortedSet<Version>?>())
+            _scriptService.FilterScriptsForMigrationAsync(Arg.Any<IEnumerable<MigrationScript>>(), Arg.Any<PackageVersion?>(), Arg.Any<PackageVersion>(), Arg.Any<ImmutableSortedSet<PackageVersion>?>())
                          .Returns(migrationScripts);
             _scriptService.ExecuteScriptsAsync(Arg.Any<IEnumerable<MigrationScript>>(), Arg.Any<string>())
-                         .Returns(new[] { new Version(1, 0, 1) });
+                         .Returns(new[] { new PackageVersion("1.0.1") });
 
             var mockSshService = Substitute.For<ISshService>();
             mockSshService.GetArchitectureAsync().Returns(CpuArchitecture.X64);
@@ -485,16 +485,16 @@ namespace ModelingEvolution.AutoUpdater.Tests.Services
         {
             // Arrange
             var config = CreateTestConfiguration();
-            var existingDeploymentState = new DeploymentState("1.0.0", DateTime.Now)
+            var existingDeploymentState = new DeploymentState(new PackageVersion("1.0.0"), DateTime.Now)
             {
-                Up = ImmutableSortedSet<Version>.Empty,
-                Failed = ImmutableSortedSet<Version>.Empty
+                Up = ImmutableSortedSet<PackageVersion>.Empty,
+                Failed = ImmutableSortedSet<PackageVersion>.Empty
             };
             
             _deploymentStateProvider.GetDeploymentStateAsync(Arg.Any<string>())
                       .Returns(existingDeploymentState);
             _gitService.GetAvailableVersionsAsync(Arg.Any<string>())
-                      .Returns(new[] { new GitTagVersion("1.1.0", new Version(1, 1, 0)) });
+                      .Returns(new[] { new GitTagVersion("1.1.0", new PackageVersion("1.1.0")) });
 
             var mockSshService = Substitute.For<ISshService>();
             mockSshService.GetArchitectureAsync().Returns(CpuArchitecture.X64);

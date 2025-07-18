@@ -18,7 +18,6 @@ using System.IO;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
-using SystemVersion = System.Version;
 
 namespace ModelingEvolution.AutoUpdater;
 
@@ -190,7 +189,7 @@ public class UpdateHost : IHostedService
 
             BackupResult? backup = null;
             var executedScripts = new List<string>();
-            var executedVersions = new List<SystemVersion>();
+            var executedVersions = new List<PackageVersion>();
             string? currentVersion = null;
             GitTagVersion? latestVersion = null;
 
@@ -287,9 +286,11 @@ public class UpdateHost : IHostedService
                 {
                     var allScripts =
                         await _scriptMigrationService.DiscoverScriptsAsync(configuration.HostComposeFolderPath);
-                    var excludeVersions = currentDeploymentState?.Up ?? ImmutableSortedSet<SystemVersion>.Empty;
+                    var excludeVersions = currentDeploymentState?.Up ?? ImmutableSortedSet<PackageVersion>.Empty;
+                    var fromVersion = currentVersion != null ? PackageVersion.Parse(currentVersion) : (PackageVersion?)null;
+                    var toVersion = PackageVersion.Parse(latestVersion.FriendlyName);
                     var scriptsToExecute = await _scriptMigrationService.FilterScriptsForMigrationAsync(
-                        allScripts, currentVersion, latestVersion.FriendlyName, excludeVersions);
+                        allScripts, fromVersion, toVersion, excludeVersions);
 
                     if (scriptsToExecute.Any())
                     {
@@ -599,7 +600,7 @@ public class UpdateHost : IHostedService
     /// Performs complete rollback with backup restoration
     /// </summary>
     private async Task PerformRollbackWithBackupAsync(
-        List<SystemVersion> executedVersions,
+        List<PackageVersion> executedVersions,
         BackupResult backup,
         string[] composeFiles,
         string workingDirectory)
@@ -651,14 +652,15 @@ public class UpdateHost : IHostedService
     private async Task UpdateDeploymentStateAsync(
         DeploymentState? currentState,
         string newVersion,
-        List<SystemVersion> executedVersions,
+        List<PackageVersion> executedVersions,
         string workingDirectory)
     {
-        var updatedUp = (currentState?.Up ?? ImmutableSortedSet<SystemVersion>.Empty).Union(executedVersions);
-        var deploymentState = new DeploymentState(newVersion, DateTime.Now)
+        var updatedUp = (currentState?.Up ?? ImmutableSortedSet<PackageVersion>.Empty).Union(executedVersions);
+        var versionParsed = PackageVersion.Parse(newVersion);
+        var deploymentState = new DeploymentState(versionParsed, DateTime.Now)
         {
             Up = updatedUp,
-            Failed = currentState?.Failed ?? ImmutableSortedSet<SystemVersion>.Empty
+            Failed = currentState?.Failed ?? ImmutableSortedSet<PackageVersion>.Empty
         };
 
         await _deploymentStateProvider.SaveDeploymentStateAsync(workingDirectory, deploymentState);
