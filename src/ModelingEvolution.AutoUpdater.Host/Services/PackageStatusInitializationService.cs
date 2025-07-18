@@ -5,20 +5,27 @@ namespace ModelingEvolution.AutoUpdater.Host.Services;
 /// <summary>
 /// Hosted service to initialize static dependencies for DockerComposeConfiguration
 /// </summary>
-public class PackageStatusInitializationService : IHostedService
+public class PackageStatusInitializationService(DockerComposeConfigurationModel model, UpdateHost uh, ILogger<DockerComposeConfiguration> logger) : IHostedService
 {
-    private readonly ILogger<DockerComposeConfiguration> _logger;
-
-    public PackageStatusInitializationService(ILogger<DockerComposeConfiguration> logger)
+    public async Task StartAsync(CancellationToken cancellationToken)
     {
-        _logger = logger;
-    }
+        await Task.Delay(1000, cancellationToken);
 
-    public Task StartAsync(CancellationToken cancellationToken)
-    {
-        // Set the static logger for DockerComposeConfiguration status operations
-        
-        return Task.CompletedTask;
+        var packages = model.GetPackages();
+        for (int i = 0; i < packages.Count; i++)
+        {
+            var pck = packages[i];
+            try
+            {
+                await uh.CheckIsUpdateAvailable(pck);
+            }
+            catch (Exception ex)
+            {
+                logger.LogError(ex, "Failed to initialize package {PackageName} status", pck.FriendlyName);
+            }
+        }
+
+
     }
 
     public Task StopAsync(CancellationToken cancellationToken)

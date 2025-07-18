@@ -1,7 +1,7 @@
 @using ModelingEvolution.AutoUpdater
 
 <Observable Source="Package">
-@if (Package.IsUpgradeAvailable)
+@if (Package.IsUpgradeAvailable && Package.IsPackageValid)
 {
     <MudField Label="Available upgrade:">@(Package.AvailableUpgrade?.ToString() ?? "Unknown")</MudField>
 }
@@ -10,10 +10,6 @@ else
     <MudText Color="GetMudColor(Package.StatusColor)">@Package.StatusText</MudText>
 }
 
-@if (!string.IsNullOrEmpty(Package.ErrorMessage))
-{
-    <MudText Color="Color.Error">@Package.ErrorMessage</MudText>
-}
 </Observable>
 @code {
     [Parameter] public DockerComposeConfiguration Package { get; set; } = null!;

@@ -18,7 +18,7 @@
     {
         if (_package == Package) return;
 
-        _currentVersion = await _dsp.GetCurrentVersionAsync(Package.HostComposeFolderPath);
+        _currentVersion = await _dsp.GetCurrentVersionAsync(Package.HostComposeFolderPath) ?? "-";
         if (_package != null)
             _package.PropertyChanged -= OnPropertyChanged;
         _package = Package;
@@ -31,7 +31,7 @@
         Task.Run(async () =>
         {
             if (_package == null!) return;
-            var tmp = await _dsp.GetCurrentVersionAsync(_package.HostComposeFolderPath);
+            var tmp = await _dsp.GetCurrentVersionAsync(_package.HostComposeFolderPath) ?? "-";
             if (_currentVersion != tmp)
                 await this.InvokeAsync(this.StateHasChanged);
         });

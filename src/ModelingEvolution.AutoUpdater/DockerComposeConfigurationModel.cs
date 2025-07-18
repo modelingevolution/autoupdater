@@ -83,7 +83,7 @@ namespace ModelingEvolution.AutoUpdater
             
             if (_index.TryGetValue(updateStarted.ApplicationName, out var config))
             {
-                config.ErrorMessage = "Update in progress...";
+                config.OperationMessage = "Update in progress...";
                 config.IsUpgradeAvailable = false; // Clear upgrade status during update
                 _logger.LogDebug("Updated status for {ApplicationName}", updateStarted.ApplicationName);
             }
@@ -100,16 +100,16 @@ namespace ModelingEvolution.AutoUpdater
             {
                 if (updateCompleted.Success)
                 {
-                    config.ErrorMessage = string.Empty;
+                    config.OperationMessage = string.Empty;
                     config.IsUpgradeAvailable = false; // No upgrade available after successful update
                     config.AvailableUpgrade = null;
                     _logger.LogDebug("Cleared error status for {ApplicationName}", updateCompleted.ApplicationName);
                 }
                 else
                 {
-                    config.ErrorMessage = updateCompleted.ErrorMessage ?? "Update failed";
+                    config.OperationMessage = updateCompleted.ErrorMessage ?? "Update failed";
                     _logger.LogDebug("Set error status for {ApplicationName}: {Error}", 
-                        updateCompleted.ApplicationName, config.ErrorMessage);
+                        updateCompleted.ApplicationName, config.OperationMessage);
                 }
             }
             
@@ -123,7 +123,7 @@ namespace ModelingEvolution.AutoUpdater
             
             if (_index.TryGetValue(updateProgress.ApplicationName, out var config))
             {
-                config.ErrorMessage = $"{updateProgress.Operation} ({updateProgress.ProgressPercentage}%)";
+                config.OperationMessage = $"{updateProgress.Operation} ({updateProgress.ProgressPercentage}%)";
             }
             
             await Task.CompletedTask;
@@ -138,7 +138,7 @@ namespace ModelingEvolution.AutoUpdater
             {
                 if (!string.IsNullOrEmpty(versionCheck.ErrorMessage))
                 {
-                    config.ErrorMessage = versionCheck.ErrorMessage;
+                    config.OperationMessage = versionCheck.ErrorMessage;
                     config.IsUpgradeAvailable = false;
                     config.AvailableUpgrade = null;
                 }
@@ -146,7 +146,7 @@ namespace ModelingEvolution.AutoUpdater
                 {
                     config.IsUpgradeAvailable = versionCheck.IsUpgradeAvailable;
                     config.AvailableUpgrade = versionCheck.AvailableVersion;
-                    config.ErrorMessage = string.Empty; // Clear any previous errors
+                    config.OperationMessage = string.Empty; // Clear any previous errors
                 }
                 
                 _logger.LogDebug("Updated version status for {ApplicationName}: UpgradeAvailable={IsUpgradeAvailable}, AvailableVersion={AvailableVersion}", 

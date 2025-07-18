@@ -61,17 +61,18 @@ namespace ModelingEvolution.AutoUpdater
        
 
        
-        private string _errorMessage = string.Empty;
+        private string _operationMessage = string.Empty;
         private string? _availableUpgrade;
         private bool _isUpgradeAvailable;
+        private bool _isPackageValid;
 
         /// <summary>
-        /// Error message for this package (managed externally)
+        /// message for this package (managed externally)
         /// </summary>
-        public string ErrorMessage 
+        public string OperationMessage 
         { 
-            get => _errorMessage;
-            set => SetProperty(ref _errorMessage, value);
+            get => _operationMessage;
+            set => SetProperty(ref _operationMessage, value);
         }
 
         /// <summary>
@@ -92,6 +93,12 @@ namespace ModelingEvolution.AutoUpdater
             set => SetProperty(ref _isUpgradeAvailable, value);
         }
 
+        public bool IsPackageValid
+        {
+            get => _isPackageValid;
+            set => SetProperty(ref _isPackageValid, value);
+        }
+
         /// <summary>
         /// Gets the status text for display purposes
         /// </summary>
@@ -103,7 +110,9 @@ namespace ModelingEvolution.AutoUpdater
                 {
                     return AvailableUpgrade != null ? $"Upgrade available: {AvailableUpgrade}" : "Upgrade available";
                 }
-                return "You have the latest version.";
+                if(IsPackageValid)
+                    return "You have the latest version.";
+                return OperationMessage ?? "Error";
             }
         }
 
@@ -114,7 +123,7 @@ namespace ModelingEvolution.AutoUpdater
         {
             get
             {
-                if (!string.IsNullOrEmpty(ErrorMessage))
+                if (!string.IsNullOrEmpty(OperationMessage))
                     return PackageStatusColor.Error;
                     
                 return IsUpgradeAvailable ? PackageStatusColor.Warning : PackageStatusColor.Success;
@@ -144,7 +153,7 @@ namespace ModelingEvolution.AutoUpdater
                 OnPropertyChanged(nameof(StatusText));
                 OnPropertyChanged(nameof(StatusColor));
             }
-            else if (propertyName == nameof(ErrorMessage))
+            else if (propertyName == nameof(OperationMessage))
             {
                 OnPropertyChanged(nameof(StatusColor));
             }

@@ -465,26 +465,42 @@ public class UpdateHost : IHostedService
     public async Task<bool> CheckIsUpdateAvailable(DockerComposeConfiguration configuration)
     {
         if (configuration == null) throw new ArgumentNullException(nameof(configuration));
-        
-        var st = await _deploymentStateProvider.GetDeploymentStateAsync(configuration.HostComposeFolderPath);
-        await ConfigureGitRepositoryIfNeeded(configuration);
+        string currentVersion = "-";
+        try
+        {
+            var st = await _deploymentStateProvider.GetDeploymentStateAsync(configuration.HostComposeFolderPath);
+            currentVersion = st?.Version ?? "-";
+            
+            await ConfigureGitRepositoryIfNeeded(configuration);
+            await _gitService.FetchAsync(configuration.RepositoryLocation);
+            var latest = await GetLatestVersion(configuration);
+            var result = st?.Version != (latest?.FriendlyName ?? "-");
+            
+            var versionCheckEvent = new VersionCheckCompletedEvent(
+                configuration.FriendlyName,
+                currentVersion,
+                latest?.FriendlyName ?? "-",
+                result
+            );
 
-        await _gitService.FetchAsync(configuration.RepositoryLocation);
-        var latest = await GetLatestVersion(configuration);
-        var result = st?.Version != (latest?.FriendlyName ?? "-");
-
-        var versionCheckEvent = new VersionCheckCompletedEvent(
-            configuration.FriendlyName,
-            st?.Version ?? "-",
-            latest?.FriendlyName ?? "-",
-            result
-        );
-
-        await this._eventHub.PublishAsync(versionCheckEvent);
-        _log.LogInformation("Version check completed for package: {PackageName}, Current: {CurrentVersion}, Latest: {LatestVersion}, UpgradeAvailable: {UpgradeAvailable}",
-            configuration.FriendlyName, st?.Version, latest?.FriendlyName, result);
-        
-        return result;
+            await this._eventHub.PublishAsync(versionCheckEvent);
+            _log.LogInformation("Version check completed for package: {PackageName}, Current: {CurrentVersion}, Latest: {LatestVersion}, UpgradeAvailable: {UpgradeAvailable}",
+                configuration.FriendlyName, st?.Version, latest?.FriendlyName, result);
+            return result;
+        }
+        catch (Exception ex)
+        {
+            var versionCheckEvent = new VersionCheckCompletedEvent(
+                configuration.FriendlyName,
+                currentVersion,
+                "-",
+                false,
+                ex.Message
+            );
+            await this._eventHub.PublishAsync(versionCheckEvent);
+            _log.LogWarning("Version check completed for package: {PackageName}, Current: {CurrentVersion} failed with {ErrorMessage}", configuration.FriendlyName, currentVersion, ex.Message);
+            return false;
+        }
     }
     public async Task<GitTagVersion?> GetLatestVersion(DockerComposeConfiguration configuration)
     {
