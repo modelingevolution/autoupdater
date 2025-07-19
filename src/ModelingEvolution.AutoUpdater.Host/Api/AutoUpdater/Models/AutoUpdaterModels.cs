@@ -1,3 +1,5 @@
+using ModelingEvolution.AutoUpdater.Common;
+
 namespace ModelingEvolution.AutoUpdater.Host.Api.AutoUpdater.Models;
 
 public record PackagesResponse
@@ -9,7 +11,7 @@ public record PackageStatus
 {
     public PackageName Name { get; init; } = PackageName.Empty;
     public string RepositoryUrl { get; init; } = string.Empty;
-    public string CurrentVersion { get; init; } = string.Empty;
+    public PackageVersion? CurrentVersion { get; init; }
     public DateTime LastChecked { get; init; }
     public string Status { get; init; } = string.Empty;
 }
@@ -17,8 +19,8 @@ public record PackageStatus
 public record UpgradeStatusResponse
 {
     public PackageName PackageName { get; init; } = PackageName.Empty;
-    public string CurrentVersion { get; init; } = string.Empty;
-    public string AvailableVersion { get; init; } = string.Empty;
+    public PackageVersion? CurrentVersion { get; init; }
+    public PackageVersion AvailableVersion { get; init; } = PackageVersion.Empty;
     public bool UpgradeAvailable { get; init; }
     public string Changelog { get; init; } = string.Empty;
 }
@@ -35,8 +37,8 @@ public record UpdateInfo
 {
     public PackageName PackageName { get; init; } = PackageName.Empty;
     public string UpdateId { get; init; } = string.Empty;
-    public string FromVersion { get; init; } = string.Empty;
-    public string ToVersion { get; init; } = string.Empty;
+    public PackageVersion? FromVersion { get; init; }
+    public PackageVersion ToVersion { get; init; } = PackageVersion.Empty;
 }
 
 public record SkippedPackage

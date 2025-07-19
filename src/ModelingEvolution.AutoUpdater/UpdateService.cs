@@ -81,8 +81,8 @@ namespace ModelingEvolution.AutoUpdater
                 {
                     Name = packageName,
                     RepositoryUrl = config.RepositoryUrl,
-                    CurrentVersion = currentVersion ?? "unknown",
-                    LatestVersion = latestVersion.IsEmpty ? "unknown" : latestVersion.ToString(),
+                    CurrentVersion = currentVersion != null ? (PackageVersion?)PackageVersion.Parse(currentVersion) : null,
+                    LatestVersion = latestVersion,
                     UpgradeAvailable = upgradeAvailable,
                     LastChecked = DateTime.UtcNow
                 });
@@ -110,8 +110,8 @@ namespace ModelingEvolution.AutoUpdater
             {
                 Name = config.FriendlyName,
                 RepositoryUrl = config.RepositoryUrl,
-                CurrentVersion = currentVersion ?? "unknown",
-                LatestVersion = latestVersion.IsEmpty ? "unknown" : latestVersion.ToString(),
+                CurrentVersion = currentVersion != null ? (PackageVersion?)PackageVersion.Parse(currentVersion) : null,
+                LatestVersion = latestVersion,
                 UpgradeAvailable = upgradeAvailable,
                 LastChecked = DateTime.UtcNow
             };
@@ -165,8 +165,8 @@ namespace ModelingEvolution.AutoUpdater
     {
         public PackageName Name { get; init; } = string.Empty;
         public string RepositoryUrl { get; init; } = string.Empty;
-        public string CurrentVersion { get; init; } = string.Empty;
-        public string LatestVersion { get; init; } = string.Empty;
+        public PackageVersion? CurrentVersion { get; init; }
+        public PackageVersion LatestVersion { get; init; } = PackageVersion.Empty;
         public bool UpgradeAvailable { get; init; }
         public DateTime LastChecked { get; init; }
     }
