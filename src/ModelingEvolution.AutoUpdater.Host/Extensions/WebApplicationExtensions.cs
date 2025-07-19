@@ -1,4 +1,4 @@
-using ModelingEvolution.AutoUpdater.Host.Features.AutoUpdater;
+using ModelingEvolution.AutoUpdater.Host.Api.AutoUpdater;
 
 namespace ModelingEvolution.AutoUpdater.Host.Extensions;
 

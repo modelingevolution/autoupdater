@@ -1,9 +1,9 @@
-using ModelingEvolution.AutoUpdater.Host.Features.AutoUpdater;
 using ModelingEvolution.AutoUpdater.Host.Services.VPN;
 using ModelingEvolution.AutoUpdater.Host.Services;
 using ModelingEvolution.AutoUpdater.Services;
 using ModelingEvolution.AutoUpdater;
 using ModelingEvolution.AutoUpdater.Extensions;
+using ModelingEvolution.AutoUpdater.Host.Api.AutoUpdater;
 
 namespace ModelingEvolution.AutoUpdater.Host.Extensions;
 

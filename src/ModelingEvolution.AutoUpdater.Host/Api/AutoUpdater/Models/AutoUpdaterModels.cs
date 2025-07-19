@@ -1,4 +1,4 @@
-namespace ModelingEvolution.AutoUpdater.Host.Features.AutoUpdater.Models;
+namespace ModelingEvolution.AutoUpdater.Host.Api.AutoUpdater.Models;
 
 public record PackagesResponse
 {

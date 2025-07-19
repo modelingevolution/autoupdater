@@ -1,11 +1,9 @@
-using ModelingEvolution.AutoUpdater.Host.Features.AutoUpdater.Models;
 using System.Text.Json;
-using ModelingEvolution.AutoUpdater.Extensions;
-using ModelingEvolution.AutoUpdater.Services;
-using ModelingEvolution.AutoUpdater;
+using ModelingEvolution.AutoUpdater.Host.Api.AutoUpdater.Models;
 using ModelingEvolution.AutoUpdater.Models;
+using ModelingEvolution.AutoUpdater.Services;
 
-namespace ModelingEvolution.AutoUpdater.Host.Features.AutoUpdater;
+namespace ModelingEvolution.AutoUpdater.Host.Api.AutoUpdater;
 
 public class AutoUpdaterService
 {
