@@ -9,6 +9,7 @@ using System.Collections.Immutable;
 using System.IO;
 using System.Linq;
 using System.Text.Json;
+using System.Threading;
 using System.Threading.Tasks;
 using System.Xml;
 
@@ -28,12 +29,66 @@ namespace ModelingEvolution.AutoUpdater.Services
         private DateTime _lastCacheTime = DateTime.MinValue;
         private static readonly TimeSpan CacheTimeout = TimeSpan.FromSeconds(5);
         private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNameCaseInsensitive = true };
+        
+        // Docker Compose command detection
+        private string? _dockerComposeCommand;
+        private readonly SemaphoreSlim _commandDetectionLock = new(1, 1);
 
         public DockerComposeService(ISshService sshService, ILogger<DockerComposeService> logger, IEventHub? eventHub = null)
         {
             _sshService = sshService ?? throw new ArgumentNullException(nameof(sshService));
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
             _eventHub = eventHub;
+        }
+
+        /// <summary>
+        /// Detects and returns the appropriate Docker Compose command
+        /// </summary>
+        private async Task<string> GetDockerComposeCommandAsync()
+        {
+            if (_dockerComposeCommand != null)
+            {
+                return _dockerComposeCommand;
+            }
+
+            await _commandDetectionLock.WaitAsync();
+            try
+            {
+                // Double-check after acquiring lock
+                if (_dockerComposeCommand != null)
+                {
+                    return _dockerComposeCommand;
+                }
+
+                _logger.LogDebug("Detecting Docker Compose command...");
+
+                // Try docker compose (v2) first
+                var result = await _sshService.ExecuteCommandAsync("docker compose version");
+                if (result.IsSuccess && result.Output.Contains("Docker Compose"))
+                {
+                    _dockerComposeCommand = "docker compose";
+                    _logger.LogInformation("Detected Docker Compose v2 (docker compose)");
+                    return _dockerComposeCommand;
+                }
+
+                // Try docker-compose (v1)
+                result = await _sshService.ExecuteCommandAsync("docker-compose --version");
+                if (result.IsSuccess && result.Output.Contains("docker-compose"))
+                {
+                    _dockerComposeCommand = "docker-compose";
+                    _logger.LogInformation("Detected Docker Compose v1 (docker-compose)");
+                    return _dockerComposeCommand;
+                }
+
+                // Default to v2 syntax if detection fails
+                _logger.LogWarning("Could not detect Docker Compose version, defaulting to 'docker compose' (v2)");
+                _dockerComposeCommand = "docker compose";
+                return _dockerComposeCommand;
+            }
+            finally
+            {
+                _commandDetectionLock.Release();
+            }
         }
 
         public async Task<string[]> GetComposeFiles(string directoryPath,
@@ -96,7 +151,8 @@ namespace ModelingEvolution.AutoUpdater.Services
 
                 // Build the docker-compose command with multiple -f flags
                 var composeFileArgs = string.Join(" ", composeFiles.Select(f => $"-f \"{f}\""));
-                var command = $"sudo docker-compose {composeFileArgs} up -d";
+                var composeCommand = await GetDockerComposeCommandAsync();
+                var command = $"sudo {composeCommand} {composeFileArgs} up -d";
 
                 _logger.LogDebug("Executing Docker Compose command: {Command}", command);
 
@@ -131,7 +187,8 @@ namespace ModelingEvolution.AutoUpdater.Services
 
                 // Build the docker-compose command with multiple -f flags
                 var composeFileArgs = string.Join(" ", composeFiles.Select(f => $"-f \"{f}\""));
-                var command = $"sudo docker-compose {composeFileArgs} down";
+                var composeCommand = await GetDockerComposeCommandAsync();
+                var command = $"sudo {composeCommand} {composeFileArgs} down";
 
                 _logger.LogDebug("Executing Docker Compose command: {Command}", command);
 
@@ -158,7 +215,8 @@ namespace ModelingEvolution.AutoUpdater.Services
                     throw new ArgumentException("Project name cannot be null or whitespace", nameof(projectName));
                 }
 
-                var command = $"sudo docker-compose -p \"{projectName}\" down";
+                var composeCommand = await GetDockerComposeCommandAsync();
+                var command = $"sudo {composeCommand} -p \"{projectName}\" down";
 
                 _logger.LogDebug("Executing Docker Compose command: {Command}", command);
 
@@ -185,7 +243,8 @@ namespace ModelingEvolution.AutoUpdater.Services
                     throw new ArgumentException("Project name cannot be null or whitespace", nameof(projectName));
                 }
 
-                var command = $"sudo docker-compose -p \"{projectName}\" ps --format json";
+                var composeCommand = await GetDockerComposeCommandAsync();
+                var command = $"sudo {composeCommand} -p \"{projectName}\" ps --format json";
 
                 _logger.LogDebug("Executing Docker Compose command: {Command}", command);
 
@@ -233,7 +292,8 @@ namespace ModelingEvolution.AutoUpdater.Services
 
                 // Build the docker-compose command with multiple -f flags
                 var composeFileArgs = string.Join(" ", composeFiles.Select(f => $"-f \"{f}\""));
-                var command = $"sudo docker-compose {composeFileArgs} pull";
+                var composeCommand = await GetDockerComposeCommandAsync();
+                var command = $"sudo {composeCommand} {composeFileArgs} pull";
 
                 _logger.LogDebug("Executing Docker Compose command: {Command}", command);
 
@@ -308,7 +368,8 @@ namespace ModelingEvolution.AutoUpdater.Services
 
                 // Build the docker-compose command with multiple -f flags
                 var composeFileArgs = string.Join(" ", composeFiles.Select(f => $"-f \"{f}\""));
-                var command = $"sudo docker-compose {composeFileArgs} ps";
+                var composeCommand = await GetDockerComposeCommandAsync();
+                var command = $"sudo {composeCommand} {composeFileArgs} ps";
 
                 _logger.LogDebug("Executing Docker Compose command: {Command}", command);
 
@@ -344,7 +405,8 @@ namespace ModelingEvolution.AutoUpdater.Services
 
                 // Build the docker-compose command with multiple -f flags
                 var composeFileArgs = string.Join(" ", composeFiles.Select(f => $"-f \"{f}\""));
-                var command = $"sudo docker-compose {composeFileArgs} down && sudo docker-compose {composeFileArgs} up -d";
+                var composeCommand = await GetDockerComposeCommandAsync();
+                var command = $"sudo {composeCommand} {composeFileArgs} down && sudo {composeCommand} {composeFileArgs} up -d";
                 if(!string.IsNullOrWhiteSpace(cmd))
                     command += $" && {cmd}";
                 
@@ -381,7 +443,8 @@ namespace ModelingEvolution.AutoUpdater.Services
 
                 _logger.LogDebug("Fetching fresh Docker Compose status");
                 
-                var command = "sudo docker-compose ls --format json";
+                var composeCommand = await GetDockerComposeCommandAsync();
+                var command = $"sudo {composeCommand} ls --format json";
                 var result = await _sshService.ExecuteCommandAsync(command);
                 
                 if (!result.IsSuccess || string.IsNullOrWhiteSpace(result.Output))
