@@ -1,46 +1,43 @@
 @using System.ComponentModel
 @using ModelingEvolution.AutoUpdater
-@using ModelingEvolution.AutoUpdater.Services
+@using ModelingEvolution.AutoUpdater.Host.Models
 @implements IDisposable
-@inject IDeploymentStateProvider _dsp
 
-<MudField Label="Current version">@_currentVersion</MudField>
+<MudField Label="Current version">@GetVersionDisplay()</MudField>
 
 @code {
+    private PackageState? _state;
+    [Parameter] public PackageState PackageState { get; set; } = null!;
 
-    private DockerComposeConfiguration? _package;
-    [Parameter] public DockerComposeConfiguration Package { get; set; } = null!;
-
-
-    private string? _currentVersion;
-
-    protected override async Task OnParametersSetAsync()
+    protected override void OnParametersSet()
     {
-        if (_package == Package) return;
+        if (_state == PackageState) return;
 
-        _currentVersion = await _dsp.GetCurrentVersionAsync(Package.HostComposeFolderPath) ?? "-";
-        if (_package != null)
-            _package.PropertyChanged -= OnPropertyChanged;
-        _package = Package;
-        if (_package != null)
-            _package.PropertyChanged += OnPropertyChanged;
+        if (_state != null)
+            _state.PropertyChanged -= OnPropertyChanged;
+        _state = PackageState;
+        if (_state != null)
+            _state.PropertyChanged += OnPropertyChanged;
     }
 
-    private void OnPropertyChanged(object? sender, PropertyChangedEventArgs propertyChangedEventArgs)
+    private string GetVersionDisplay()
     {
-        Task.Run(async () =>
+        if (_state?.CurrentVersion != null)
+            return _state.CurrentVersion.ToString();
+        return "-";
+    }
+
+    private void OnPropertyChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName == nameof(PackageState.CurrentVersion))
         {
-            if (_package == null!) return;
-            var tmp = await _dsp.GetCurrentVersionAsync(_package.HostComposeFolderPath) ?? "-";
-            if (_currentVersion != tmp)
-                await this.InvokeAsync(this.StateHasChanged);
-        });
+            InvokeAsync(StateHasChanged);
+        }
     }
 
     public void Dispose()
     {
-        if (_package != null)
-            _package.PropertyChanged -= OnPropertyChanged;
+        if (_state != null)
+            _state.PropertyChanged -= OnPropertyChanged;
     }
-
 }

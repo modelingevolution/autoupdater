@@ -1,11 +1,12 @@
 ﻿using System.Collections.Immutable;
+using ModelingEvolution.AutoUpdater.Common;
 
 namespace ModelingEvolution.AutoUpdater;
 
-public record DeploymentState(string Version, DateTime Updated)
+public record DeploymentState(PackageVersion Version, DateTime Updated)
 {
-    public ImmutableSortedSet<Version> Up { get; set; } = [];
+    public ImmutableSortedSet<PackageVersion> Up { get; set; } = [];
     
     // We don't do anything yet with Failed scripts. We will only log them.
-    public ImmutableSortedSet<Version> Failed { get; set; } = [];
+    public ImmutableSortedSet<PackageVersion> Failed { get; set; } = [];
 }

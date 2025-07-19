@@ -112,7 +112,7 @@ namespace ModelingEvolution.AutoUpdater.Services
             try
             {
                 var state = await GetDeploymentStateAsync(deploymentPath);
-                return state?.Version;
+                return state?.Version.ToString();
             }
             catch (Exception ex)
             {

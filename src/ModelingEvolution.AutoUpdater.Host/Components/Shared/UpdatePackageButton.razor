@@ -2,7 +2,9 @@
 @using ModelingEvolution.AutoUpdater.Common
 @using ModelingEvolution.AutoUpdater.Common.Events
 @using ModelingEvolution.AutoUpdater.Services
+@using ModelingEvolution.AutoUpdater.Host.Models
 @inject UpdateHost UpdateHost
+@inject PackageStateReadModel ReadModel
 @inject DockerComposeConfigurationModel ConfigurationModel
 @inject ILogger<UpdatePackageButton> Logger
 @inject IInMemoryLoggerSink LoggerSink
@@ -32,10 +34,10 @@
     
     private void CheckInitialUpdateStatus()
     {
-        var packageConfig = ConfigurationModel.GetPackage(PackageName);
-        if (packageConfig != null)
+        var packageState = ReadModel.GetPackageState(PackageName);
+        if (packageState != null)
         {
-            _hasUpdateAvailable = packageConfig.IsUpgradeAvailable;
+            _hasUpdateAvailable = packageState.IsUpgradeAvailable;
             StateHasChanged();
         }
     }

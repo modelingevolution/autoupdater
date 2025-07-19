@@ -1,4 +1,5 @@
 using System;
+using ModelingEvolution.AutoUpdater.Common;
 
 namespace ModelingEvolution.AutoUpdater.Models
 {
@@ -24,7 +25,7 @@ namespace ModelingEvolution.AutoUpdater.Models
     public record MigrationScript(
         string FileName,
         string FilePath,
-        Version Version,
+        PackageVersion Version,
         MigrationDirection Direction//,
         //bool IsExecutable
     );

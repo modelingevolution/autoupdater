@@ -1,7 +1,6 @@
-using ModelingEvolution.AutoUpdater.Host.Features.AutoUpdater.Models;
-using Microsoft.AspNetCore.Mvc;
+using ModelingEvolution.AutoUpdater.Host.Api.AutoUpdater.Models;
 
-namespace ModelingEvolution.AutoUpdater.Host.Features.AutoUpdater;
+namespace ModelingEvolution.AutoUpdater.Host.Api.AutoUpdater;
 
 public static class AutoUpdaterEndpoints
 {

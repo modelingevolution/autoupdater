@@ -1,0 +1,35 @@
+@using ModelingEvolution.AutoUpdater
+@using ModelingEvolution.AutoUpdater.Host.Models
+
+<Observable Source="PackageState">
+@if (PackageState.IsUpdateInProgress)
+{
+    <MudText Color="Color.Info">
+        <MudProgressCircular Size="Size.Small" Indeterminate="true" Style="display: inline-block; vertical-align: middle; margin-right: 8px;" />
+        @PackageState.StatusText
+    </MudText>
+}
+else if (PackageState.IsUpgradeAvailable && PackageState.IsPackageValid)
+{
+    <MudField Label="Available upgrade:">@(PackageState.AvailableVersion?.ToString() ?? "Unknown")</MudField>
+}
+else
+{
+    <MudText Color="GetMudColor(PackageState.StatusColor)">@PackageState.StatusText</MudText>
+}
+
+</Observable>
+@code {
+    [Parameter] public PackageState PackageState { get; set; } = null!;
+
+    private Color GetMudColor(PackageStatusColor statusColor)
+    {
+        return statusColor switch
+        {
+            PackageStatusColor.Success => Color.Success,
+            PackageStatusColor.Warning => Color.Warning,
+            PackageStatusColor.Error => Color.Error,
+            _ => Color.Info
+        };
+    }
+}

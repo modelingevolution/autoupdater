@@ -1,4 +1,5 @@
 using Microsoft.Extensions.Logging;
+using ModelingEvolution.AutoUpdater.Common;
 using ModelingEvolution.AutoUpdater.Models;
 using System;
 using System.Collections.Generic;
@@ -62,9 +63,11 @@ namespace ModelingEvolution.AutoUpdater.Services
                     var directionStr = match.Groups[1].Value;
                     var versionStr = match.Groups[2].Value;
                     
-                    if (!Version.TryParse(versionStr, out var version))
+                    // Parse as PackageVersion - this will handle v-prefix and validation
+                    var version = PackageVersion.Parse(versionStr);
+                    if (!version.IsValid)
                     {
-                        _logger.LogWarning("Script file {FileName} has invalid version format", fileName);
+                        _logger.LogWarning("Script file {FileName} has invalid version format: '{Version}'", fileName, versionStr);
                         continue;
                     }
 
@@ -95,34 +98,30 @@ namespace ModelingEvolution.AutoUpdater.Services
         
         public async Task<IEnumerable<MigrationScript>> FilterScriptsForMigrationAsync(
             IEnumerable<MigrationScript> allScripts, 
-            string? fromVersion, 
-            string targetVersion,
-            ImmutableSortedSet<Version>? excludeVersions = null)
+            PackageVersion? fromVersion, 
+            PackageVersion targetVersion,
+            ImmutableSortedSet<PackageVersion>? excludeVersions = null)
         {
             try
             {
-                targetVersion = targetVersion.TrimStart('v');
                 _logger.LogDebug("Filtering migration scripts from {FromVersion} to {TargetVersion}", 
-                    fromVersion ?? "initial", targetVersion);
+                    fromVersion?.ToString() ?? "initial", targetVersion);
                 
-                if (!Version.TryParse(targetVersion, out var target))
+                // Validate target version
+                if (!targetVersion.IsValid)
                 {
                     _logger.LogError("Invalid target version format: {TargetVersion}", targetVersion);
                     return [];
                 }
 
-                Version? from = null;
-                if (fromVersion != "-" && !string.IsNullOrEmpty(fromVersion) && !Version.TryParse(fromVersion, out from))
-                {
-                    _logger.LogError("Invalid from version format: {FromVersion}", fromVersion);
-                    return [];
-                }
+                // Handle fromVersion - null or Empty means initial migration
+                var from = fromVersion.HasValue && !fromVersion.Value.IsEmpty ? fromVersion : null;
 
                 List<MigrationScript> filteredScripts;
 
-                excludeVersions ??= ImmutableSortedSet<Version>.Empty;
+                excludeVersions ??= ImmutableSortedSet<PackageVersion>.Empty;
 
-                if (from == null || target > from)
+                if (from == null || targetVersion > from)
                 {
                     // Forward migration: use UP scripts
                     _logger.LogDebug("Forward migration detected, using UP scripts");
@@ -133,11 +132,11 @@ namespace ModelingEvolution.AutoUpdater.Services
                             return false;
 
                         // Script version must be <= target version
-                        if (script.Version > target)
+                        if (script.Version > targetVersion)
                             return false;
 
                         // If we have a from version, script version must be > from version
-                        if (from != null && script.Version <= from)
+                        if (from != null && script.Version <= from.Value)
                             return false;
 
                         // Exclude already executed scripts
@@ -153,7 +152,7 @@ namespace ModelingEvolution.AutoUpdater.Services
                         return true;
                     }).OrderBy(s => s.Version).ToList();
                 }
-                else if (target < from)
+                else if (targetVersion < from)
                 {
                     // Rollback migration: use DOWN scripts
                     _logger.LogDebug("Rollback migration detected, using DOWN scripts");
@@ -164,7 +163,7 @@ namespace ModelingEvolution.AutoUpdater.Services
                             return false;
 
                         // For rollback, we need down scripts for versions > target and <= from
-                        if (script.Version <= target || script.Version > from)
+                        if (script.Version <= targetVersion || script.Version > from.Value)
                             return false;
 
                         // For DOWN scripts, we should execute them if the UP version WAS executed
@@ -205,9 +204,9 @@ namespace ModelingEvolution.AutoUpdater.Services
             }
         }
 
-        public async Task<IEnumerable<Version>> ExecuteScriptsAsync(IEnumerable<MigrationScript> scripts, string workingDirectory)
+        public async Task<IEnumerable<PackageVersion>> ExecuteScriptsAsync(IEnumerable<MigrationScript> scripts, string workingDirectory)
         {
-            var executedVersions = new List<Version>();
+            var executedVersions = new List<PackageVersion>();
             
             try
             {
@@ -300,7 +299,8 @@ namespace ModelingEvolution.AutoUpdater.Services
                     return false;
                 }
 
-                if (!Version.TryParse(versionStr, out _))
+                var version = PackageVersion.Parse(versionStr);
+                if (!version.IsValid)
                 {
                     _logger.LogWarning("Script {FileName} has invalid version format", fileName);
                     return false;

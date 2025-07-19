@@ -18,7 +18,6 @@ using System.IO;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
-using SystemVersion = System.Version;
 
 namespace ModelingEvolution.AutoUpdater;
 
@@ -190,9 +189,9 @@ public class UpdateHost : IHostedService
 
             BackupResult? backup = null;
             var executedScripts = new List<string>();
-            var executedVersions = new List<SystemVersion>();
+            var executedVersions = new List<PackageVersion>();
             string? currentVersion = null;
-            GitTagVersion? latestVersion = null;
+            PackageVersion? latestVersion = null;
 
             try
             {
@@ -217,8 +216,11 @@ public class UpdateHost : IHostedService
                         HealthCheckResult.Healthy(new List<string>()));
                 }
 
+                // From here on, latestVersion is not null, so we can work with the value directly
+                var targetVersion = latestVersion.Value;
+
                 // Step 2: Check if update is needed
-                if (currentVersion != null && currentVersion == latestVersion.FriendlyName)
+                if (currentVersion != null && currentVersion == targetVersion.ToString())
                 {
                     _log.LogInformation("Already at latest version {Version}", currentVersion);
                     return UpdateResult.CreateSuccess(currentVersion, currentVersion, executedScripts,
@@ -226,15 +228,15 @@ public class UpdateHost : IHostedService
                 }
 
                 _log.LogInformation("Updating from {CurrentVersion} to {TargetVersion}", currentVersion ?? "initial",
-                    latestVersion.FriendlyName);
+                    targetVersion.ToString());
 
                 // Publish update started event
                 await _eventHub.PublishAsync(new UpdateStartedEvent(configuration.FriendlyName, currentVersion,
-                    latestVersion.FriendlyName));
+                    targetVersion.ToString()));
 
                 // Step 3: Checkout the target version
                 _progressService.LogOperationProgress("Checking out target version", 20);
-                await _gitService.CheckoutVersionAsync(configuration.RepositoryLocation, latestVersion.FriendlyName);
+                await _gitService.CheckoutVersionAsync(configuration.RepositoryLocation, targetVersion.ToString());
 
                 // Phase 1: Backup Creation (Decision Point: Backup Script Exists?)
                 _progressService.LogOperationProgress("Creating backup", 30);
@@ -287,9 +289,11 @@ public class UpdateHost : IHostedService
                 {
                     var allScripts =
                         await _scriptMigrationService.DiscoverScriptsAsync(configuration.HostComposeFolderPath);
-                    var excludeVersions = currentDeploymentState?.Up ?? ImmutableSortedSet<SystemVersion>.Empty;
+                    var excludeVersions = currentDeploymentState?.Up ?? ImmutableSortedSet<PackageVersion>.Empty;
+                    var fromVersion = currentVersion != null ? PackageVersion.Parse(currentVersion) : (PackageVersion?)null;
+                    var toVersion = targetVersion;
                     var scriptsToExecute = await _scriptMigrationService.FilterScriptsForMigrationAsync(
-                        allScripts, currentVersion, latestVersion.FriendlyName, excludeVersions);
+                        allScripts, fromVersion, toVersion, excludeVersions);
 
                     if (scriptsToExecute.Any())
                     {
@@ -334,7 +338,7 @@ public class UpdateHost : IHostedService
                     else
                     {
                         string tmpDeploymentPath = $"/tmp/{configuration.FriendlyName}";
-                        await UpdateDeploymentStateAsync(currentDeploymentState, latestVersion.FriendlyName,
+                        await UpdateDeploymentStateAsync(currentDeploymentState, targetVersion.ToString(),
                             executedVersions, tmpDeploymentPath);
                         string tmpDeploymentStatePath =
                             Path.Combine(tmpDeploymentPath, DeploymentStateProvider.StateFileName);
@@ -398,24 +402,24 @@ public class UpdateHost : IHostedService
 
                     // Partial success - keep running services
                     _log.LogInformation("Accepting partial deployment state - some services healthy");
-                    await UpdateDeploymentStateAsync(currentDeploymentState, latestVersion.FriendlyName,
+                    await UpdateDeploymentStateAsync(currentDeploymentState, targetVersion.ToString(),
                         executedVersions, configuration.HostComposeFolderPath);
 
                     return UpdateResult.CreatePartialSuccess(
-                        latestVersion.FriendlyName, currentVersion, executedScripts, healthCheck);
+                        targetVersion.ToString(), currentVersion, executedScripts, healthCheck);
                 }
 
                 // Phase 6: Complete Success
                 _progressService.LogOperationProgress("Finalizing update", 90,
                     "All services healthy - update completed successfully");
-                await UpdateDeploymentStateAsync(currentDeploymentState, latestVersion.FriendlyName, executedVersions,
+                await UpdateDeploymentStateAsync(currentDeploymentState, targetVersion.ToString(), executedVersions,
                     configuration.HostComposeFolderPath);
 
                 // Publish successful update completion event
                 await _eventHub.PublishAsync(new UpdateCompletedEvent(
                     configuration.FriendlyName,
                     currentVersion,
-                    latestVersion.FriendlyName,
+                    targetVersion.ToString(),
                     true,
                     null,
                     executedScripts));
@@ -428,7 +432,7 @@ public class UpdateHost : IHostedService
                 }
 
                 return UpdateResult.CreateSuccess(
-                    latestVersion.FriendlyName, currentVersion, executedScripts, healthCheck, backup?.BackupFilePath);
+                    targetVersion.ToString(), currentVersion, executedScripts, healthCheck, backup?.BackupFilePath);
             }
             catch (RestartPendingException)
             {
@@ -442,7 +446,7 @@ public class UpdateHost : IHostedService
                 await _eventHub.PublishAsync(new UpdateCompletedEvent(
                     configuration.FriendlyName,
                     currentVersion,
-                    latestVersion?.FriendlyName ?? "unknown",
+                    latestVersion?.ToString() ?? "unknown",
                     false,
                     ex.Message,
                     executedScripts));
@@ -522,18 +526,18 @@ public class UpdateHost : IHostedService
             await ConfigureGitRepositoryIfNeeded(configuration);
             await _gitService.FetchAsync(configuration.RepositoryLocation);
             var latest = await GetLatestVersion(configuration);
-            var result = st?.Version != (latest?.FriendlyName ?? "-");
+            var result = st?.Version != (latest?.ToString() ?? "-");
 
             var versionCheckEvent = new VersionCheckCompletedEvent(
                 configuration.FriendlyName,
                 currentVersion,
-                latest?.FriendlyName ?? "-",
+                latest?.ToString() ?? "-",
                 result
             );
 
             await this._eventHub.PublishAsync(versionCheckEvent);
             _log.LogInformation("Version check completed for package: {PackageName}, Current: {CurrentVersion}, Latest: {LatestVersion}, UpgradeAvailable: {UpgradeAvailable}",
-                configuration.FriendlyName, st?.Version, latest?.FriendlyName, result);
+                configuration.FriendlyName, st?.Version, latest?.ToString(), result);
             return result;
         }
         catch (Exception ex)
@@ -550,12 +554,11 @@ public class UpdateHost : IHostedService
             return false;
         }
     }
-    public async Task<GitTagVersion?> GetLatestVersion(DockerComposeConfiguration configuration)
+    public async Task<PackageVersion?> GetLatestVersion(DockerComposeConfiguration configuration)
     {
-        GitTagVersion? latestVersion;
         var availableVersions = await _gitService.GetAvailableVersionsAsync(configuration.RepositoryLocation);
-        latestVersion = availableVersions.OrderByDescending(v => v.Version).FirstOrDefault();
-        return latestVersion;
+        var latestVersion = availableVersions.OrderByDescending(v => v).FirstOrDefault();
+        return latestVersion.IsEmpty ? (PackageVersion?)null : latestVersion;
     }
 
     private async Task ConfigureGitRepositoryIfNeeded(DockerComposeConfiguration configuration)
@@ -599,7 +602,7 @@ public class UpdateHost : IHostedService
     /// Performs complete rollback with backup restoration
     /// </summary>
     private async Task PerformRollbackWithBackupAsync(
-        List<SystemVersion> executedVersions,
+        List<PackageVersion> executedVersions,
         BackupResult backup,
         string[] composeFiles,
         string workingDirectory)
@@ -651,14 +654,15 @@ public class UpdateHost : IHostedService
     private async Task UpdateDeploymentStateAsync(
         DeploymentState? currentState,
         string newVersion,
-        List<SystemVersion> executedVersions,
+        List<PackageVersion> executedVersions,
         string workingDirectory)
     {
-        var updatedUp = (currentState?.Up ?? ImmutableSortedSet<SystemVersion>.Empty).Union(executedVersions);
-        var deploymentState = new DeploymentState(newVersion, DateTime.Now)
+        var updatedUp = (currentState?.Up ?? ImmutableSortedSet<PackageVersion>.Empty).Union(executedVersions);
+        var versionParsed = PackageVersion.Parse(newVersion);
+        var deploymentState = new DeploymentState(versionParsed, DateTime.Now)
         {
             Up = updatedUp,
-            Failed = currentState?.Failed ?? ImmutableSortedSet<SystemVersion>.Empty
+            Failed = currentState?.Failed ?? ImmutableSortedSet<PackageVersion>.Empty
         };
 
         await _deploymentStateProvider.SaveDeploymentStateAsync(workingDirectory, deploymentState);

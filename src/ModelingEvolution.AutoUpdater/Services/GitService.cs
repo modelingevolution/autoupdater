@@ -1,5 +1,6 @@
 using LibGit2Sharp;
 using Microsoft.Extensions.Logging;
+using ModelingEvolution.AutoUpdater.Common;
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -15,7 +16,7 @@ namespace ModelingEvolution.AutoUpdater.Services
     public class GitService : IGitService
     {
         private readonly ILogger<GitService> _logger;
-        private static readonly IReadOnlyList<GitTagVersion> EmptyVersionList = new List<GitTagVersion>(0).AsReadOnly();
+        private static readonly IReadOnlyList<PackageVersion> EmptyVersionList = new List<PackageVersion>(0).AsReadOnly();
 
         public GitService(ILogger<GitService> logger)
         {
@@ -130,7 +131,7 @@ namespace ModelingEvolution.AutoUpdater.Services
             }
         }
 
-        public async Task<IReadOnlyList<GitTagVersion>> GetAvailableVersionsAsync(string repositoryPath)
+        public async Task<IReadOnlyList<PackageVersion>> GetAvailableVersionsAsync(string repositoryPath)
         {
             try
             {
@@ -147,19 +148,19 @@ namespace ModelingEvolution.AutoUpdater.Services
                     using var repo = new Repository(repositoryPath);
                     
                     // Pre-size list to avoid reallocations - most repos have < 50 tags
-                    var versions = new List<GitTagVersion>(Math.Min(repo.Tags.Count(), 100));
+                    var versions = new List<PackageVersion>(Math.Min(repo.Tags.Count(), 100));
                     
                     // Parse versions directly into the list
                     foreach (var tag in repo.Tags)
                     {
-                        if (GitTagVersion.TryParse(tag.FriendlyName, out var version))
+                        if (PackageVersion.TryParse(tag.FriendlyName, out var version))
                         {
                             versions.Add(version);
                         }
                     }
                     
                     // Sort in-place to avoid creating intermediate collections
-                    versions.Sort((x, y) => y.Version.CompareTo(x.Version));
+                    versions.Sort((x, y) => y.CompareTo(x));
                     
                     return versions;
                 });

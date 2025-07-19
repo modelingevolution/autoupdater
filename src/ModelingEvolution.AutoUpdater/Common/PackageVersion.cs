@@ -115,6 +115,12 @@ public readonly record struct PackageVersion : IComparable<PackageVersion>, ICom
         if (trimmed == "-")
             return "-";
         
+        // Support legacy "ver" prefix by converting to "v"
+        if (trimmed.StartsWith("ver", StringComparison.OrdinalIgnoreCase))
+        {
+            trimmed = "v" + trimmed.Substring(3);
+        }
+        
         // Only allow versions that match our regex pattern
         if (VersionRegex.IsMatch(trimmed))
             return trimmed;
