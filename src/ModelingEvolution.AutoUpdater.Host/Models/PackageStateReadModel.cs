@@ -111,6 +111,7 @@ namespace ModelingEvolution.AutoUpdater.Host.Models
                 var state = item.State;
                 state.OperationMessage = $"Updating from {e.CurrentVersion} to {e.TargetVersion}...";
                 state.IsCheckingForUpdates = false;
+                state.IsUpdateInProgress = true;
             }
         }
 
@@ -134,6 +135,7 @@ namespace ModelingEvolution.AutoUpdater.Host.Models
             if (_packageIndex.TryGetValue(e.ApplicationName, out var item))
             {
                 var state = item.State;
+                state.IsUpdateInProgress = false;
                 
                 if (e.Success)
                 {

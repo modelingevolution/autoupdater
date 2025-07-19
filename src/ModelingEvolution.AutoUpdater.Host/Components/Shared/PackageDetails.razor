@@ -19,7 +19,7 @@
     <MudGrid>
         <MudItem xs="6">
             <PackageVersion PackageState="@PackageItem.State"/>
-            <UpgradePackageStatus PackageState="@PackageItem.State"/>
+            <PackageStateLabel PackageState="@PackageItem.State"/>
         </MudItem>
         <MudItem xs="6" Style="text-align: center;">
             <ComposePackageStatus PackageName="@PackageItem.Config.FriendlyName"/>

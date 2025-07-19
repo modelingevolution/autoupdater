@@ -17,6 +17,7 @@ namespace ModelingEvolution.AutoUpdater.Host.Models
         private bool _isUpgradeAvailable;
         private bool _isPackageValid = true;
         private bool _isCheckingForUpdates;
+        private bool _isUpdateInProgress;
         private DateTime? _lastChecked;
         private string _status = "unknown";
 
@@ -80,6 +81,15 @@ namespace ModelingEvolution.AutoUpdater.Host.Models
         }
 
         /// <summary>
+        /// Whether the package is currently being updated
+        /// </summary>
+        public bool IsUpdateInProgress
+        {
+            get => _isUpdateInProgress;
+            set => SetProperty(ref _isUpdateInProgress, value);
+        }
+
+        /// <summary>
         /// Last time the package was checked for updates
         /// </summary>
         public DateTime? LastChecked
@@ -107,6 +117,9 @@ namespace ModelingEvolution.AutoUpdater.Host.Models
                 if (!IsPackageValid)
                     return OperationMessage ?? "Configuration error";
 
+                if (IsUpdateInProgress)
+                    return OperationMessage ?? "Update in progress...";
+
                 if (IsCheckingForUpdates)
                     return "Checking for updates...";
 
@@ -130,7 +143,7 @@ namespace ModelingEvolution.AutoUpdater.Host.Models
                 if (!IsPackageValid)
                     return PackageStatusColor.Error;
 
-                if (IsCheckingForUpdates)
+                if (IsUpdateInProgress || IsCheckingForUpdates)
                     return PackageStatusColor.Info;
 
                 return IsUpgradeAvailable ? PackageStatusColor.Warning : PackageStatusColor.Success;
@@ -164,6 +177,7 @@ namespace ModelingEvolution.AutoUpdater.Host.Models
                 propertyName == nameof(AvailableVersion) ||
                 propertyName == nameof(CurrentVersion) ||
                 propertyName == nameof(IsCheckingForUpdates) ||
+                propertyName == nameof(IsUpdateInProgress) ||
                 propertyName == nameof(IsPackageValid) ||
                 propertyName == nameof(OperationMessage))
             {

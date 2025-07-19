@@ -2,7 +2,14 @@
 @using ModelingEvolution.AutoUpdater.Host.Models
 
 <Observable Source="PackageState">
-@if (PackageState.IsUpgradeAvailable && PackageState.IsPackageValid)
+@if (PackageState.IsUpdateInProgress)
+{
+    <MudText Color="Color.Info">
+        <MudProgressCircular Size="Size.Small" Indeterminate="true" Style="display: inline-block; vertical-align: middle; margin-right: 8px;" />
+        @PackageState.StatusText
+    </MudText>
+}
+else if (PackageState.IsUpgradeAvailable && PackageState.IsPackageValid)
 {
     <MudField Label="Available upgrade:">@(PackageState.AvailableVersion?.ToString() ?? "Unknown")</MudField>
 }
