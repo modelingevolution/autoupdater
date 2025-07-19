@@ -4,6 +4,7 @@ using ModelingEvolution.AutoUpdater.Services;
 using ModelingEvolution.AutoUpdater;
 using ModelingEvolution.AutoUpdater.Extensions;
 using ModelingEvolution.AutoUpdater.Host.Api.AutoUpdater;
+using ModelingEvolution.AutoUpdater.Host.Models;
 
 namespace ModelingEvolution.AutoUpdater.Host.Extensions;
 
@@ -19,6 +20,9 @@ public static class ServiceCollectionExtensions
         
         // Configure DockerComposeConfiguration with logger through a hosted service
         services.AddHostedService<PackageStatusInitializationService>();
+
+        // Register PackageStateReadModel as singleton
+        services.AddSingleton<PackageStateReadModel>();
 
         // Register SSH VPN service using extension methods
         services.AddSingleton<ISshVpnService>(provider =>

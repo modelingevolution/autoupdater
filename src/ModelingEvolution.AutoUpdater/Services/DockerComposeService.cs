@@ -1,5 +1,7 @@
 using Docker.DotNet;
 using Microsoft.Extensions.Logging;
+using ModelingEvolution.AutoUpdater.Common;
+using ModelingEvolution.AutoUpdater.Common.Events;
 using ModelingEvolution.AutoUpdater.Models;
 using System;
 using System.Collections.Generic;
@@ -19,6 +21,7 @@ namespace ModelingEvolution.AutoUpdater.Services
     {
         private readonly ISshService _sshService;
         private readonly ILogger<DockerComposeService> _logger;
+        private readonly IEventHub? _eventHub;
         
         // Caching for GetDockerComposeStatusAsync
         private Dictionary<PackageName, ComposeProjectStatus>? _cachedStatus;
@@ -26,10 +29,11 @@ namespace ModelingEvolution.AutoUpdater.Services
         private static readonly TimeSpan CacheTimeout = TimeSpan.FromSeconds(5);
         private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNameCaseInsensitive = true };
 
-        public DockerComposeService(ISshService sshService, ILogger<DockerComposeService> logger)
+        public DockerComposeService(ISshService sshService, ILogger<DockerComposeService> logger, IEventHub? eventHub = null)
         {
             _sshService = sshService ?? throw new ArgumentNullException(nameof(sshService));
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+            _eventHub = eventHub;
         }
 
         public async Task<string[]> GetComposeFiles(string directoryPath,
@@ -403,6 +407,49 @@ namespace ModelingEvolution.AutoUpdater.Services
                         project.Status.Contains("running", StringComparison.OrdinalIgnoreCase) ? 1 : 0,
                         1
                     ));
+
+                // Detect and publish status changes
+                if (_eventHub != null && _cachedStatus != null)
+                {
+                    foreach (var kvp in statusMap)
+                    {
+                        var packageName = kvp.Key;
+                        var newStatus = kvp.Value.Status;
+                        
+                        // Check if this package existed in the previous cache
+                        if (_cachedStatus.TryGetValue(packageName, out var oldProjectStatus))
+                        {
+                            var oldStatus = oldProjectStatus.Status;
+                            
+                            // If status changed, publish event
+                            if (!string.Equals(oldStatus, newStatus, StringComparison.OrdinalIgnoreCase))
+                            {
+                                _logger.LogInformation("Package {PackageName} status changed from {OldStatus} to {NewStatus}",
+                                    packageName, oldStatus, newStatus);
+                                    
+                                await _eventHub.PublishAsync(new PackageStatusChangedEvent(packageName, newStatus, oldStatus));
+                            }
+                        }
+                        else
+                        {
+                            // New package detected
+                            _logger.LogInformation("New package {PackageName} detected with status {Status}",
+                                packageName, newStatus);
+                                
+                            await _eventHub.PublishAsync(new PackageStatusChangedEvent(packageName, newStatus));
+                        }
+                    }
+                    
+                    // Check for removed packages
+                    foreach (var oldKvp in _cachedStatus)
+                    {
+                        if (!statusMap.ContainsKey(oldKvp.Key))
+                        {
+                            _logger.LogInformation("Package {PackageName} removed", oldKvp.Key);
+                            await _eventHub.PublishAsync(new PackageStatusChangedEvent(oldKvp.Key, "removed", oldKvp.Value.Status));
+                        }
+                    }
+                }
 
                 // Update cache
                 _cachedStatus = statusMap;

@@ -1,12 +1,13 @@
 @using ModelingEvolution.AutoUpdater
+@using ModelingEvolution.AutoUpdater.Host.Models
 @inject IDialogService DialogService
 
 <MudPaper Class="pa-4" Elevation="2">
     <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px;">
-        <MudField Label="Name">@Package.FriendlyName</MudField>
+        <MudField Label="Name">@PackageItem.Config.FriendlyName</MudField>
         <div style="display: flex; gap: 4px; align-items: center;">
-            <CheckPackageVersionButton PackageName="@Package.FriendlyName" />
-            <UpdatePackageButton PackageName="@Package.FriendlyName" />
+            <CheckPackageVersionButton PackageName="@PackageItem.Config.FriendlyName" />
+            <UpdatePackageButton PackageName="@PackageItem.Config.FriendlyName" />
             <MudTooltip Text="Security Settings">
                 <MudIconButton Icon="@Icons.Material.Filled.Security" 
                                Color="Color.Default" 
@@ -17,23 +18,23 @@
     </div>
     <MudGrid>
         <MudItem xs="6">
-            <PackageVersion Package="@Package"/>
-            <UpgradePackageStatus Package="@Package"/>
+            <PackageVersion PackageState="@PackageItem.State"/>
+            <UpgradePackageStatus PackageState="@PackageItem.State"/>
         </MudItem>
         <MudItem xs="6" Style="text-align: center;">
-            <ComposePackageStatus PackageName="@Package.FriendlyName"/>
+            <ComposePackageStatus PackageName="@PackageItem.Config.FriendlyName"/>
         </MudItem>
     </MudGrid>
 </MudPaper>
 
 @code {
-    [Parameter] public DockerComposeConfiguration Package { get; set; } = null!;
+    [Parameter] public PackageStateReadModel.Item PackageItem { get; set; } = null!;
 
     private async Task OpenSecurityDialog()
     {
         var parameters = new DialogParameters
         {
-            ["Package"] = Package
+            ["Package"] = PackageItem.Config
         };
 
         var options = new DialogOptions
