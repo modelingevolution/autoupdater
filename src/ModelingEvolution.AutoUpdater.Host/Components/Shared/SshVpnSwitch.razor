@@ -6,7 +6,7 @@
 <MudPaper Class="pa-4" Elevation="2">
     <MudGrid>
         <MudItem xs="6">
-            <MudSwitch Label="SSH VPN Connection" 
+            <MudSwitch Label="@GetVpnLabel()" 
                       @bind-Value="IsVpnEnabled" 
                       Color="Color.Success" 
                       Disabled="_isLoading || _hasError" />
@@ -35,6 +35,13 @@
     {
         <MudDivider Class="my-2" />
         <MudGrid>
+            @if (!string.IsNullOrEmpty(_vpnStatus.Name))
+            {
+                <MudItem xs="6" sm="4">
+                    <MudText Typo="Typo.caption">VPN Type</MudText>
+                    <MudText Typo="Typo.body2">@_vpnStatus.Name</MudText>
+                </MudItem>
+            }
             <MudItem xs="6" sm="4">
                 <MudText Typo="Typo.caption">Interface</MudText>
                 <MudText Typo="Typo.body2">@_vpnStatus.InterfaceName</MudText>
@@ -177,11 +184,18 @@
         return Color.Default;
     }
 
+    private string GetVpnLabel()
+    {
+        var vpnName = _vpnStatus?.Name ?? "VPN";
+        return $"{vpnName} Connection";
+    }
+
     private string GetStatusTooltip()
     {
         if (_vpnStatus?.IsActive == true)
         {
-            return $"VPN Active - {_vpnStatus.LocalAddress} → {_vpnStatus.RemoteEndpoint}";
+            var vpnName = _vpnStatus.Name ?? "VPN";
+            return $"{vpnName} Active - {_vpnStatus.LocalAddress} → {_vpnStatus.RemoteEndpoint}";
         }
         return "VPN Inactive";
     }

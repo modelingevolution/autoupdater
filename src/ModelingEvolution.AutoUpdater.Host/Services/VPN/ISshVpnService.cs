@@ -8,6 +8,7 @@ public interface ISshVpnService
     Task<VpnStatus> GetVpnStatusAsync(CancellationToken cancellationToken = default);
 }
 
+public record VpnOp(string Status, string State, string Message = null);
 public record VpnStatus(
     bool IsActive,
     string? InterfaceName,
@@ -16,5 +17,6 @@ public record VpnStatus(
     string? LastHandshake,
     long BytesReceived,
     long BytesSent,
-    string? ErrorMessage = null
+    string? ErrorMessage = null,
+    string? Name = null
 );
