@@ -63,7 +63,7 @@ namespace ModelingEvolution.AutoUpdater.Services
                 _logger.LogDebug("Detecting Docker Compose command...");
 
                 // Try docker compose (v2) first
-                var result = await _sshService.ExecuteCommandAsync("docker compose version");
+                var result = await _sshService.ExecuteCommandAsync("sudo docker compose version");
                 if (result.IsSuccess && result.Output.Contains("Docker Compose"))
                 {
                     _dockerComposeCommand = "docker compose";
@@ -72,7 +72,7 @@ namespace ModelingEvolution.AutoUpdater.Services
                 }
 
                 // Try docker-compose (v1)
-                result = await _sshService.ExecuteCommandAsync("docker-compose --version");
+                result = await _sshService.ExecuteCommandAsync("sudo docker-compose --version");
                 if (result.IsSuccess && result.Output.Contains("docker-compose"))
                 {
                     _dockerComposeCommand = "docker-compose";
@@ -81,8 +81,8 @@ namespace ModelingEvolution.AutoUpdater.Services
                 }
 
                 // Default to v2 syntax if detection fails
-                _logger.LogWarning("Could not detect Docker Compose version, defaulting to 'docker compose' (v2)");
-                _dockerComposeCommand = "docker compose";
+                _logger.LogWarning("Could not detect Docker Compose version, defaulting to 'docker-compose' (v1)");
+                _dockerComposeCommand = "docker-compose";
                 return _dockerComposeCommand;
             }
             finally
