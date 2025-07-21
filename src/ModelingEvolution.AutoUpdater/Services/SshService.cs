@@ -288,12 +288,12 @@ namespace ModelingEvolution.AutoUpdater.Services
 
         public void Dispose()
         {
-            if (!_disposed)
-            {
-                _sshClient?.Dispose();
-                _scpClient?.Dispose();
-                _disposed = true;
-            }
+            if (_disposed) return;
+            
+            _sshClient?.Dispose();
+            _scpClient?.Dispose();
+            _sftpClient?.Dispose();
+            _disposed = true;
         }
     }
 }

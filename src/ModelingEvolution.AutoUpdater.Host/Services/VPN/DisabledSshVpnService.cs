@@ -21,7 +21,7 @@ public class DisabledSshVpnService : ISshVpnService
     {
         return Task.FromResult(new VpnStatus(
             IsActive: false,
-            InterfaceName: "wg0",
+            InterfaceName: "-",
             LocalAddress: null,
             RemoteEndpoint: null,
             LastHandshake: null,

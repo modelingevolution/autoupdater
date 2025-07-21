@@ -154,7 +154,7 @@
             _isVpnEnabled = _vpnStatus.IsActive;
             _hasError = !string.IsNullOrEmpty(_vpnStatus.ErrorMessage);
             _errorMessage = _vpnStatus.ErrorMessage;
-            
+            _isLoading = false;
             await InvokeAsync(StateHasChanged);
         }
         catch (Exception ex)

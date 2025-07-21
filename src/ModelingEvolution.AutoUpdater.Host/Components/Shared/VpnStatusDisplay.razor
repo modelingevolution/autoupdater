@@ -9,8 +9,7 @@
             <div class="d-flex align-center">
                 <MudIcon Icon="@GetConnectionIcon()" Color="@GetConnectionColor()" Class="mr-3" />
                 <MudText Typo="Typo.h6">VPN Connection Status</MudText>
-                @if (_isLoading)
-                {
+                @if (IsLoading()) {
                     <MudProgressCircular Size="Size.Small" Indeterminate="true" Class="ml-auto" />
                 }
                 else
@@ -147,8 +146,19 @@
 </MudCard>
 
 @code {
+
+
+
     private ModelingEvolution.AutoUpdater.Host.Services.VPN.VpnStatus? _vpnStatus;
-    private bool _isLoading;
+
+    private bool _isLoading = true;
+
+    private bool IsLoading()
+    {
+        System.Diagnostics.Debug.WriteLine("Is loading: " + _isLoading.ToString());
+        return _isLoading;
+    }
+
     private bool _hasError;
     private string? _errorMessage;
     private DateTime? _lastUpdate;
@@ -163,10 +173,10 @@
 
     private async Task RefreshStatus()
     {
-        _isLoading = true;
+        //_isLoading = true;
         _hasError = false;
         _errorMessage = null;
-        this.InvokeAsync(StateHasChanged);
+        await this.InvokeAsync(StateHasChanged);
 
         try
         {
@@ -191,7 +201,7 @@
         finally
         {
             _isLoading = false;
-            this.InvokeAsync(StateHasChanged);
+            await this.InvokeAsync(StateHasChanged);
         }
     }
 

@@ -124,7 +124,6 @@ public class Program
         WriteConfigurationValue("SSH Host", builder.Configuration.SshHost() ?? "Not configured", "SshHost");
         WriteConfigurationValue("SSH User", builder.Configuration.SshUser() ?? "Not configured", "SshUser");
         WriteConfigurationValue("SSH Port", builder.Configuration.SshPort().ToString(), "SshPort");
-        WriteConfigurationValue("VPN Provider", builder.Configuration.VpnProvider(), "VpnProvider");
         WriteConfigurationValue("VPN Provider Access", builder.Configuration.VpnProviderAccess(), "VpnProviderAccess");
         WriteLine();
     }

@@ -22,7 +22,6 @@ public static class ConfigurationExtensions
         
         // VPN Configuration
         logger.LogInformation("VPN Configuration:");
-        logger.LogInformation("  VpnProvider: {VpnProvider}", configuration.VpnProvider());
         logger.LogInformation("  VpnProviderAccess: {VpnProviderAccess}", configuration.VpnProviderAccess());
         
         // Environment Information
@@ -58,8 +57,7 @@ public static class ConfigurationExtensions
     public static bool SshEnableCompression(this IConfiguration configuration) => 
         configuration.GetValue<bool?>("SshEnableCompression") ?? true;
     
-    public static string VpnProvider(this IConfiguration configuration) => 
-        configuration.GetValue<string>("VpnProvider") ?? "None";
+    
     
     public static string VpnProviderAccess(this IConfiguration configuration) => 
         configuration.GetValue<string>("VpnProviderAccess") ?? "None";

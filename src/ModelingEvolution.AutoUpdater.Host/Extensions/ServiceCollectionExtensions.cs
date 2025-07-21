@@ -29,9 +29,9 @@ public static class ServiceCollectionExtensions
         {
             var configuration = provider.GetRequiredService<IConfiguration>();
             var vpnProviderAccess = configuration.VpnProviderAccess();
-            var vpnProvider = configuration.VpnProvider();
             
-            if (vpnProviderAccess != "Ssh" || vpnProvider != "Wireguard")
+            
+            if (string.IsNullOrWhiteSpace(vpnProviderAccess) || vpnProviderAccess == "None" )
             {
                 return new DisabledSshVpnService();
             }

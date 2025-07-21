@@ -20,7 +20,7 @@ public class SshVpnService : ISshVpnService
         _ssh = ssh;
         _sshVpnConfig = configuration.GetSection("SshVpn").Get<SshVpnConfiguration>() 
                         ?? new SshVpnConfiguration();
-        
+        _logger.LogInformation($"Vpn: start-script: {_sshVpnConfig.StartScript}, stop-script: {_sshVpnConfig.StopScript}, status: {_sshVpnConfig.StatusScript}");
     }
 
     public async Task<bool> IsVpnActiveAsync(CancellationToken cancellationToken = default)
