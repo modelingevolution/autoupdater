@@ -74,7 +74,16 @@ namespace ModelingEvolution.AutoUpdater.Services
 
                 // Parse successful backup response
                 var backupResponse = JsonSerializer.Deserialize<BackupResponse>(result.Output);
-                if (backupResponse?.File == null)
+                
+                // Check if this is an error response (success = false)
+                if (backupResponse?.Success == false)
+                {
+                    _logger.LogError("Backup script returned error: {Error}", backupResponse.Error);
+                    return BackupResult.CreateFailure(backupResponse.Error ?? "Backup operation failed");
+                }
+                
+                // Check if we have a valid file path
+                if (string.IsNullOrEmpty(backupResponse?.File))
                 {
                     _logger.LogError("Backup script returned invalid JSON response: {Output}", result.Output);
                     return BackupResult.CreateFailure("Backup script returned invalid response format");

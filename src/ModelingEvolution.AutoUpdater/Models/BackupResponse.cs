@@ -8,7 +8,7 @@ namespace ModelingEvolution.AutoUpdater.Models
     public class BackupResponse
     {
         [JsonPropertyName("file")]
-        public string File { get; set; } = string.Empty;
+        public string? File { get; set; }
 
         [JsonPropertyName("success")]
         public bool? Success { get; set; }
