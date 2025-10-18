@@ -275,10 +275,15 @@ namespace ModelingEvolution.AutoUpdater.Services
 
         public async Task PullImagesAsync(string[] composeFiles, string workingDirectory)
         {
+            await PullAsync(composeFiles, workingDirectory, TimeSpan.FromMinutes(10));
+        }
+
+        public async Task PullAsync(string[] composeFiles, string workingDirectory, TimeSpan timeout)
+        {
             try
             {
-                _logger.LogInformation("Pulling Docker images for {Count} compose files in {WorkingDirectory}", 
-                    composeFiles?.Length, workingDirectory);
+                _logger.LogInformation("Pulling Docker images for {Count} compose files in {WorkingDirectory} with timeout {Timeout}", 
+                    composeFiles?.Length, workingDirectory, timeout);
 
                 if (composeFiles == null || composeFiles.Length == 0)
                 {
@@ -295,9 +300,15 @@ namespace ModelingEvolution.AutoUpdater.Services
                 var composeCommand = await GetDockerComposeCommandAsync();
                 var command = $"sudo {composeCommand} {composeFileArgs} pull";
 
-                _logger.LogDebug("Executing Docker Compose command: {Command}", command);
+                _logger.LogDebug("Executing Docker Compose command with timeout {Timeout}: {Command}", timeout, command);
 
-                var result = await _sshService.ExecuteCommandAsync(command, workingDirectory);
+                var result = await _sshService.ExecuteCommandAsync(command, timeout, workingDirectory);
+
+                if (!result.IsSuccess)
+                {
+                    _logger.LogError("Failed to pull Docker images: {Error}", result.Error);
+                    throw new InvalidOperationException($"Failed to pull Docker images: {result.Error}");
+                }
 
                 _logger.LogInformation("Docker images pulled successfully");
                 _logger.LogDebug("Docker Compose output: {Output}", result.Output);
@@ -464,12 +475,19 @@ namespace ModelingEvolution.AutoUpdater.Services
 
                 var statusMap = composeProjects.ToDictionary(
                     project => new PackageName(project.Name),
-                    project => new ComposeProjectStatus(
-                        project.Status,
-                        project.ConfigFiles?.Split(',').ToImmutableArray() ?? [],
-                        project.Status.Contains("running", StringComparison.OrdinalIgnoreCase) ? 1 : 0,
-                        1
-                    ));
+                    project =>
+                    {
+                        // Parse service count from status string (e.g., "running(2)" -> 2)
+                        var totalServices = ParseServiceCount(project.Status);
+                        var isRunning = project.Status.Contains("running", StringComparison.OrdinalIgnoreCase);
+
+                        return new ComposeProjectStatus(
+                            project.Status,
+                            project.ConfigFiles?.Split(',').ToImmutableArray() ?? [],
+                            isRunning ? totalServices : 0,
+                            totalServices
+                        );
+                    });
 
                 // Detect and publish status changes
                 if (_eventHub != null && _cachedStatus != null)
@@ -526,6 +544,31 @@ namespace ModelingEvolution.AutoUpdater.Services
                 _logger.LogError(ex, "Failed to get Docker Compose status via SSH");
                 return new Dictionary<PackageName, ComposeProjectStatus>();
             }
+        }
+
+        /// <summary>
+        /// Parses the service count from docker compose ls status string.
+        /// Status format: "running(2)", "exited(1)", etc.
+        /// </summary>
+        private static int ParseServiceCount(string status)
+        {
+            if (string.IsNullOrWhiteSpace(status))
+                return 0;
+
+            var startIndex = status.IndexOf('(');
+            var endIndex = status.IndexOf(')');
+
+            if (startIndex >= 0 && endIndex > startIndex)
+            {
+                var countStr = status.Substring(startIndex + 1, endIndex - startIndex - 1);
+                if (int.TryParse(countStr, out var count))
+                {
+                    return count;
+                }
+            }
+
+            // Fallback to 1 if we can't parse the count
+            return 1;
         }
 
         // Local record for JSON deserialization

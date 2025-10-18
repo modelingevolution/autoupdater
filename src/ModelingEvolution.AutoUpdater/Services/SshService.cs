@@ -29,13 +29,19 @@ namespace ModelingEvolution.AutoUpdater.Services
 
         public async Task<SshCommandResult> ExecuteCommandAsync(string command, string? workingDirectory = null)
         {
+            return await ExecuteCommandAsync(command, TimeSpan.FromMinutes(10), workingDirectory);
+        }
+
+        public async Task<SshCommandResult> ExecuteCommandAsync(string command, TimeSpan timeout, string? workingDirectory = null)
+        {
             try
             {
                 var fullCommand = workingDirectory != null ? $"cd {workingDirectory} && {command}" : command;
                 
-                _logger.LogDebug("Executing SSH command: {Command}", command);
+                _logger.LogDebug("Executing SSH command with timeout {Timeout}: {Command}", timeout, command);
                 
                 using var sshCommand = _sshClient.CreateCommand(fullCommand);
+                sshCommand.CommandTimeout = timeout;
                 
                 await sshCommand.ExecuteAsync();
                 

@@ -16,6 +16,15 @@ namespace ModelingEvolution.AutoUpdater.Services
         /// <returns>The result of the SSH command execution</returns>
         Task<SshCommandResult> ExecuteCommandAsync(string command, string? workingDirectory = null);
 
+        /// <summary>
+        /// Executes a command via SSH with a custom timeout
+        /// </summary>
+        /// <param name="command">The command to execute</param>
+        /// <param name="timeout">Command execution timeout</param>
+        /// <param name="workingDirectory">Optional working directory for the command</param>
+        /// <returns>The result of the SSH command execution</returns>
+        Task<SshCommandResult> ExecuteCommandAsync(string command, TimeSpan timeout, string? workingDirectory = null);
+
 
         /// <summary>
         /// Reads the content of a file on the remote host

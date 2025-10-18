@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using System.Threading.Tasks;
 using ModelingEvolution.AutoUpdater.Models;
@@ -50,6 +51,14 @@ namespace ModelingEvolution.AutoUpdater.Services
         /// <param name="composeFiles">The compose files to pull images for</param>
         /// <param name="workingDirectory">The working directory for the compose command</param>
         Task PullImagesAsync(string[] composeFiles, string workingDirectory);
+
+        /// <summary>
+        /// Pulls the latest images for all services in the compose files with a custom timeout
+        /// </summary>
+        /// <param name="composeFiles">The compose files to pull images for</param>
+        /// <param name="workingDirectory">The working directory for the compose command</param>
+        /// <param name="timeout">Timeout for the pull operation</param>
+        Task PullAsync(string[] composeFiles, string workingDirectory, TimeSpan timeout);
 
         /// <summary>
         /// Gets volume mappings for the specified container

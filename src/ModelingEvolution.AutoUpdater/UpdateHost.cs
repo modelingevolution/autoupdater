@@ -185,309 +185,214 @@ public class UpdateHost : IHostedService
 
         try
         {
-            _progressService.StartOperation("Initializing update", configuration.FriendlyName, 1);
-
-            BackupResult? backup = null;
-            var executedScripts = new List<string>();
-            var executedVersions = new List<PackageVersion>();
-            string? currentVersion = null;
-            PackageVersion? latestVersion = null;
-
-            try
-            {
-                _progressService.LogOperationProgress("Loading deployment state", 10,
-                    "Starting update process for {RepositoryLocation}", configuration.RepositoryLocation);
-
-                // Step 1: Load current deployment state
-                var currentDeploymentState =
-                    await _deploymentStateProvider.GetDeploymentStateAsync(configuration.HostComposeFolderPath);
-                currentVersion = currentDeploymentState?.Version;
-
-                await ConfigureGitRepositoryIfNeeded(configuration);
-
-                await _gitService.FetchAsync(configuration.RepositoryLocation);
-
-                latestVersion = await GetLatestVersion(configuration);
-
-                if (latestVersion == null)
-                {
-                    _log.LogWarning("No versions found in repository {RepositoryUrl}", configuration.RepositoryUrl);
-                    return UpdateResult.CreateSuccess(currentVersion ?? "unknown", currentVersion, executedScripts,
-                        HealthCheckResult.Healthy(new List<string>()));
-                }
-
-                // From here on, latestVersion is not null, so we can work with the value directly
-                var targetVersion = latestVersion.Value;
-
-                // Step 2: Check if update is needed
-                if (currentVersion != null && currentVersion == targetVersion.ToString())
-                {
-                    _log.LogInformation("Already at latest version {Version}", currentVersion);
-                    return UpdateResult.CreateSuccess(currentVersion, currentVersion, executedScripts,
-                        HealthCheckResult.Healthy(new List<string>()));
-                }
-
-                _log.LogInformation("Updating from {CurrentVersion} to {TargetVersion}", currentVersion ?? "initial",
-                    targetVersion.ToString());
-
-                // Publish update started event
-                await _eventHub.PublishAsync(new UpdateStartedEvent(configuration.FriendlyName, currentVersion,
-                    targetVersion.ToString()));
-
-                // Step 3: Checkout the target version
-                _progressService.LogOperationProgress("Checking out target version", 20);
-                await _gitService.CheckoutVersionAsync(configuration.RepositoryLocation, targetVersion.ToString());
-
-                // Phase 1: Backup Creation (Decision Point: Backup Script Exists?)
-                _progressService.LogOperationProgress("Creating backup", 30);
-                if (currentVersion != null! && currentVersion != "-")
-                {
-                    if (await _backupService.BackupScriptExistsAsync(configuration.HostComposeFolderPath))
-                    {
-                        _log.LogInformation("Creating backup before update");
-                        backup = await _backupService.CreateBackupAsync(configuration.HostComposeFolderPath);
-
-                        if (!backup.Success)
-                        {
-                            _log.LogError("Backup creation failed: {Error}", backup.Error);
-                            return UpdateResult.CreateFailed(
-                                $"Backup creation failed - cannot proceed: {backup.Error}",
-                                currentVersion, executedScripts);
-                        }
-
-                        _log.LogInformation("Backup created successfully: {BackupFile}", backup.BackupFilePath);
-                    }
-                    else
-                    {
-                        _log.LogWarning("No backup script found - proceeding without backup");
-                    }
-                }
-                else
-                {
-                    _log.LogInformation("This is initial update, no backup is performed.");
-                }
-
-                // Step 4: Get architecture and compose files
-                using var sshService = await _sshConnectionManager.CreateSshServiceAsync();
-                var architecture = await sshService.GetArchitectureAsync();
-                var composeFiles =
-                    await _dockerComposeService.GetComposeFiles(configuration.HostComposeFolderPath, architecture);
-
-                // Phase 2: Stop Current Services
-                _progressService.LogOperationProgress("Stopping services", 40,
-                    "Stopping current Docker Compose services");
-                var isSelfUpdating = configuration.FriendlyName == "autoupdater";
-                if (!isSelfUpdating)
-                    await _dockerComposeService.StopServicesAsync(composeFiles, configuration.HostComposeFolderPath);
-                else
-                    _log.LogInformation("Self-updating service detected - skipping stop phase for {ServiceName}",
-                        configuration.FriendlyName);
-
-                // Phase 3: Migration Scripts (Decision Point: All Scripts Successful?)
-                _progressService.LogOperationProgress("Executing migration scripts", 50);
-                try
-                {
-                    var allScripts =
-                        await _scriptMigrationService.DiscoverScriptsAsync(configuration.HostComposeFolderPath);
-                    var excludeVersions = currentDeploymentState?.Up ?? ImmutableSortedSet<PackageVersion>.Empty;
-                    var fromVersion = currentVersion != null ? PackageVersion.Parse(currentVersion) : (PackageVersion?)null;
-                    var toVersion = targetVersion;
-                    var scriptsToExecute = await _scriptMigrationService.FilterScriptsForMigrationAsync(
-                        allScripts, fromVersion, toVersion, excludeVersions);
-
-                    if (scriptsToExecute.Any())
-                    {
-                        _log.LogInformation("Executing {Count} migration scripts", scriptsToExecute.Count());
-                        executedVersions.AddRange(await _scriptMigrationService.ExecuteScriptsAsync(scriptsToExecute,
-                            configuration.HostComposeFolderPath));
-                        executedScripts.AddRange(scriptsToExecute.Select(s => s.FileName));
-
-                        _log.LogInformation("Migration scripts executed successfully");
-                    }
-                }
-                catch (Exception migrationEx)
-                {
-                    _log.LogError(migrationEx, "Migration script execution failed");
-
-                    // Decision Point: Backup Available?
-                    if (backup?.Success == true)
-                    {
-                        _log.LogInformation("Performing rollback with backup recovery");
-                        await PerformRollbackWithBackupAsync(executedVersions, backup, composeFiles,
-                            configuration.HostComposeFolderPath);
-
-                        return UpdateResult.CreateFailed($"Migration failed: {migrationEx.Message}", currentVersion,
-                            executedScripts, recoveryPerformed: true, backup.BackupFilePath);
-                    }
-                    else
-                    {
-                        return UpdateResult.CreateFailed(
-                            $"Migration failed: {migrationEx.Message} - No recovery possible without backup",
-                            currentVersion, executedScripts, recoveryPerformed: false);
-                    }
-                }
-
-                // Phase 4: Start New Services (Decision Point: docker-compose up)
-                _progressService.LogOperationProgress("Starting services", 70);
-                try
-                {
-                    _log.LogInformation("Starting new Docker Compose services");
-                    if (!isSelfUpdating)
-                        await _dockerComposeService.StartServicesAsync(composeFiles,
-                            configuration.HostComposeFolderPath);
-                    else
-                    {
-                        string tmpDeploymentPath = $"/tmp/{configuration.FriendlyName}";
-                        await UpdateDeploymentStateAsync(currentDeploymentState, targetVersion.ToString(),
-                            executedVersions, tmpDeploymentPath);
-                        string tmpDeploymentStatePath =
-                            Path.Combine(tmpDeploymentPath, DeploymentStateProvider.StateFileName);
-                        string onUpSuccessCommand =
-                            $"cp {tmpDeploymentStatePath} {configuration.HostComposeFolderPath}/{DeploymentStateProvider.StateFileName}";
-                        await _dockerComposeService.RestartServicesAsync(composeFiles,
-                            configuration.HostComposeFolderPath, true, onUpSuccessCommand);
-                        throw new RestartPendingException("Restart pending");
-                    }
-                }
-                catch (RestartPendingException)
-                {
-                    throw;
-                    
-                }
-                catch (Exception dockerEx)
-                {
-                    _log.LogError(dockerEx, "Docker Compose startup failed");
-
-                    // Decision Point: Backup Available?
-                    if (backup?.Success == true)
-                    {
-                        _log.LogInformation("Docker startup failed - performing rollback with backup recovery");
-                        await PerformRollbackWithBackupAsync(executedVersions, backup, composeFiles,
-                            configuration.HostComposeFolderPath);
-
-                        return UpdateResult.CreateFailed($"Docker startup failed: {dockerEx.Message}", currentVersion,
-                            executedScripts, recoveryPerformed: true, backup.BackupFilePath);
-                    }
-                    else
-                    {
-                        return UpdateResult.CreateFailed(
-                            $"Docker startup failed: {dockerEx.Message} - No recovery possible without backup",
-                            currentVersion, executedScripts, recoveryPerformed: false);
-                    }
-                }
-
-                // Phase 5: Health Check (Decision Point: All Services Healthy?)
-                _progressService.LogOperationProgress("Performing health checks", 80,
-                    "Performing health check on all services");
-                var healthCheck =
-                    await _healthCheckService.CheckServicesHealthAsync(composeFiles,
-                        configuration.HostComposeFolderPath);
-
-                if (!healthCheck.AllHealthy)
-                {
-                    _log.LogWarning("Health check failed - some services are unhealthy: {UnhealthyServices}",
-                        string.Join(", ", healthCheck.UnhealthyServices));
-
-                    // Decision Point: Backup Available?
-                    if (backup?.Success == true && healthCheck.CriticalFailure)
-                    {
-                        _log.LogInformation("Critical services failed - performing rollback with backup recovery");
-                        await PerformRollbackWithBackupAsync(executedVersions, backup, composeFiles,
-                            configuration.HostComposeFolderPath);
-
-                        return UpdateResult.CreateFailed(
-                            "Critical services unhealthy after deployment",
-                            currentVersion, executedScripts, recoveryPerformed: true, backup.BackupFilePath);
-                    }
-
-                    // Partial success - keep running services
-                    _log.LogInformation("Accepting partial deployment state - some services healthy");
-                    await UpdateDeploymentStateAsync(currentDeploymentState, targetVersion.ToString(),
-                        executedVersions, configuration.HostComposeFolderPath);
-
-                    return UpdateResult.CreatePartialSuccess(
-                        targetVersion.ToString(), currentVersion, executedScripts, healthCheck);
-                }
-
-                // Phase 6: Complete Success
-                _progressService.LogOperationProgress("Finalizing update", 90,
-                    "All services healthy - update completed successfully");
-                await UpdateDeploymentStateAsync(currentDeploymentState, targetVersion.ToString(), executedVersions,
-                    configuration.HostComposeFolderPath);
-
-                // Publish successful update completion event
-                await _eventHub.PublishAsync(new UpdateCompletedEvent(
-                    configuration.FriendlyName,
-                    currentVersion,
-                    targetVersion.ToString(),
-                    true,
-                    null,
-                    executedScripts));
-
-                // Cleanup backup on complete success
-                if (backup?.Success == true)
-                {
-                    _log.LogInformation("Cleaning up backup file: {BackupFile}", backup.BackupFilePath);
-                    // Note: We don't have a cleanup method in IBackupService yet, but we should add one
-                }
-
-                return UpdateResult.CreateSuccess(
-                    targetVersion.ToString(), currentVersion, executedScripts, healthCheck, backup?.BackupFilePath);
-            }
-            catch (RestartPendingException)
-            {
-                throw;
-            }
-            catch (Exception ex)
-            {
-                _log.LogError(ex, "Unexpected error during update process");
-
-                // Publish failed update completion event
-                await _eventHub.PublishAsync(new UpdateCompletedEvent(
-                    configuration.FriendlyName,
-                    currentVersion,
-                    latestVersion?.ToString() ?? "unknown",
-                    false,
-                    ex.Message,
-                    executedScripts));
-
-                // Unexpected failure - try to recover if possible
-                if (backup?.Success == true)
-                {
-                    try
-                    {
-                        _log.LogInformation("Attempting emergency rollback due to unexpected error");
-                        using var sshService = await _sshConnectionManager.CreateSshServiceAsync();
-                        var architecture = await sshService.GetArchitectureAsync();
-                        var composeFiles = await _dockerComposeService.GetComposeFiles(configuration.HostComposeFolderPath, architecture);
-
-                        await PerformRollbackWithBackupAsync(executedVersions, backup, composeFiles, configuration.HostComposeFolderPath);
-
-                        return UpdateResult.CreateFailed(
-                            $"Unexpected error: {ex.Message}",
-                            currentVersion, executedScripts, recoveryPerformed: true, backup.BackupFilePath);
-                    }
-                    catch (Exception rollbackEx)
-                    {
-                        _log.LogError(rollbackEx, "Emergency rollback also failed");
-                        return UpdateResult.CreateRecoverableFailure(
-                            $"Unexpected error: {ex.Message}. Rollback failed: {rollbackEx.Message}",
-                            currentVersion, executedScripts, backup.BackupFilePath);
-                    }
-                }
-
-                return UpdateResult.CreateFailed(
-                    $"Unexpected error: {ex.Message}",
-                    currentVersion, executedScripts, recoveryPerformed: false);
-            }
-            finally
-            {
-                _progressService.CompleteOperation();
-            }
+            return await ExecuteUpdateAsync(configuration);
         }
         finally
         {
             _updateLock.Release();
+        }
+    }
+
+    private async Task<UpdateResult> ExecuteUpdateAsync(DockerComposeConfiguration configuration)
+    {
+        _progressService.StartOperation("Initializing update", configuration.FriendlyName, 1);
+        
+        BackupResult? backup = null;
+        var executedScripts = new List<string>();
+        var executedVersions = new List<PackageVersion>();
+        string? currentVersion = null;
+        PackageVersion? latestVersion = null;
+
+        try
+        {
+            // Step 1: Initialize and validate update
+            var (targetVersion, currentDeploymentState) = await InitializeUpdateAsync(configuration);
+            currentVersion = currentDeploymentState?.Version;
+            
+            if (targetVersion == null)
+            {
+                _log.LogWarning("No versions found in repository {RepositoryUrl}", configuration.RepositoryUrl);
+                return UpdateResult.CreateSuccess(currentVersion ?? "unknown", currentVersion, executedScripts,
+                    HealthCheckResult.Healthy(new List<string>()));
+            }
+            
+            // Check if update is needed
+            if (currentVersion != null && currentVersion == targetVersion.Value.ToString())
+            {
+                _log.LogInformation("Already at latest version {Version}", currentVersion);
+                return UpdateResult.CreateSuccess(currentVersion, currentVersion, executedScripts,
+                    HealthCheckResult.Healthy(new List<string>()));
+            }
+
+            _log.LogInformation("Updating from {CurrentVersion} to {TargetVersion}", 
+                currentVersion ?? "initial", targetVersion.Value.ToString());
+            
+            latestVersion = targetVersion;
+
+            // Publish update started event
+            await _eventHub.PublishAsync(new UpdateStartedEvent(configuration.FriendlyName, currentVersion,
+                targetVersion.Value.ToString()));
+
+            // Step 2: Checkout target version
+            _progressService.LogOperationProgress("Checking out target version", 20);
+            await _gitService.CheckoutVersionAsync(configuration.RepositoryLocation, targetVersion.Value.ToString());
+
+            // Step 3: Get architecture and compose files
+            using var sshService = await _sshConnectionManager.CreateSshServiceAsync();
+            var architecture = await sshService.GetArchitectureAsync();
+            var composeFiles = await _dockerComposeService.GetComposeFiles(configuration.HostComposeFolderPath, architecture);
+
+            // Phase 1: Pull Docker Images (before any system changes)
+            var pullResult = await PullDockerImagesAsync(composeFiles, configuration.HostComposeFolderPath, 
+                currentVersion, executedScripts);
+            if (pullResult != null) return pullResult;
+
+            // Phase 2: Backup Creation
+            // Note: Backup is performed before stopping services because the backup script
+            // may need to interact with running containers or shut them down gracefully
+            try
+            {
+                backup = await CreateBackupIfNeededAsync(configuration.HostComposeFolderPath, currentVersion);
+            }
+            catch (InvalidOperationException ex)
+            {
+                return UpdateResult.CreateFailed(ex.Message, currentVersion, executedScripts);
+            }
+
+            // Phase 3: Migration Scripts
+            var migrationResult = await ExecuteMigrationScriptsAsync(configuration.HostComposeFolderPath,
+                currentDeploymentState, currentVersion, targetVersion.Value);
+            
+            executedScripts = migrationResult.ExecutedScripts;
+            executedVersions = migrationResult.ExecutedVersions;
+            
+            if (!migrationResult.Success)
+            {
+                if (backup?.Success != true)
+                    return UpdateResult.CreateFailed(
+                        $"Migration failed: {migrationResult.Error} - No recovery possible without backup",
+                        currentVersion, executedScripts, recoveryPerformed: false);
+                
+                _log.LogInformation("Performing rollback with backup recovery");
+                await PerformRollbackWithBackupAsync(executedVersions, backup, composeFiles,
+                    configuration.HostComposeFolderPath);
+                return UpdateResult.CreateFailed($"Migration failed: {migrationResult.Error}", currentVersion,
+                    executedScripts, recoveryPerformed: true, backup.BackupFilePath);
+            }
+
+            // Phase 4: Stop and Restart Docker Services
+            var restartResult = await RestartDockerServicesAsync(composeFiles, configuration.HostComposeFolderPath,
+                configuration, currentDeploymentState, targetVersion.Value.ToString(), executedVersions);
+            
+            if (!restartResult.Success)
+            {
+                if (backup?.Success != true)
+                    return UpdateResult.CreateFailed(
+                        $"Docker startup failed: {restartResult.Error} - No recovery possible without backup",
+                        currentVersion, executedScripts, recoveryPerformed: false);
+                
+                _log.LogInformation("Docker startup failed - performing rollback with backup recovery");
+                await PerformRollbackWithBackupAsync(executedVersions, backup, composeFiles, configuration.HostComposeFolderPath);
+                return UpdateResult.CreateFailed($"Docker startup failed: {restartResult.Error}", currentVersion,
+                    executedScripts, recoveryPerformed: true, backup.BackupFilePath);
+            }
+
+            // Phase 5: Health Check
+            _progressService.LogOperationProgress("Performing health checks", 80,
+                "Performing health check on all services");
+            var healthCheck = await _healthCheckService.CheckServicesHealthAsync(composeFiles,
+                configuration.HostComposeFolderPath);
+
+            if (!healthCheck.AllHealthy)
+            {
+                _log.LogWarning("Health check failed - some services are unhealthy: {UnhealthyServices}",
+                    string.Join(", ", healthCheck.UnhealthyServices));
+
+                if (backup?.Success == true && healthCheck.CriticalFailure)
+                {
+                    _log.LogInformation("Critical services failed - performing rollback with backup recovery");
+                    await PerformRollbackWithBackupAsync(executedVersions, backup, composeFiles,
+                        configuration.HostComposeFolderPath);
+                    return UpdateResult.CreateFailed(
+                        "Critical services unhealthy after deployment",
+                        currentVersion, executedScripts, recoveryPerformed: true, backup.BackupFilePath);
+                }
+
+                // Partial success - keep running services
+                _log.LogInformation("Accepting partial deployment state - some services healthy");
+                await UpdateDeploymentStateAsync(currentDeploymentState, targetVersion.Value.ToString(),
+                    executedVersions, configuration.HostComposeFolderPath);
+                return UpdateResult.CreatePartialSuccess(
+                    targetVersion.Value.ToString(), currentVersion, executedScripts, healthCheck);
+            }
+
+            // Phase 6: Complete Success
+            _progressService.LogOperationProgress("Finalizing update", 90,
+                "All services healthy - update completed successfully");
+            await UpdateDeploymentStateAsync(currentDeploymentState, targetVersion.Value.ToString(), executedVersions,
+                configuration.HostComposeFolderPath);
+
+            // Publish successful update completion event
+            await _eventHub.PublishAsync(new UpdateCompletedEvent(
+                configuration.FriendlyName,
+                currentVersion,
+                targetVersion.Value.ToString(),
+                true,
+                null,
+                executedScripts));
+
+            return UpdateResult.CreateSuccess(
+                targetVersion.Value.ToString(), currentVersion, executedScripts, healthCheck, backup?.BackupFilePath);
+        }
+        catch (RestartPendingException)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _log.LogError(ex, "Unexpected error during update process");
+
+            // Publish failed update completion event
+            await _eventHub.PublishAsync(new UpdateCompletedEvent(
+                configuration.FriendlyName,
+                currentVersion,
+                latestVersion?.ToString() ?? "unknown",
+                false,
+                ex.Message,
+                executedScripts));
+
+            // Unexpected failure - try to recover if possible
+            if (backup?.Success == true)
+            {
+                try
+                {
+                    _log.LogInformation("Attempting emergency rollback due to unexpected error");
+                    using var sshService = await _sshConnectionManager.CreateSshServiceAsync();
+                    var architecture = await sshService.GetArchitectureAsync();
+                    var composeFiles = await _dockerComposeService.GetComposeFiles(configuration.HostComposeFolderPath, architecture);
+
+                    await PerformRollbackWithBackupAsync(executedVersions, backup, composeFiles, configuration.HostComposeFolderPath);
+
+                    return UpdateResult.CreateFailed(
+                        $"Unexpected error: {ex.Message}",
+                        currentVersion, executedScripts, recoveryPerformed: true, backup.BackupFilePath);
+                }
+                catch (Exception rollbackEx)
+                {
+                    _log.LogError(rollbackEx, "Emergency rollback also failed");
+                    return UpdateResult.CreateRecoverableFailure(
+                        $"Unexpected error: {ex.Message}. Rollback failed: {rollbackEx.Message}",
+                        currentVersion, executedScripts, backup.BackupFilePath);
+                }
+            }
+
+            return UpdateResult.CreateFailed(
+                $"Unexpected error: {ex.Message}",
+                currentVersion, executedScripts, recoveryPerformed: false);
+        }
+        finally
+        {
+            _progressService.CompleteOperation();
         }
     }
     /// <summary>
@@ -651,6 +556,223 @@ public class UpdateHost : IHostedService
     /// <summary>
     /// Updates the deployment state with executed scripts
     /// </summary>
+    /// <summary>
+    /// Initializes the update process and returns the target version
+    /// </summary>
+    private async Task<(PackageVersion?, DeploymentState?)> InitializeUpdateAsync(DockerComposeConfiguration configuration)
+    {
+        _progressService.LogOperationProgress("Loading deployment state", 10,
+            "Starting update process for {RepositoryLocation}", configuration.RepositoryLocation);
+
+        // Load current deployment state
+        var currentDeploymentState = await _deploymentStateProvider.GetDeploymentStateAsync(configuration.HostComposeFolderPath);
+        
+        await ConfigureGitRepositoryIfNeeded(configuration);
+        await _gitService.FetchAsync(configuration.RepositoryLocation);
+        
+        var latestVersion = await GetLatestVersion(configuration);
+        return (latestVersion, currentDeploymentState);
+    }
+
+    /// <summary>
+    /// Pulls Docker images for the new version
+    /// </summary>
+    private async Task<UpdateResult?> PullDockerImagesAsync(
+        string[] composeFiles,
+        string workingDirectory,
+        string? currentVersion,
+        List<string> executedScripts)
+    {
+        _progressService.LogOperationProgress("Pulling Docker images", 30,
+            "Pulling latest Docker images with 30-minute timeout");
+        
+        _log.LogInformation("Pulling Docker images for new version before making any system changes");
+        
+        try
+        {
+            await _dockerComposeService.PullAsync(composeFiles, workingDirectory, TimeSpan.FromMinutes(30));
+            _log.LogInformation("Docker images pulled successfully");
+            return null; // Success
+        }
+        catch (Exception ex)
+        {
+            _log.LogError(ex, "Failed to pull Docker images");
+            // No changes made yet, so just return failure
+            return UpdateResult.CreateFailed($"Docker image pull failed: {ex.Message}", currentVersion,
+                executedScripts, recoveryPerformed: false);
+        }
+    }
+
+    /// <summary>
+    /// Creates a backup if needed
+    /// </summary>
+    /// <remarks>
+    /// Backup is performed before stopping services because the backup script
+    /// may need to interact with running containers or shut them down gracefully
+    /// as part of the backup process. This ensures data consistency.
+    /// </remarks>
+    private async Task<BackupResult?> CreateBackupIfNeededAsync(
+        string workingDirectory,
+        string? currentVersion)
+    {
+        _progressService.LogOperationProgress("Creating backup", 40);
+        
+        if (currentVersion == null || currentVersion == "-")
+        {
+            _log.LogInformation("This is initial update, no backup is performed.");
+            return null;
+        }
+
+        if (!await _backupService.BackupScriptExistsAsync(workingDirectory))
+        {
+            _log.LogWarning("No backup script found - proceeding without backup");
+            return null;
+        }
+
+        _log.LogInformation("Creating backup before update");
+        var backup = await _backupService.CreateBackupAsync(workingDirectory);
+
+        if (!backup.Success)
+        {
+            _log.LogError("Backup creation failed: {Error}", backup.Error);
+            throw new InvalidOperationException($"Backup creation failed - cannot proceed: {backup.Error}");
+        }
+
+        _log.LogInformation("Backup created successfully: {BackupFile}", backup.BackupFilePath);
+        return backup;
+    }
+
+    /// <summary>
+    /// Executes migration scripts
+    /// </summary>
+    private async Task<MigrationResult> ExecuteMigrationScriptsAsync(
+        string workingDirectory,
+        DeploymentState? currentDeploymentState,
+        string? currentVersion,
+        PackageVersion targetVersion)
+    {
+        _progressService.LogOperationProgress("Executing migration scripts", 60);
+        
+        var executedScripts = new List<string>();
+        var executedVersions = new List<PackageVersion>();
+        
+        try
+        {
+            var allScripts = await _scriptMigrationService.DiscoverScriptsAsync(workingDirectory);
+            var excludeVersions = currentDeploymentState?.Up ?? ImmutableSortedSet<PackageVersion>.Empty;
+            var fromVersion = currentVersion != null ? PackageVersion.Parse(currentVersion) : (PackageVersion?)null;
+            
+            var scriptsToExecute = await _scriptMigrationService.FilterScriptsForMigrationAsync(
+                allScripts, fromVersion, targetVersion, excludeVersions);
+
+            if (scriptsToExecute.Any())
+            {
+                _log.LogInformation("Executing {Count} migration scripts", scriptsToExecute.Count());
+                executedVersions.AddRange(await _scriptMigrationService.ExecuteScriptsAsync(scriptsToExecute, workingDirectory));
+                executedScripts.AddRange(scriptsToExecute.Select(s => s.FileName));
+                _log.LogInformation("Migration scripts executed successfully");
+            }
+            
+            return new MigrationResult(executedScripts, executedVersions, true, null);
+        }
+        catch (Exception ex)
+        {
+            _log.LogError(ex, "Migration script execution failed");
+            return new MigrationResult(executedScripts, executedVersions, false, ex.Message);
+        }
+    }
+
+    /// <summary>
+    /// Restarts Docker services
+    /// </summary>
+    private async Task<ServiceRestartResult> RestartDockerServicesAsync(
+        string[] composeFiles,
+        string workingDirectory,
+        DockerComposeConfiguration configuration,
+        DeploymentState? currentDeploymentState,
+        string targetVersion,
+        List<PackageVersion> executedVersions)
+    {
+        var isSelfUpdating = configuration.FriendlyName == "autoupdater";
+        
+        try
+        {
+            if (isSelfUpdating)
+            {
+                return await HandleSelfUpdateRestartDockerServiceAsync(composeFiles, workingDirectory, configuration,
+                    currentDeploymentState, targetVersion, executedVersions);
+            }
+            else
+            {
+                return await HandleRegularRestartDockerServicesAsync(composeFiles, workingDirectory);
+            }
+        }
+        catch (RestartPendingException)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _log.LogError(ex, "Docker Compose startup failed");
+            return new ServiceRestartResult(false, ex.Message);
+        }
+    }
+
+    /// <summary>
+    /// Handles regular service restart (stop and start)
+    /// </summary>
+    private async Task<ServiceRestartResult> HandleRegularRestartDockerServicesAsync(
+        string[] composeFiles,
+        string workingDirectory)
+    {
+        // Stop current services
+        _progressService.LogOperationProgress("Stopping services", 50,
+            "Stopping current Docker Compose services");
+        await _dockerComposeService.StopServicesAsync(composeFiles, workingDirectory);
+
+        // Start new services
+        _progressService.LogOperationProgress("Starting services", 70);
+        _log.LogInformation("Starting new Docker Compose services");
+        await _dockerComposeService.StartServicesAsync(composeFiles, workingDirectory);
+        
+        return new ServiceRestartResult(true, null);
+    }
+
+    /// <summary>
+    /// Handles self-updating service restart with special logic
+    /// </summary>
+    private async Task<ServiceRestartResult> HandleSelfUpdateRestartDockerServiceAsync(
+        string[] composeFiles,
+        string workingDirectory,
+        DockerComposeConfiguration configuration,
+        DeploymentState? currentDeploymentState,
+        string targetVersion,
+        List<PackageVersion> executedVersions)
+    {
+        _log.LogInformation("Self-updating service detected - using special restart logic for {ServiceName}",
+            configuration.FriendlyName);
+        
+        // Skip the stop phase for self-updating
+        _progressService.LogOperationProgress("Preparing self-update", 50,
+            "Preparing deployment state for self-update");
+        
+        // Prepare deployment state in temp location
+        string tmpDeploymentPath = $"/tmp/{configuration.FriendlyName}";
+        await UpdateDeploymentStateAsync(currentDeploymentState, targetVersion,
+            executedVersions, tmpDeploymentPath);
+        
+        string tmpDeploymentStatePath = Path.Combine(tmpDeploymentPath, DeploymentStateProvider.StateFileName);
+        string onUpSuccessCommand = $"cp {tmpDeploymentStatePath} {workingDirectory}/{DeploymentStateProvider.StateFileName}";
+        
+        // Restart with special command
+        _progressService.LogOperationProgress("Restarting services", 70,
+            "Performing self-update restart");
+        await _dockerComposeService.RestartServicesAsync(composeFiles,
+            workingDirectory, true, onUpSuccessCommand);
+        
+        throw new RestartPendingException("Restart pending");
+    }
+
     private async Task UpdateDeploymentStateAsync(
         DeploymentState? currentState,
         string newVersion,
@@ -674,3 +796,37 @@ public class UpdateHost : IHostedService
 }
 
 public class RestartPendingException(string msg) : Exception(msg);
+
+/// <summary>
+/// Result of migration script execution
+/// </summary>
+internal readonly struct MigrationResult
+{
+    public MigrationResult(List<string> executedScripts, List<PackageVersion> executedVersions, bool success, string? error)
+    {
+        ExecutedScripts = executedScripts;
+        ExecutedVersions = executedVersions;
+        Success = success;
+        Error = error;
+    }
+
+    public List<string> ExecutedScripts { get; }
+    public List<PackageVersion> ExecutedVersions { get; }
+    public bool Success { get; }
+    public string? Error { get; }
+}
+
+/// <summary>
+/// Result of Docker service restart operation
+/// </summary>
+internal readonly struct ServiceRestartResult
+{
+    public ServiceRestartResult(bool success, string? error)
+    {
+        Success = success;
+        Error = error;
+    }
+
+    public bool Success { get; }
+    public string? Error { get; }
+}
