@@ -12,21 +12,19 @@
          AnchorOrigin="Origin.BottomCenter"
          TransformOrigin="Origin.TopCenter"
          Dense="true">
-    <MudMenuItem OnClick="CreateBackupAsync" Disabled="@_isCreatingBackup">
+    <MudMenuItem OnClick="CreateBackupAsync" Disabled="@_isCreatingBackup" Icon="@Icons.Material.Filled.Add">
         @if (_isCreatingBackup)
         {
             <MudProgressCircular Size="Size.Small" Indeterminate="true" />
-            <span>&nbsp;Creating backup...</span>
+            <span>Creating backup...</span>
         }
         else
         {
-            @Icons.Material.Filled.Add
-            <span>&nbsp;Create Backup</span>
+            <span>Create Backup</span>
         }
     </MudMenuItem>
-    <MudMenuItem OnClick="ManageBackupsAsync">
-        @Icons.Material.Filled.List
-        <span>&nbsp;Manage Backups</span>
+    <MudMenuItem OnClick="ManageBackupsAsync" Icon="@Icons.Material.Filled.List">
+        Manage Backups
     </MudMenuItem>
 </MudMenu>
 
