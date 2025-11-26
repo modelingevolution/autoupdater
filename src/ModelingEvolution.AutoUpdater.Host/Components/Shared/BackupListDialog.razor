@@ -1,6 +1,9 @@
 @using ModelingEvolution.AutoUpdater
-@using System.Net.Http.Json
-@inject HttpClient HttpClient
+@using ModelingEvolution.AutoUpdater.Services
+@using ModelingEvolution.AutoUpdater.Models
+@inject IBackupService BackupService
+@inject PackageManager PackageManager
+@inject DockerComposeConfigurationModel ConfigModel
 @inject ISnackbar Snackbar
 @inject IDialogService DialogService
 @inject ILogger<BackupListDialog> Logger
@@ -107,29 +110,26 @@
         {
             Logger.LogInformation("Loading backups for package: {PackageName}", PackageName);
 
-            var response = await HttpClient.GetAsync($"/api/backup/{PackageName}/list");
-
-            if (response.IsSuccessStatusCode)
+            var config = ConfigModel.GetPackage(PackageName);
+            if (config == null)
             {
-                var result = await response.Content.ReadFromJsonAsync<BackupListResult>();
-                if (result?.Success == true)
-                {
-                    _backups = result.Backups;
-                    _totalCount = result.TotalCount;
-                    _totalSize = result.TotalSize;
-                    Logger.LogInformation("Loaded {Count} backups", _totalCount);
-                }
-                else
-                {
-                    Snackbar.Add($"Failed to load backups: {result?.Error}", Severity.Error);
-                    Logger.LogError("Failed to load backups: {Error}", result?.Error);
-                }
+                Snackbar.Add($"Package {PackageName} not found", Severity.Error);
+                return;
+            }
+
+            var result = await BackupService.ListBackupsAsync(config.HostComposeFolderPath);
+
+            if (result.Success)
+            {
+                _backups = result.Backups;
+                _totalCount = result.TotalCount;
+                _totalSize = result.TotalSize;
+                Logger.LogInformation("Loaded {Count} backups", _totalCount);
             }
             else
             {
-                var error = await response.Content.ReadAsStringAsync();
-                Snackbar.Add($"Failed to load backups: {error}", Severity.Error);
-                Logger.LogError("Failed to load backups: {Error}", error);
+                Snackbar.Add($"Failed to load backups: {result.Error}", Severity.Error);
+                Logger.LogError("Failed to load backups: {Error}", result.Error);
             }
         }
         catch (Exception ex)
@@ -162,32 +162,27 @@
         {
             Logger.LogInformation("Restoring backup {Filename} for package: {PackageName}", filename, PackageName);
 
-            var response = await HttpClient.PostAsJsonAsync(
-                $"/api/backup/{PackageName}/restore",
-                new { Filename = filename });
-
-            if (response.IsSuccessStatusCode)
+            var config = ConfigModel.GetPackage(PackageName);
+            if (config == null)
             {
-                var result = await response.Content.ReadFromJsonAsync<RestoreResult>();
-                if (result?.Success == true)
-                {
-                    Snackbar.Add($"Backup restored successfully", Severity.Success);
-                    Logger.LogInformation("Backup restored: {Filename}", filename);
+                Snackbar.Add($"Package {PackageName} not found", Severity.Error);
+                return;
+            }
 
-                    // Reload the list after successful restore
-                    await LoadBackupsAsync();
-                }
-                else
-                {
-                    Snackbar.Add($"Restore failed: {result?.Error}", Severity.Error);
-                    Logger.LogError("Restore failed: {Error}", result?.Error);
-                }
+            var result = await PackageManager.RestorePackageAsync(config, filename);
+
+            if (result.Success)
+            {
+                Snackbar.Add($"Backup restored successfully", Severity.Success);
+                Logger.LogInformation("Backup restored: {Filename}", filename);
+
+                // Reload the list after successful restore
+                await LoadBackupsAsync();
             }
             else
             {
-                var error = await response.Content.ReadAsStringAsync();
-                Snackbar.Add($"Restore request failed: {error}", Severity.Error);
-                Logger.LogError("Restore request failed: {Error}", error);
+                Snackbar.Add($"Restore failed: {result.Error}", Severity.Error);
+                Logger.LogError("Restore failed: {Error}", result.Error);
             }
         }
         catch (Exception ex)
@@ -206,8 +201,4 @@
     {
         MudDialog.Close();
     }
-
-    private record BackupListResult(bool Success, List<BackupInfo> Backups, int TotalCount, long TotalSizeBytes, string TotalSize, string? Error);
-    private record BackupInfo(string Filename, string Version, bool GitTagExists, string Size, long SizeBytes, DateTime CreatedDate, string FullPath);
-    private record RestoreResult(bool Success, string? Error);
 }
