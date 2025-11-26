@@ -34,6 +34,7 @@ namespace ModelingEvolution.AutoUpdater
             container.AddSingleton<IDockerComposeService, DockerComposeService>();
             container.AddSingleton<IDeploymentStateProvider, DeploymentStateProvider>();
             container.AddSingleton<IBackupService, BackupService>();
+            container.AddSingleton<IBackupManagementService, BackupManagementService>();
             container.AddSingleton<IHealthCheckService, HealthCheckService>();
             container.AddSingleton<IProgressService, ProgressService>();
             container.AddSingleton<IDockerAuthService, DockerAuthService>();
