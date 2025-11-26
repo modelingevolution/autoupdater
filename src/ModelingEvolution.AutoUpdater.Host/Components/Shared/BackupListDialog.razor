@@ -27,7 +27,6 @@
                     <HeaderContent>
                         <MudTh>Filename</MudTh>
                         <MudTh>Version</MudTh>
-                        <MudTh>Git Tag</MudTh>
                         <MudTh>Size</MudTh>
                         <MudTh>Created</MudTh>
                         <MudTh>Actions</MudTh>
@@ -40,16 +39,6 @@
                         </MudTd>
                         <MudTd DataLabel="Version">
                             <MudText Typo="Typo.body2" Style="font-weight: 500; color: var(--mud-palette-primary);">@context.Version</MudText>
-                        </MudTd>
-                        <MudTd DataLabel="Git Tag">
-                            @if (context.GitTagExists)
-                            {
-                                <MudIcon Icon="@Icons.Material.Filled.CheckCircle" Color="Color.Success" Size="Size.Small" />
-                            }
-                            else
-                            {
-                                <MudIcon Icon="@Icons.Material.Filled.Cancel" Color="Color.Default" Size="Size.Small" />
-                            }
                         </MudTd>
                         <MudTd DataLabel="Size">@context.Size</MudTd>
                         <MudTd DataLabel="Created">@context.CreatedDate.ToString("yyyy-MM-dd HH:mm")</MudTd>

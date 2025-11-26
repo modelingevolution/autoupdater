@@ -26,8 +26,8 @@ namespace ModelingEvolution.AutoUpdater.Tests.FeatureTests
         
         private static string[] featureTags = ((string[])(null));
         
-        private static global::Reqnroll.FeatureInfo featureInfo = new global::Reqnroll.FeatureInfo(new System.Globalization.CultureInfo("en-US"), "FeatureTests", "AutoUpdater Update Process", "    As a DevOps engineer\r\n    I want to update applications using Docker Compose\r" +
-                "\n    So that I can deploy new versions safely with proper rollback capabilities", global::Reqnroll.ProgrammingLanguage.CSharp, featureTags);
+        private static global::Reqnroll.FeatureInfo featureInfo = new global::Reqnroll.FeatureInfo(new System.Globalization.CultureInfo("en-US"), "FeatureTests", "AutoUpdater Update Process", ("    As a DevOps engineer\n    I want to update applications using Docker Compose\n " +
+                "   So that I can deploy new versions safely with proper rollback capabilities"), global::Reqnroll.ProgrammingLanguage.CSharp, featureTags);
         
         private Xunit.Abstractions.ITestOutputHelper _testOutputHelper;
         

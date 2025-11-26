@@ -203,8 +203,23 @@ namespace ModelingEvolution.AutoUpdater.Services
                     return BackupListResult.CreateFailure("Failed to parse backup list response");
                 }
 
+                // Parse created date from filename (format: backup-YYYYMMDD-HHMMSS.tar.gz)
+                var backups = response.Backups.Select(b =>
+                {
+                    var createdDate = BackupFilenameParser.ParseDateFromFilename(b.Filename);
+                    return new BackupInfo(
+                        b.Filename,
+                        b.Version,
+                        false, // GitTagExists is not used anymore
+                        b.Size,
+                        b.SizeBytes,
+                        createdDate,
+                        b.FullPath
+                    );
+                }).ToList();
+
                 _logger.LogInformation("Found {Count} backups", response.TotalCount);
-                return BackupListResult.CreateSuccess(response.Backups, response.TotalCount, response.TotalSizeBytes, response.TotalSize);
+                return BackupListResult.CreateSuccess(backups, response.TotalCount, response.TotalSizeBytes, response.TotalSize);
             }
             catch (Exception ex)
             {
