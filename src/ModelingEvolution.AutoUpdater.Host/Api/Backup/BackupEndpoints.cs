@@ -52,11 +52,6 @@ namespace ModelingEvolution.AutoUpdater.Host.Api.Backup
                     return Results.NotFound(new { error = $"Package {packageName} not found" });
                 }
 
-                if (!config.BackupEnabled)
-                {
-                    return Results.BadRequest(new { error = "Backup not enabled for this package" });
-                }
-
                 var result = await backupService.ListBackupsAsync(config.HostComposeFolderPath);
 
                 if (result.Success)
@@ -90,11 +85,6 @@ namespace ModelingEvolution.AutoUpdater.Host.Api.Backup
                 if (config == null)
                 {
                     return Results.NotFound(new { error = $"Package {packageName} not found" });
-                }
-
-                if (!config.BackupEnabled)
-                {
-                    return Results.BadRequest(new { error = "Backup not enabled for this package" });
                 }
 
                 var result = await updateService.BackupPackageAsync(config, request?.Version);
@@ -131,11 +121,6 @@ namespace ModelingEvolution.AutoUpdater.Host.Api.Backup
                 if (config == null)
                 {
                     return Results.NotFound(new { error = $"Package {packageName} not found" });
-                }
-
-                if (!config.BackupEnabled)
-                {
-                    return Results.BadRequest(new { error = "Backup not enabled for this package" });
                 }
 
                 // Validate filename to prevent path traversal

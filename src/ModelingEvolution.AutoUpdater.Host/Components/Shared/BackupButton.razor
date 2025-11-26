@@ -5,46 +5,35 @@
 @inject IDialogService DialogService
 @inject ISnackbar Snackbar
 @inject ILogger<BackupButton> Logger
-@inject DockerComposeConfigurationModel ConfigurationModel
 
-@if (_backupEnabled)
-{
-    <MudMenu Icon="@Icons.Material.Filled.Backup"
-             Color="Color.Default"
-             Size="Size.Small"
-             AnchorOrigin="Origin.BottomCenter"
-             TransformOrigin="Origin.TopCenter"
-             Dense="true">
-        <MudMenuItem OnClick="CreateBackupAsync" Disabled="@_isCreatingBackup">
-            @if (_isCreatingBackup)
-            {
-                <MudProgressCircular Size="Size.Small" Indeterminate="true" />
-                <span>&nbsp;Creating backup...</span>
-            }
-            else
-            {
-                @Icons.Material.Filled.Add
-                <span>&nbsp;Create Backup</span>
-            }
-        </MudMenuItem>
-        <MudMenuItem OnClick="ManageBackupsAsync">
-            @Icons.Material.Filled.List
-            <span>&nbsp;Manage Backups</span>
-        </MudMenuItem>
-    </MudMenu>
-}
+<MudMenu Icon="@Icons.Material.Filled.Backup"
+         Color="Color.Default"
+         Size="Size.Small"
+         AnchorOrigin="Origin.BottomCenter"
+         TransformOrigin="Origin.TopCenter"
+         Dense="true">
+    <MudMenuItem OnClick="CreateBackupAsync" Disabled="@_isCreatingBackup">
+        @if (_isCreatingBackup)
+        {
+            <MudProgressCircular Size="Size.Small" Indeterminate="true" />
+            <span>&nbsp;Creating backup...</span>
+        }
+        else
+        {
+            @Icons.Material.Filled.Add
+            <span>&nbsp;Create Backup</span>
+        }
+    </MudMenuItem>
+    <MudMenuItem OnClick="ManageBackupsAsync">
+        @Icons.Material.Filled.List
+        <span>&nbsp;Manage Backups</span>
+    </MudMenuItem>
+</MudMenu>
 
 @code {
     [Parameter] public PackageName PackageName { get; set; }
 
-    private bool _backupEnabled = false;
     private bool _isCreatingBackup = false;
-
-    protected override void OnInitialized()
-    {
-        var packageConfig = ConfigurationModel.GetPackage(PackageName);
-        _backupEnabled = packageConfig?.BackupEnabled ?? false;
-    }
 
     private async Task CreateBackupAsync()
     {
