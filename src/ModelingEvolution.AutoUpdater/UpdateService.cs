@@ -17,17 +17,20 @@ namespace ModelingEvolution.AutoUpdater
         private readonly DockerComposeConfigurationModel _repository;
         private readonly UpdateHost _updateHost;
         private readonly IGitService _gitService;
+        private readonly IDeploymentStateProvider _deploymentStateProvider;
         private readonly ILogger<UpdateService> _logger;
 
         public UpdateService(
             DockerComposeConfigurationModel repository,
             UpdateHost updateHost,
             IGitService gitService,
+            IDeploymentStateProvider deploymentStateProvider,
             ILogger<UpdateService> logger)
         {
             _repository = repository ?? throw new ArgumentNullException(nameof(repository));
             _updateHost = updateHost ?? throw new ArgumentNullException(nameof(updateHost));
             _gitService = gitService ?? throw new ArgumentNullException(nameof(gitService));
+            _deploymentStateProvider = deploymentStateProvider ?? throw new ArgumentNullException(nameof(deploymentStateProvider));
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         }
 
@@ -145,13 +148,7 @@ namespace ModelingEvolution.AutoUpdater
         {
             try
             {
-                var stateFile = Path.Combine(config.HostComposeFolderPath, "deployment.state.json");
-                if (!File.Exists(stateFile))
-                    return null;
-
-                var stateContent = await File.ReadAllTextAsync(stateFile);
-                var state = JsonSerializer.Deserialize<DeploymentState>(stateContent);
-                return state?.Version.ToString();
+                return await _deploymentStateProvider.GetCurrentVersionAsync(config.HostComposeFolderPath);
             }
             catch (Exception ex)
             {
