@@ -6,20 +6,30 @@
 @implements IDisposable
 
 <div class="logger-viewer">
-    @if (ProgressService.IsRunning)
+    @if ((ProgressService.IsRunning || _showCompletedProgress) && !_progressDismissed)
     {
         <MudCard Class="mb-4">
             <MudCardHeader>
                 <CardHeaderContent>
-                    <div style="display: flex; align-items: center;">
-                        <MudIcon Icon="Icons.Material.Filled.Build" class="mr-3" />
-                        <MudText Typo="Typo.h6">Update Progress</MudText>
+                    <div style="display: flex; align-items: center; justify-content: space-between;">
+                        <div style="display: flex; align-items: center;">
+                            <MudIcon Icon="@(ProgressService.IsRunning ? Icons.Material.Filled.Build : Icons.Material.Filled.CheckCircle)" class="mr-3" />
+                            <MudText Typo="Typo.h6">@(ProgressService.IsRunning ? "Update Progress" : "Update Completed")</MudText>
+                        </div>
+                        @if (!ProgressService.IsRunning)
+                        {
+                            <MudTooltip Text="Dismiss">
+                                <MudIconButton Icon="@Icons.Material.Filled.Close"
+                                               OnClick="DismissProgress"
+                                               Size="Size.Small" />
+                            </MudTooltip>
+                        }
                     </div>
                 </CardHeaderContent>
             </MudCardHeader>
             <MudCardContent>
                 <MudText Typo="Typo.body1" Class="mb-2">@ProgressService.CurrentOperation</MudText>
-                <MudProgressLinear Value="@ProgressService.ProgressPercentage" Class="mb-2" />
+                <MudProgressLinear Value="@ProgressService.ProgressPercentage" Class="mb-2" Color="@(ProgressService.IsRunning ? Color.Primary : Color.Success)" />
                 <MudText Typo="Typo.caption">@ProgressService.ProgressPercentage%</MudText>
             </MudCardContent>
         </MudCard>
@@ -34,10 +44,16 @@
                         <MudText Typo="Typo.h6">Update Logs</MudText>
                         <MudChip T="string" Text="@(_logEntries.Count.ToString())" Size="Size.Small" Class="ml-2" />
                     </div>
-                    <div>
+                    <div style="display: flex; gap: 8px;">
+                        <MudTooltip Text="Copy logs to clipboard">
+                            <MudIconButton Icon="@Icons.Material.Filled.ContentCopy"
+                                           OnClick="CopyLogsToClipboard"
+                                           Size="Size.Small"
+                                           Disabled="@(_logEntries.Count == 0)" />
+                        </MudTooltip>
                         <MudTooltip Text="@(_autoScroll ? "Disable auto-scroll" : "Enable auto-scroll")">
-                            <MudIconButton Icon="@(_autoScroll ? Icons.Material.Filled.PauseCircleFilled : Icons.Material.Filled.PlayCircleFilled)" 
-                                           OnClick="ToggleAutoScroll" 
+                            <MudIconButton Icon="@(_autoScroll ? Icons.Material.Filled.PauseCircleFilled : Icons.Material.Filled.PlayCircleFilled)"
+                                           OnClick="ToggleAutoScroll"
                                            Size="Size.Small" />
                         </MudTooltip>
                     </div>
@@ -77,27 +93,92 @@
 </div>
 
 @code {
-    private IReadOnlyList<LogEntry> _logEntries;
+    private IReadOnlyList<LogEntry> _logEntries = null!;
     private ElementReference logContainer;
     private bool _autoScroll = true;
+    private bool _showCompletedProgress = false;
+    private bool _progressDismissed = false;
+    private bool _wasRunning = false;
+    private System.Timers.Timer? _completionTimer;
 
     protected override void OnInitialized()
     {
         // Load existing logs
         _logEntries = LoggerSink.LogEntries;
-        
+
         ProgressService.Changed += OnProgressChanged;
+        _wasRunning = ProgressService.IsRunning;
     }
 
 
     private async void OnProgressChanged()
     {
-        await InvokeAsync(StateHasChanged);
+        await InvokeAsync(() =>
+        {
+            var isRunning = ProgressService.IsRunning;
+
+            // Detect transition from running to not running (operation completed)
+            if (_wasRunning && !isRunning)
+            {
+                _showCompletedProgress = true;
+                _progressDismissed = false;
+
+                // Disable log capturing when operation completes
+                LoggerSink.Enabled = false;
+
+                // Auto-dismiss after 10 seconds
+                _completionTimer?.Dispose();
+                _completionTimer = new System.Timers.Timer(10000);
+                _completionTimer.Elapsed += (s, e) =>
+                {
+                    InvokeAsync(() =>
+                    {
+                        _showCompletedProgress = false;
+                        _completionTimer?.Dispose();
+                        StateHasChanged();
+                    });
+                };
+                _completionTimer.AutoReset = false;
+                _completionTimer.Start();
+            }
+            // Detect transition from not running to running (new operation started)
+            else if (!_wasRunning && isRunning)
+            {
+                _showCompletedProgress = false;
+                _progressDismissed = false;
+                _completionTimer?.Dispose();
+
+                // Re-enable log capturing when new operation starts
+                LoggerSink.Enabled = true;
+            }
+
+            _wasRunning = isRunning;
+            StateHasChanged();
+        });
     }
 
-   
 
-    
+    private void DismissProgress()
+    {
+        _progressDismissed = true;
+        _showCompletedProgress = false;
+        _completionTimer?.Dispose();
+        StateHasChanged();
+    }
+
+    private async Task CopyLogsToClipboard()
+    {
+        if (_logEntries.Count == 0)
+            return;
+
+        var logsText = string.Join("\n", _logEntries.Select(log =>
+            $"{log.Timestamp:HH:mm:ss.fff} [{log.Level.ToString().ToUpper()}] {log.Message}" +
+            (log.Exception != null ? $"\n    {log.Exception.Message}" : "")));
+
+        await JSRuntime.InvokeVoidAsync("navigator.clipboard.writeText", logsText);
+    }
+
+
     private void ToggleAutoScroll()
     {
         _autoScroll = !_autoScroll;
@@ -129,6 +210,7 @@
     public void Dispose()
     {
         ProgressService.Changed -= OnProgressChanged;
+        _completionTimer?.Dispose();
     }
 }
 

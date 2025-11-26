@@ -56,7 +56,7 @@ namespace ModelingEvolution.AutoUpdater.Services
 
                     if (!match.Success)
                     {
-                        _logger.LogInformation("Script file {FileName} does not match expected naming pattern (up-X.Y.Z.sh or down-X.Y.Z.sh), ignoring.", fileName);
+                        _logger.LogDebug("Script file {FileName} does not match expected naming pattern (up-X.Y.Z.sh or down-X.Y.Z.sh), ignoring.", fileName);
                         continue;
                     }
 
