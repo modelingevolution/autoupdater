@@ -74,7 +74,7 @@ namespace ModelingEvolution.AutoUpdater
                 var currentVersion = await GetCurrentVersionAsync(config);
                 var availableVersions = await config.AvailableVersionsAsync(_gitService, _logger);
                 var latestVersion = availableVersions.OrderByDescending(v => v).FirstOrDefault();
-                
+
                 var upgradeAvailable = await _updateHost.CheckIsUpdateAvailable(config);
 
                 packages.Add(new PackageInfo
@@ -163,7 +163,7 @@ namespace ModelingEvolution.AutoUpdater
 
     public record PackageInfo
     {
-        public PackageName Name { get; init; } = string.Empty;
+        public PackageName Name { get; init; } = PackageName.Empty;
         public string RepositoryUrl { get; init; } = string.Empty;
         public PackageVersion? CurrentVersion { get; init; }
         public PackageVersion LatestVersion { get; init; } = PackageVersion.Empty;
