@@ -2,16 +2,19 @@
 @using ModelingEvolution.AutoUpdater.Services
 @inject PackageManager PackageManager
 @inject DockerComposeConfigurationModel ConfigModel
+@inject ISshConnectionManager SshConnectionManager
 @inject IDialogService DialogService
 @inject ISnackbar Snackbar
 @inject ILogger<BackupButton> Logger
 
-<MudMenu Icon="@Icons.Material.Filled.Backup"
-         Color="Color.Default"
-         Size="Size.Small"
-         AnchorOrigin="Origin.BottomCenter"
-         TransformOrigin="Origin.TopCenter"
-         Dense="true">
+@if (_backupSupported)
+{
+    <MudMenu Icon="@Icons.Material.Filled.Backup"
+             Color="Color.Default"
+             Size="Size.Small"
+             AnchorOrigin="Origin.BottomCenter"
+             TransformOrigin="Origin.TopCenter"
+             Dense="true">
     <MudMenuItem OnClick="CreateBackupAsync" Disabled="@_isCreatingBackup" Icon="@Icons.Material.Filled.Add">
         @if (_isCreatingBackup)
         {
@@ -26,12 +29,57 @@
     <MudMenuItem OnClick="ManageBackupsAsync" Icon="@Icons.Material.Filled.List">
         Manage Backups
     </MudMenuItem>
-</MudMenu>
+    </MudMenu>
+}
 
 @code {
     [Parameter] public PackageName PackageName { get; set; }
 
     private bool _isCreatingBackup = false;
+    private bool _backupSupported = false;
+
+    protected override async Task OnInitializedAsync()
+    {
+        // Run the check in a separate thread to avoid blocking the UI
+        _ = Task.Run(async () => await CheckBackupSupportAsync());
+    }
+
+    private async Task CheckBackupSupportAsync()
+    {
+        try
+        {
+            var config = ConfigModel.GetPackage(PackageName);
+            if (config == null) return;
+
+            using var sshService = await SshConnectionManager.CreateSshServiceAsync();
+
+            // Check if backup.sh and restore.sh exist using FileExistsAsync
+            var backupScriptPath = Path.Combine(config.HostComposeFolderPath, "backup.sh");
+            var restoreScriptPath = Path.Combine(config.HostComposeFolderPath, "restore.sh");
+
+            var backupExists = await sshService.FileExistsAsync(backupScriptPath);
+            var restoreExists = await sshService.FileExistsAsync(restoreScriptPath);
+
+            var supported = backupExists && restoreExists;
+
+            // Update UI on the main thread
+            await InvokeAsync(() =>
+            {
+                _backupSupported = supported;
+                StateHasChanged();
+            });
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Error checking backup support for package: {PackageName}", PackageName);
+
+            await InvokeAsync(() =>
+            {
+                _backupSupported = false;
+                StateHasChanged();
+            });
+        }
+    }
 
     private async Task CreateBackupAsync()
     {
