@@ -193,18 +193,18 @@ namespace ModelingEvolution.AutoUpdater.Services
                     return BackupListResult.CreateFailure(result.Error);
                 }
 
-                var response = JsonSerializer.Deserialize<BackupListResponse>(result.Output, new JsonSerializerOptions
+                var scriptBackups = JsonSerializer.Deserialize<List<BackupInfo>>(result.Output, new JsonSerializerOptions
                 {
                     PropertyNameCaseInsensitive = true
                 });
 
-                if (response == null || response.Backups == null)
+                if (scriptBackups == null)
                 {
                     return BackupListResult.CreateFailure("Failed to parse backup list response");
                 }
 
                 // Parse created date from filename (format: backup-YYYYMMDD-HHMMSS.tar.gz)
-                var backups = response.Backups.Select(b =>
+                var backups = scriptBackups.Select(b =>
                 {
                     var createdDate = BackupFilenameParser.ParseDateFromFilename(b.Filename);
                     return new BackupInfo(
@@ -245,9 +245,4 @@ namespace ModelingEvolution.AutoUpdater.Services
             return $"{bytes / 1073741824} GB";
         }
     }
-
-    // JSON response model for backup.sh list command
-    internal record BackupListResponse(
-        List<BackupInfo> Backups
-    );
 }
