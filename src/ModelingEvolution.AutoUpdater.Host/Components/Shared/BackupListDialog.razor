@@ -26,7 +26,7 @@
                 <MudTable Items="@_backups" Hover="true" Breakpoint="Breakpoint.Sm" Dense="true">
                     <HeaderContent>
                         <MudTh>Filename</MudTh>
-                        <MudTh>Version</MudTh>
+                        <MudTh>Package Version</MudTh>
                         <MudTh>Size</MudTh>
                         <MudTh>Created</MudTh>
                         <MudTh>Actions</MudTh>
@@ -37,7 +37,7 @@
                                 <MudText Typo="Typo.body2">@context.Filename</MudText>
                             </MudTooltip>
                         </MudTd>
-                        <MudTd DataLabel="Version">
+                        <MudTd DataLabel="Package Version">
                             <MudText Typo="Typo.body2" Style="font-weight: 500; color: var(--mud-palette-primary);">@context.Version</MudText>
                         </MudTd>
                         <MudTd DataLabel="Size">@context.Size</MudTd>

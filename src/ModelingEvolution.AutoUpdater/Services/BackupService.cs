@@ -198,7 +198,7 @@ namespace ModelingEvolution.AutoUpdater.Services
                     PropertyNameCaseInsensitive = true
                 });
 
-                if (response == null)
+                if (response == null || response.Backups == null)
                 {
                     return BackupListResult.CreateFailure("Failed to parse backup list response");
                 }
@@ -218,8 +218,13 @@ namespace ModelingEvolution.AutoUpdater.Services
                     );
                 }).ToList();
 
-                _logger.LogInformation("Found {Count} backups", response.TotalCount);
-                return BackupListResult.CreateSuccess(backups, response.TotalCount, response.TotalSizeBytes, response.TotalSize);
+                // Calculate total count and size from backups array
+                var totalCount = backups.Count;
+                var totalSizeBytes = backups.Sum(b => b.SizeBytes);
+                var totalSize = FormatSize(totalSizeBytes);
+
+                _logger.LogInformation("Found {Count} backups", totalCount);
+                return BackupListResult.CreateSuccess(backups, totalCount, totalSizeBytes, totalSize);
             }
             catch (Exception ex)
             {
@@ -227,13 +232,22 @@ namespace ModelingEvolution.AutoUpdater.Services
                 return BackupListResult.CreateFailure($"List operation failed: {ex.Message}");
             }
         }
+
+        private static string FormatSize(long bytes)
+        {
+            if (bytes < 1024)
+                return $"{bytes} B";
+            if (bytes < 1048576)
+                return $"{bytes / 1024} KB";
+            if (bytes < 1073741824)
+                return $"{bytes / 1048576} MB";
+
+            return $"{bytes / 1073741824} GB";
+        }
     }
 
     // JSON response model for backup.sh list command
     internal record BackupListResponse(
-        List<BackupInfo> Backups,
-        int TotalCount,
-        long TotalSizeBytes,
-        string TotalSize
+        List<BackupInfo> Backups
     );
 }
