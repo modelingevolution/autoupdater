@@ -4,7 +4,7 @@ using ModelingEvolution.AutoUpdater.Models;
 namespace ModelingEvolution.AutoUpdater.Services
 {
     /// <summary>
-    /// Service for handling backup and restore operations during migrations
+    /// Service for handling backup and restore operations during migrations and management
     /// </summary>
     public interface IBackupService
     {
@@ -16,11 +16,13 @@ namespace ModelingEvolution.AutoUpdater.Services
         Task<bool> BackupScriptExistsAsync(string directory);
 
         /// <summary>
-        /// Executes backup.sh script and returns backup information
+        /// Executes backup.sh script and returns backup information.
+        /// Optionally accepts a version parameter for versioned backups.
         /// </summary>
         /// <param name="directory">Directory containing backup.sh script</param>
+        /// <param name="version">Optional version to tag the backup with</param>
         /// <returns>Result of backup operation</returns>
-        Task<BackupResult> CreateBackupAsync(string directory);
+        Task<BackupResult> CreateBackupAsync(string directory, string? version = null);
 
         /// <summary>
         /// Checks if restore.sh script exists in the specified directory
@@ -33,8 +35,15 @@ namespace ModelingEvolution.AutoUpdater.Services
         /// Executes restore.sh script with the specified backup file
         /// </summary>
         /// <param name="directory">Directory containing restore.sh script</param>
-        /// <param name="backupFilePath">Path to backup file to restore</param>
+        /// <param name="backupFilePathOrFilename">Path or filename of backup file to restore</param>
         /// <returns>Result of restore operation</returns>
-        Task<RestoreResult> RestoreBackupAsync(string directory, string backupFilePath);
+        Task<RestoreResult> RestoreBackupAsync(string directory, string backupFilePathOrFilename);
+
+        /// <summary>
+        /// Lists all available backups using backup.sh list command
+        /// </summary>
+        /// <param name="directory">Directory containing backup.sh script</param>
+        /// <returns>Result containing list of backups</returns>
+        Task<BackupListResult> ListBackupsAsync(string directory);
     }
 }

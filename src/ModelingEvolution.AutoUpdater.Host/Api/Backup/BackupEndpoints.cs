@@ -5,6 +5,7 @@ using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.Logging;
 using ModelingEvolution.AutoUpdater;
 using ModelingEvolution.AutoUpdater.Services;
+using ModelingEvolution.AutoUpdater.Models;
 using System;
 using System.Threading.Tasks;
 
@@ -21,39 +22,51 @@ namespace ModelingEvolution.AutoUpdater.Host.Api.Backup
             group.MapGet("/{packageName}/list", ListBackupsAsync)
                 .WithName("ListBackups")
                 .WithSummary("List all available backups for a package")
-                .Produces<BackupListResponse>();
+                .Produces<BackupListResult>();
 
             group.MapPost("/{packageName}/create", CreateBackupAsync)
                 .WithName("CreateBackup")
                 .WithSummary("Create a new backup for a package")
-                .Produces<BackupCreateResponse>();
+                .Produces<BackupResult>();
 
             group.MapPost("/{packageName}/restore", RestoreBackupAsync)
                 .WithName("RestoreBackup")
                 .WithSummary("Restore a package from a backup")
-                .Produces<BackupRestoreResponse>();
-
-            group.MapGet("/{packageName}/status", GetBackupStatusAsync)
-                .WithName("GetBackupStatus")
-                .WithSummary("Get backup system status")
-                .Produces<BackupStatusResponse>();
+                .Produces<RestoreResult>();
         }
 
         private static async Task<IResult> ListBackupsAsync(
             string packageName,
-            IBackupManagementService backupService,
-            ILogger<IBackupManagementService> logger)
+            DockerComposeConfigurationModel configModel,
+            IBackupService backupService,
+            ILogger<IBackupService> logger)
         {
             try
             {
                 logger.LogInformation("Listing backups for package: {PackageName}", packageName);
-                var response = await backupService.ListBackupsAsync(packageName);
-                return Results.Ok(response);
-            }
-            catch (PackageNotFoundException ex)
-            {
-                logger.LogWarning(ex, "Package not found: {PackageName}", packageName);
-                return Results.NotFound(new { error = ex.Message });
+
+                var config = configModel.GetPackage(packageName);
+                if (config == null)
+                {
+                    logger.LogWarning("Package not found: {PackageName}", packageName);
+                    return Results.NotFound(new { error = $"Package {packageName} not found" });
+                }
+
+                if (!config.BackupEnabled)
+                {
+                    return Results.BadRequest(new { error = "Backup not enabled for this package" });
+                }
+
+                var result = await backupService.ListBackupsAsync(config.HostComposeFolderPath);
+
+                if (result.Success)
+                {
+                    return Results.Ok(result);
+                }
+                else
+                {
+                    return Results.Problem(detail: result.Error, statusCode: 500);
+                }
             }
             catch (Exception ex)
             {
@@ -64,31 +77,49 @@ namespace ModelingEvolution.AutoUpdater.Host.Api.Backup
 
         private static async Task<IResult> CreateBackupAsync(
             string packageName,
+            DockerComposeConfigurationModel configModel,
+            IBackupService backupService,
+            IDeploymentStateProvider deploymentStateProvider,
             [FromBody] CreateBackupRequest? request,
-            IBackupManagementService backupService,
-            ILogger<IBackupManagementService> logger)
+            ILogger<IBackupService> logger)
         {
             try
             {
                 logger.LogInformation("Creating backup for package: {PackageName}", packageName);
-                var response = await backupService.CreateBackupAsync(packageName, request?.Version);
 
-                if (response.Success)
+                var config = configModel.GetPackage(packageName);
+                if (config == null)
                 {
-                    return Results.Ok(response);
+                    return Results.NotFound(new { error = $"Package {packageName} not found" });
+                }
+
+                if (!config.BackupEnabled)
+                {
+                    return Results.BadRequest(new { error = "Backup not enabled for this package" });
+                }
+
+                // Get version from request or auto-detect
+                var version = request?.Version;
+                if (string.IsNullOrEmpty(version))
+                {
+                    version = await deploymentStateProvider.GetCurrentVersionAsync(config.HostComposeFolderPath);
+                }
+
+                if (string.IsNullOrEmpty(version))
+                {
+                    version = "unknown";
+                }
+
+                var result = await backupService.CreateBackupAsync(config.HostComposeFolderPath, version);
+
+                if (result.Success)
+                {
+                    return Results.Ok(result);
                 }
                 else
                 {
-                    return Results.Problem(
-                        detail: response.Error,
-                        statusCode: 500,
-                        title: "Backup creation failed");
+                    return Results.Problem(detail: result.Error, statusCode: 500);
                 }
-            }
-            catch (PackageNotFoundException ex)
-            {
-                logger.LogWarning(ex, "Package not found: {PackageName}", packageName);
-                return Results.NotFound(new { error = ex.Message });
             }
             catch (Exception ex)
             {
@@ -99,61 +130,51 @@ namespace ModelingEvolution.AutoUpdater.Host.Api.Backup
 
         private static async Task<IResult> RestoreBackupAsync(
             string packageName,
+            DockerComposeConfigurationModel configModel,
+            IBackupService backupService,
             [FromBody] RestoreBackupRequest request,
-            IBackupManagementService backupService,
-            ILogger<IBackupManagementService> logger)
+            ILogger<IBackupService> logger)
         {
             try
             {
                 logger.LogInformation("Restoring backup for package: {PackageName}, file: {Filename}",
                     packageName, request.Filename);
 
-                var response = await backupService.RestoreBackupAsync(packageName, request.Filename);
-
-                if (response.Success)
+                var config = configModel.GetPackage(packageName);
+                if (config == null)
                 {
-                    return Results.Ok(response);
+                    return Results.NotFound(new { error = $"Package {packageName} not found" });
+                }
+
+                if (!config.BackupEnabled)
+                {
+                    return Results.BadRequest(new { error = "Backup not enabled for this package" });
+                }
+
+                // Validate filename to prevent path traversal
+                if (request.Filename.Contains("..") || request.Filename.Contains("/") || request.Filename.Contains("\\"))
+                {
+                    logger.LogWarning("Invalid backup filename: {Filename}", request.Filename);
+                    return Results.BadRequest(new { error = "Invalid backup filename" });
+                }
+
+                var result = await backupService.RestoreBackupAsync(
+                    config.HostComposeFolderPath,
+                    request.Filename);
+
+                if (result.Success)
+                {
+                    return Results.Ok(result);
                 }
                 else
                 {
-                    return Results.Problem(
-                        detail: response.Error,
-                        statusCode: 500,
-                        title: "Restore failed");
+                    return Results.Problem(detail: result.Error, statusCode: 500);
                 }
-            }
-            catch (PackageNotFoundException ex)
-            {
-                logger.LogWarning(ex, "Package not found: {PackageName}", packageName);
-                return Results.NotFound(new { error = ex.Message });
             }
             catch (Exception ex)
             {
                 logger.LogError(ex, "Failed to restore backup for {PackageName}", packageName);
                 return Results.Problem("Failed to restore backup");
-            }
-        }
-
-        private static async Task<IResult> GetBackupStatusAsync(
-            string packageName,
-            IBackupManagementService backupService,
-            ILogger<IBackupManagementService> logger)
-        {
-            try
-            {
-                logger.LogInformation("Getting backup status for package: {PackageName}", packageName);
-                var response = await backupService.GetBackupStatusAsync(packageName);
-                return Results.Ok(response);
-            }
-            catch (PackageNotFoundException ex)
-            {
-                logger.LogWarning(ex, "Package not found: {PackageName}", packageName);
-                return Results.NotFound(new { error = ex.Message });
-            }
-            catch (Exception ex)
-            {
-                logger.LogError(ex, "Failed to get backup status for {PackageName}", packageName);
-                return Results.Problem("Failed to get backup status");
             }
         }
     }

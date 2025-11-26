@@ -19,9 +19,8 @@ namespace ModelingEvolution.AutoUpdater
         
         public IList<DockerRegistryPat> DockerAuths { get; init; } = new List<DockerRegistryPat>();
 
-        // Backup configuration
+        // Backup configuration - uses backup.sh and restore.sh scripts
         public bool BackupEnabled { get; init; } = false;
-        public string? BackupScriptPath { get; init; } = "es-backup-manage.sh";
 
         public DockerComposeConfiguration(string repositoryLocation, string repositoryUrl,
             string dockerComposeDirectory = "./", string? dockerAuth = null, string? dockerRegistryUrl = null)

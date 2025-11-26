@@ -40,20 +40,22 @@ namespace ModelingEvolution.AutoUpdater.Services
             }
         }
 
-        public async Task<BackupResult> CreateBackupAsync(string directory)
+        public async Task<BackupResult> CreateBackupAsync(string directory, string? version = null)
         {
             try
             {
-                _logger.LogInformation("Creating backup in directory {Directory}", directory);
+                _logger.LogInformation("Creating backup in directory {Directory} with version {Version}",
+                    directory, version ?? "unspecified");
 
-                var command = "sudo bash ./backup.sh --format=json";
-                var result = await _sshService.ExecuteCommandAsync(command, directory);
+                var versionArg = !string.IsNullOrEmpty(version) ? $" --version=\"{version}\"" : "";
+                var command = $"sudo bash ./backup.sh{versionArg} --format=json";
+                var result = await _sshService.ExecuteCommandAsync(command, TimeSpan.FromMinutes(5), directory);
 
                 if (!result.IsSuccess)
                 {
-                    _logger.LogError("Backup script failed with exit code {ExitCode}: {Error}", 
+                    _logger.LogError("Backup script failed with exit code {ExitCode}: {Error}",
                         result.ExitCode, result.Error);
-                    
+
                     // Try to parse error response if possible
                     try
                     {
@@ -67,21 +69,21 @@ namespace ModelingEvolution.AutoUpdater.Services
                     {
                         // If JSON parsing fails, use stderr or generic message
                     }
-                    
+
                     return BackupResult.CreateFailure(
                         !string.IsNullOrEmpty(result.Error) ? result.Error : "Backup script execution failed");
                 }
 
                 // Parse successful backup response
                 var backupResponse = JsonSerializer.Deserialize<BackupResponse>(result.Output);
-                
+
                 // Check if this is an error response (success = false)
                 if (backupResponse?.Success == false)
                 {
                     _logger.LogError("Backup script returned error: {Error}", backupResponse.Error);
                     return BackupResult.CreateFailure(backupResponse.Error ?? "Backup operation failed");
                 }
-                
+
                 // Check if we have a valid file path
                 if (string.IsNullOrEmpty(backupResponse?.File))
                 {
@@ -170,10 +172,53 @@ namespace ModelingEvolution.AutoUpdater.Services
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Failed to restore backup from {BackupFile} in {Directory}", 
+                _logger.LogError(ex, "Failed to restore backup from {BackupFile} in {Directory}",
                     backupFilePath, directory);
                 return RestoreResult.CreateFailure($"Restore operation failed: {ex.Message}");
             }
         }
+
+        public async Task<BackupListResult> ListBackupsAsync(string directory)
+        {
+            try
+            {
+                _logger.LogInformation("Listing backups in directory {Directory}", directory);
+
+                var command = "sudo bash ./backup.sh list --format=json";
+                var result = await _sshService.ExecuteCommandAsync(command, directory);
+
+                if (!result.IsSuccess)
+                {
+                    _logger.LogError("Backup list command failed: {Error}", result.Error);
+                    return BackupListResult.CreateFailure(result.Error);
+                }
+
+                var response = JsonSerializer.Deserialize<BackupListResponse>(result.Output, new JsonSerializerOptions
+                {
+                    PropertyNameCaseInsensitive = true
+                });
+
+                if (response == null)
+                {
+                    return BackupListResult.CreateFailure("Failed to parse backup list response");
+                }
+
+                _logger.LogInformation("Found {Count} backups", response.TotalCount);
+                return BackupListResult.CreateSuccess(response.Backups, response.TotalCount, response.TotalSizeBytes, response.TotalSize);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to list backups in {Directory}", directory);
+                return BackupListResult.CreateFailure($"List operation failed: {ex.Message}");
+            }
+        }
     }
+
+    // JSON response model for backup.sh list command
+    internal record BackupListResponse(
+        List<BackupInfo> Backups,
+        int TotalCount,
+        long TotalSizeBytes,
+        string TotalSize
+    );
 }
