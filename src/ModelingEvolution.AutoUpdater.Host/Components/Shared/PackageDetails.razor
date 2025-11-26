@@ -8,9 +8,10 @@
         <div style="display: flex; gap: 4px; align-items: center;">
             <CheckPackageVersionButton PackageName="@PackageItem.Config.FriendlyName" />
             <UpdatePackageButton PackageName="@PackageItem.Config.FriendlyName" />
+            <BackupButton PackageName="@PackageItem.Config.FriendlyName" />
             <MudTooltip Text="Security Settings">
-                <MudIconButton Icon="@Icons.Material.Filled.Security" 
-                               Color="Color.Default" 
+                <MudIconButton Icon="@Icons.Material.Filled.Security"
+                               Color="Color.Default"
                                Size="Size.Small"
                                OnClick="OpenSecurityDialog" />
             </MudTooltip>

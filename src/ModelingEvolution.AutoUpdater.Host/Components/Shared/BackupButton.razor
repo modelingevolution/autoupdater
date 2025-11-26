@@ -1,0 +1,115 @@
+@using ModelingEvolution.AutoUpdater
+@using ModelingEvolution.AutoUpdater.Services
+@using System.Net.Http.Json
+@inject HttpClient HttpClient
+@inject IDialogService DialogService
+@inject ISnackbar Snackbar
+@inject ILogger<BackupButton> Logger
+@inject DockerComposeConfigurationModel ConfigurationModel
+
+@if (_backupEnabled)
+{
+    <MudMenu Icon="@Icons.Material.Filled.Backup"
+             Color="Color.Default"
+             Size="Size.Small"
+             AnchorOrigin="Origin.BottomCenter"
+             TransformOrigin="Origin.TopCenter"
+             Dense="true">
+        <MudMenuItem OnClick="CreateBackupAsync" Disabled="@_isCreatingBackup">
+            @if (_isCreatingBackup)
+            {
+                <MudProgressCircular Size="Size.Small" Indeterminate="true" />
+                <span>&nbsp;Creating backup...</span>
+            }
+            else
+            {
+                @Icons.Material.Filled.Add
+                <span>&nbsp;Create Backup</span>
+            }
+        </MudMenuItem>
+        <MudMenuItem OnClick="ManageBackupsAsync">
+            @Icons.Material.Filled.List
+            <span>&nbsp;Manage Backups</span>
+        </MudMenuItem>
+    </MudMenu>
+}
+
+@code {
+    [Parameter] public PackageName PackageName { get; set; }
+
+    private bool _backupEnabled = false;
+    private bool _isCreatingBackup = false;
+
+    protected override void OnInitialized()
+    {
+        var packageConfig = ConfigurationModel.GetPackage(PackageName);
+        _backupEnabled = packageConfig?.BackupEnabled ?? false;
+    }
+
+    private async Task CreateBackupAsync()
+    {
+        if (_isCreatingBackup) return;
+
+        _isCreatingBackup = true;
+        StateHasChanged();
+
+        try
+        {
+            Logger.LogInformation("Creating backup for package: {PackageName}", PackageName);
+
+            var response = await HttpClient.PostAsJsonAsync(
+                $"/api/backup/{PackageName}/create",
+                new { Version = (string?)null });
+
+            if (response.IsSuccessStatusCode)
+            {
+                var result = await response.Content.ReadFromJsonAsync<BackupResult>();
+                if (result?.Success == true)
+                {
+                    Snackbar.Add($"Backup created successfully: {result.BackupFile}", Severity.Success);
+                    Logger.LogInformation("Backup created: {BackupFile}", result.BackupFile);
+                }
+                else
+                {
+                    Snackbar.Add($"Backup failed: {result?.Error}", Severity.Error);
+                    Logger.LogError("Backup failed: {Error}", result?.Error);
+                }
+            }
+            else
+            {
+                var error = await response.Content.ReadAsStringAsync();
+                Snackbar.Add($"Backup request failed: {error}", Severity.Error);
+                Logger.LogError("Backup request failed: {Error}", error);
+            }
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Error creating backup for package: {PackageName}", PackageName);
+            Snackbar.Add($"Error creating backup: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _isCreatingBackup = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task ManageBackupsAsync()
+    {
+        var parameters = new DialogParameters
+        {
+            ["PackageName"] = PackageName
+        };
+
+        var options = new DialogOptions
+        {
+            CloseOnEscapeKey = true,
+            MaxWidth = MaxWidth.Large,
+            FullWidth = true
+        };
+
+        await DialogService.ShowAsync<BackupListDialog>("Manage Backups", parameters, options);
+    }
+
+    private record BackupResult(bool Success, string? BackupFile, string? Error);
+}
