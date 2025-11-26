@@ -13,9 +13,9 @@ namespace ModelingEvolution.AutoUpdater
         {
             // Add runtime configuration support
             container.AddRuntimeConfiguration();
-            
+
             // Register core services
-            container.AddSingleton<UpdateService>();
+            container.AddSingleton<PackageManager>();
             container.AddSingleton<DockerComposeConfigurationModel>();
 
             // Register the new refactored services

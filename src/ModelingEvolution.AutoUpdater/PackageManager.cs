@@ -12,7 +12,7 @@ using System.Threading.Tasks;
 
 namespace ModelingEvolution.AutoUpdater
 {
-    public class UpdateService
+    public class PackageManager
     {
         private readonly DockerComposeConfigurationModel _repository;
         private readonly UpdateHost _updateHost;
@@ -21,9 +21,9 @@ namespace ModelingEvolution.AutoUpdater
         private readonly IBackupService _backupService;
         private readonly IDockerComposeService _dockerComposeService;
         private readonly ISshConnectionManager _sshConnectionManager;
-        private readonly ILogger<UpdateService> _logger;
+        private readonly ILogger<PackageManager> _logger;
 
-        public UpdateService(
+        public PackageManager(
             DockerComposeConfigurationModel repository,
             UpdateHost updateHost,
             IGitService gitService,
@@ -31,7 +31,7 @@ namespace ModelingEvolution.AutoUpdater
             IBackupService backupService,
             IDockerComposeService dockerComposeService,
             ISshConnectionManager sshConnectionManager,
-            ILogger<UpdateService> logger)
+            ILogger<PackageManager> logger)
         {
             _repository = repository ?? throw new ArgumentNullException(nameof(repository));
             _updateHost = updateHost ?? throw new ArgumentNullException(nameof(updateHost));

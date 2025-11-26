@@ -73,7 +73,7 @@ namespace ModelingEvolution.AutoUpdater.Host.Api.Backup
         private static async Task<IResult> CreateBackupAsync(
             string packageName,
             DockerComposeConfigurationModel configModel,
-            UpdateService updateService,
+            PackageManager packageManager,
             [FromBody] CreateBackupRequest? request,
             ILogger<IBackupService> logger)
         {
@@ -87,7 +87,7 @@ namespace ModelingEvolution.AutoUpdater.Host.Api.Backup
                     return Results.NotFound(new { error = $"Package {packageName} not found" });
                 }
 
-                var result = await updateService.BackupPackageAsync(config, request?.Version);
+                var result = await packageManager.BackupPackageAsync(config, request?.Version);
 
                 if (result.Success)
                 {
@@ -108,7 +108,7 @@ namespace ModelingEvolution.AutoUpdater.Host.Api.Backup
         private static async Task<IResult> RestoreBackupAsync(
             string packageName,
             DockerComposeConfigurationModel configModel,
-            UpdateService updateService,
+            PackageManager packageManager,
             [FromBody] RestoreBackupRequest request,
             ILogger<IBackupService> logger)
         {
@@ -130,7 +130,7 @@ namespace ModelingEvolution.AutoUpdater.Host.Api.Backup
                     return Results.BadRequest(new { error = "Invalid backup filename" });
                 }
 
-                var result = await updateService.RestorePackageAsync(config, request.Filename);
+                var result = await packageManager.RestorePackageAsync(config, request.Filename);
 
                 if (result.Success)
                 {

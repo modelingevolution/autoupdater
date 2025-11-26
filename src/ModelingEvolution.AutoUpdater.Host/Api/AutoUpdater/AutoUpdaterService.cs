@@ -7,23 +7,23 @@ namespace ModelingEvolution.AutoUpdater.Host.Api.AutoUpdater;
 
 public class AutoUpdaterService
 {
-    private readonly UpdateService _updateService;
+    private readonly PackageManager _packageManager;
     private readonly ISshConnectionManager _sshManager;
     private readonly IDockerComposeService _dockerComposeService;
     private readonly ILogger<AutoUpdaterService> _logger;
-    
+
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
         PropertyNameCaseInsensitive = true
     };
 
     public AutoUpdaterService(
-        UpdateService updateService,
+        PackageManager packageManager,
         ISshConnectionManager sshManager,
         IDockerComposeService dockerComposeService,
         ILogger<AutoUpdaterService> logger)
     {
-        _updateService = updateService;
+        _packageManager = packageManager;
         _sshManager = sshManager;
         _dockerComposeService = dockerComposeService;
         _logger = logger;
@@ -33,7 +33,7 @@ public class AutoUpdaterService
     {
         // Get both data sources concurrently
         var composeStatusMap = await _dockerComposeService.GetDockerComposeStatusAsync();
-        var packageInfos = await _updateService.GetPackagesAsync();
+        var packageInfos = await _packageManager.GetPackagesAsync();
         
         
         
@@ -87,7 +87,7 @@ public class AutoUpdaterService
 
     public async Task<UpgradeStatusResponse> GetUpgradeStatusAsync(PackageName packageName)
     {
-        var packageInfo = await _updateService.GetPackageAsync(packageName);
+        var packageInfo = await _packageManager.GetPackageAsync(packageName);
 
         if (packageInfo == null)
         {
@@ -120,13 +120,13 @@ public class AutoUpdaterService
 
     public async Task<UpdateAllResponse> TriggerUpdateAllAsync()
     {
-        var packageInfos = await _updateService.GetPackagesAsync();
+        var packageInfos = await _packageManager.GetPackagesAsync();
         var result = ProcessPackagesForUpdate(packageInfos);
 
         // If no packages to update, trigger the update process anyway
         if (result.UpdatesStarted.Count == 0)
         {
-            _ = Task.Run(_updateService.UpdateAllAsync);
+            _ = Task.Run(_packageManager.UpdateAllAsync);
         }
 
         return new UpdateAllResponse
@@ -191,7 +191,7 @@ public class AutoUpdaterService
             try
             {
                 _logger.LogInformation("Starting update for package {PackageName}, update ID: {UpdateId}", packageName, updateId);
-                await _updateService.TriggerUpdateAsync(packageName);
+                await _packageManager.TriggerUpdateAsync(packageName);
                 _logger.LogInformation("Update completed for package {PackageName}, update ID: {UpdateId}", packageName, updateId);
             }
             catch (Exception ex)
