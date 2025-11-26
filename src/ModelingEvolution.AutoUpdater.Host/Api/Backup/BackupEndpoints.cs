@@ -78,8 +78,7 @@ namespace ModelingEvolution.AutoUpdater.Host.Api.Backup
         private static async Task<IResult> CreateBackupAsync(
             string packageName,
             DockerComposeConfigurationModel configModel,
-            IBackupService backupService,
-            IDeploymentStateProvider deploymentStateProvider,
+            UpdateService updateService,
             [FromBody] CreateBackupRequest? request,
             ILogger<IBackupService> logger)
         {
@@ -98,19 +97,7 @@ namespace ModelingEvolution.AutoUpdater.Host.Api.Backup
                     return Results.BadRequest(new { error = "Backup not enabled for this package" });
                 }
 
-                // Get version from request or auto-detect
-                var version = request?.Version;
-                if (string.IsNullOrEmpty(version))
-                {
-                    version = await deploymentStateProvider.GetCurrentVersionAsync(config.HostComposeFolderPath);
-                }
-
-                if (string.IsNullOrEmpty(version))
-                {
-                    version = "unknown";
-                }
-
-                var result = await backupService.CreateBackupAsync(config.HostComposeFolderPath, version);
+                var result = await updateService.BackupPackageAsync(config, request?.Version);
 
                 if (result.Success)
                 {
@@ -131,7 +118,7 @@ namespace ModelingEvolution.AutoUpdater.Host.Api.Backup
         private static async Task<IResult> RestoreBackupAsync(
             string packageName,
             DockerComposeConfigurationModel configModel,
-            IBackupService backupService,
+            UpdateService updateService,
             [FromBody] RestoreBackupRequest request,
             ILogger<IBackupService> logger)
         {
@@ -158,9 +145,7 @@ namespace ModelingEvolution.AutoUpdater.Host.Api.Backup
                     return Results.BadRequest(new { error = "Invalid backup filename" });
                 }
 
-                var result = await backupService.RestoreBackupAsync(
-                    config.HostComposeFolderPath,
-                    request.Filename);
+                var result = await updateService.RestorePackageAsync(config, request.Filename);
 
                 if (result.Success)
                 {
