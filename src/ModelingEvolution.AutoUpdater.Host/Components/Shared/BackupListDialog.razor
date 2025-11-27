@@ -37,9 +37,7 @@
                                 <MudText Typo="Typo.body2">@context.Filename</MudText>
                             </MudTooltip>
                         </MudTd>
-                        <MudTd DataLabel="Package Version">
-                            <MudText Typo="Typo.body2" Style="font-weight: 500; color: var(--mud-palette-primary);">@context.Version</MudText>
-                        </MudTd>
+                        <MudTd DataLabel="Package Version">@context.Version</MudTd>
                         <MudTd DataLabel="Size">@context.Size</MudTd>
                         <MudTd DataLabel="Created">@context.CreatedDate.ToString("yyyy-MM-dd HH:mm")</MudTd>
                         <MudTd DataLabel="Actions">
