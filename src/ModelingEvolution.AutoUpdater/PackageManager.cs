@@ -196,12 +196,19 @@ namespace ModelingEvolution.AutoUpdater
 
         public async Task<RestoreResult> RestorePackageAsync(DockerComposeConfiguration config, string backupFilename)
         {
+            string? originalVersion = null;
+            bool dataRestored = false;
+
             try
             {
                 _logger.LogInformation("Starting restore for package: {PackageName} from backup: {BackupFilename}",
                     config.FriendlyName, backupFilename);
 
-                // Get backup metadata to find version and git tag information
+                // Step 0: Get current version for potential rollback
+                originalVersion = await GetCurrentVersionAsync(config);
+                _logger.LogInformation("Current version before restore: {Version}", originalVersion ?? "unknown");
+
+                // Get backup metadata to find version information
                 var backupListResult = await _backupService.ListBackupsAsync(config.HostComposeFolderPath);
                 if (!backupListResult.Success)
                 {
@@ -212,68 +219,165 @@ namespace ModelingEvolution.AutoUpdater
                 var backupInfo = backupListResult.Backups.FirstOrDefault(b => b.Filename == backupFilename);
                 if (backupInfo == null)
                 {
-                    _logger.LogError("Backup file not found: {BackupFilename}", backupFilename);
+                    _logger.LogError("Backup file not found in list: {BackupFilename}", backupFilename);
                     return RestoreResult.CreateFailure($"Backup file not found: {backupFilename}");
                 }
 
-                _logger.LogInformation("Found backup metadata - Version: {Version}, GitTag: {GitTagExists}",
-                    backupInfo.Version, backupInfo.GitTagExists);
+                _logger.LogInformation("Found backup metadata - Version: {Version}", backupInfo.Version);
 
-                // Get architecture and compose files
-                using var sshService = await _sshConnectionManager.CreateSshServiceAsync();
-                var architecture = await sshService.GetArchitectureAsync();
-                var composeFiles = await _dockerComposeService.GetComposeFiles(config.HostComposeFolderPath, architecture);
-
-                // Step 1: Stop running services
-                _logger.LogInformation("Stopping services for package: {PackageName}", config.FriendlyName);
-                await _dockerComposeService.StopServicesAsync(composeFiles, config.HostComposeFolderPath);
-                _logger.LogInformation("Services stopped successfully");
-
-                // Step 2: Restore the backup
-                _logger.LogInformation("Restoring backup: {BackupFilename}", backupFilename);
-                var restoreResult = await _backupService.RestoreBackupAsync(config.HostComposeFolderPath, backupFilename);
-                if (!restoreResult.Success)
-                {
-                    _logger.LogError("Backup restore failed: {Error}", restoreResult.Error);
-                    // Try to start services again even if restore failed
-                    await _dockerComposeService.StartServicesAsync(composeFiles, config.HostComposeFolderPath);
-                    return restoreResult;
-                }
-                _logger.LogInformation("Backup restored successfully");
-
-                // Step 3: Checkout git tag if available
-                if (backupInfo.GitTagExists && !string.IsNullOrEmpty(backupInfo.Version))
+                // Step 1: Git checkout tag (backup version)
+                if (!string.IsNullOrEmpty(backupInfo.Version))
                 {
                     try
                     {
-                        _logger.LogInformation("Checking out git tag: {Version}", backupInfo.Version);
+                        _logger.LogInformation("Step 1: Checking out git tag: {Version}", backupInfo.Version);
                         await _gitService.CheckoutVersionAsync(config.HostComposeFolderPath, backupInfo.Version);
                         _logger.LogInformation("Git tag checked out successfully: {Version}", backupInfo.Version);
                     }
                     catch (Exception ex)
                     {
-                        _logger.LogWarning(ex, "Failed to checkout git tag: {Version}. Continuing with current code.", backupInfo.Version);
-                        // Don't fail the restore if git checkout fails - continue with current code
+                        _logger.LogError(ex, "Step 1 failed: Cannot checkout git tag: {Version}", backupInfo.Version);
+                        return RestoreResult.CreateFailure($"Failed to checkout version {backupInfo.Version}: {ex.Message}");
                     }
                 }
                 else
                 {
-                    _logger.LogInformation("No git tag available for this backup, continuing with current code");
+                    _logger.LogWarning("No version information in backup metadata, skipping git checkout");
                 }
 
-                // Step 4: Start services
-                _logger.LogInformation("Starting services for package: {PackageName}", config.FriendlyName);
-                await _dockerComposeService.StartServicesAsync(composeFiles, config.HostComposeFolderPath);
-                _logger.LogInformation("Services started successfully");
+                // Step 2: Check if backup file exists
+                using var sshService = await _sshConnectionManager.CreateSshServiceAsync();
+                if (!string.IsNullOrEmpty(backupInfo.FullPath))
+                {
+                    _logger.LogInformation("Step 2: Checking if backup file exists: {FullPath}", backupInfo.FullPath);
+                    if (!await sshService.FileExistsAsync(backupInfo.FullPath))
+                    {
+                        _logger.LogError("Step 2 failed: Backup file does not exist: {FullPath}", backupInfo.FullPath);
+                        await RollbackGitVersionAsync(config, originalVersion, "Backup file not found");
+                        return RestoreResult.CreateFailure($"Backup file does not exist: {backupInfo.FullPath}");
+                    }
+                }
 
-                _logger.LogInformation("Package restore completed successfully: {PackageName}", config.FriendlyName);
+                // Get architecture and compose files
+                var architecture = await sshService.GetArchitectureAsync();
+                var composeFiles = await _dockerComposeService.GetComposeFiles(config.HostComposeFolderPath, architecture);
+
+                // Step 3: Pull docker images (30 min timeout)
+                try
+                {
+                    _logger.LogInformation("Step 3: Pulling Docker images (30 min timeout)");
+                    await _dockerComposeService.PullAsync(composeFiles, config.HostComposeFolderPath, TimeSpan.FromMinutes(30));
+                    _logger.LogInformation("Docker images pulled successfully");
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Step 3 failed: Cannot pull Docker images - Docker daemon may be broken");
+                    await RollbackGitVersionAsync(config, originalVersion, "Docker pull failed - daemon may be broken");
+                    return RestoreResult.CreateFailure($"Failed to pull Docker images: {ex.Message}. Docker daemon may be broken.");
+                }
+
+                // Step 4: Stop services (docker compose down with built-in force fallback)
+                try
+                {
+                    _logger.LogInformation("Step 4: Stopping services");
+                    await _dockerComposeService.StopServicesAsync(composeFiles, config.HostComposeFolderPath);
+                    _logger.LogInformation("Services stopped successfully");
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Step 4 failed: Cannot stop services - Docker system may be broken");
+                    await RollbackGitVersionAsync(config, originalVersion, "Failed to stop services - Docker system broken");
+                    return RestoreResult.CreateFailure($"Failed to stop services: {ex.Message}. Docker system may be broken, services in unknown state.");
+                }
+
+                // Step 5: Restore data (POINT OF NO RETURN)
+                _logger.LogInformation("Step 5: Restoring backup data (POINT OF NO RETURN)");
+                var restoreResult = await _backupService.RestoreBackupAsync(config.HostComposeFolderPath, backupFilename);
+                if (!restoreResult.Success)
+                {
+                    _logger.LogCritical("Step 5 failed: Data restore failed after stopping services - CRITICAL STATE");
+                    dataRestored = false;
+                    return RestoreResult.CreateFailure($"CRITICAL: Data restore failed: {restoreResult.Error}. Services stopped, old data lost. Manual intervention required.");
+                }
+                dataRestored = true;
+                _logger.LogInformation("Backup data restored successfully - committed to backup version");
+
+                // Step 6: Start services
+                try
+                {
+                    _logger.LogInformation("Step 6: Starting services");
+                    await _dockerComposeService.StartServicesAsync(composeFiles, config.HostComposeFolderPath);
+                    _logger.LogInformation("Services started successfully");
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Step 6 failed: Services won't start (partial success - data already restored)");
+                    // Update version anyway since data is restored
+                    await UpdateVersionAfterRestoreAsync(config, backupInfo.Version);
+                    return RestoreResult.CreateFailure($"PARTIAL SUCCESS: Data restored to version {backupInfo.Version}, but services failed to start: {ex.Message}");
+                }
+
+                // Step 7: Update current version file
+                await UpdateVersionAfterRestoreAsync(config, backupInfo.Version);
+
+                _logger.LogInformation("Restore completed successfully: {PackageName} restored to version {Version}",
+                    config.FriendlyName, backupInfo.Version);
                 return RestoreResult.CreateSuccess();
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Error restoring package: {PackageName} from backup: {BackupFilename}",
+                _logger.LogError(ex, "Unexpected error during restore: {PackageName} from backup: {BackupFilename}",
                     config.FriendlyName, backupFilename);
+
+                if (dataRestored)
+                {
+                    return RestoreResult.CreateFailure($"PARTIAL SUCCESS: Data restored but error occurred: {ex.Message}");
+                }
+
                 return RestoreResult.CreateFailure($"Restore operation failed: {ex.Message}");
+            }
+        }
+
+        private async Task RollbackGitVersionAsync(DockerComposeConfiguration config, string? originalVersion, string reason)
+        {
+            if (string.IsNullOrEmpty(originalVersion))
+            {
+                _logger.LogWarning("Cannot rollback git version: original version unknown. Reason: {Reason}", reason);
+                return;
+            }
+
+            try
+            {
+                _logger.LogInformation("Rolling back git to previous version: {Version}. Reason: {Reason}",
+                    originalVersion, reason);
+                await _gitService.CheckoutVersionAsync(config.HostComposeFolderPath, originalVersion);
+                _logger.LogInformation("Git rolled back successfully to {Version}", originalVersion);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to rollback git to version {Version}", originalVersion);
+            }
+        }
+
+        private async Task UpdateVersionAfterRestoreAsync(DockerComposeConfiguration config, string version)
+        {
+            if (string.IsNullOrEmpty(version))
+            {
+                _logger.LogWarning("Cannot update version file: version is empty");
+                return;
+            }
+
+            try
+            {
+                _logger.LogInformation("Step 7: Updating version file to {Version}", version);
+                var packageVersion = PackageVersion.Parse(version);
+                var deploymentState = new DeploymentState(packageVersion, DateTime.UtcNow);
+                await _deploymentStateProvider.SaveDeploymentStateAsync(config.HostComposeFolderPath, deploymentState);
+                _logger.LogInformation("Version file updated successfully to {Version}", version);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to update version file to {Version}", version);
             }
         }
 

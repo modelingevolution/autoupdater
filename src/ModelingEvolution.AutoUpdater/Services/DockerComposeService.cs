@@ -81,8 +81,8 @@ namespace ModelingEvolution.AutoUpdater.Services
                 }
 
                 // Default to v2 syntax if detection fails
-                _logger.LogWarning("Could not detect Docker Compose version, defaulting to 'docker-compose' (v1)");
-                _dockerComposeCommand = "docker-compose";
+                _logger.LogWarning("Could not detect Docker Compose version, defaulting to 'docker compose' (v2)");
+                _dockerComposeCommand = "docker compose";
                 return _dockerComposeCommand;
             }
             finally

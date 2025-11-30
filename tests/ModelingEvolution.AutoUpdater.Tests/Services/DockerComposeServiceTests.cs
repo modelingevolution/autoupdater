@@ -18,29 +18,30 @@ namespace ModelingEvolution.AutoUpdater.Tests.Services
         public DockerComposeServiceTests()
         {
             _service = new DockerComposeService(_sshService, _logger);
-            SetupDockerComposeV2Detection();
+            // Note: Tests should call SetupDockerComposeV2Detection() or SetupDockerComposeV1Detection()
+            // explicitly if they need default docker compose detection, or set up custom mocks.
         }
 
         private void SetupDockerComposeV2Detection()
         {
             // Default to Docker Compose v2 for tests
-            _sshService.ExecuteCommandAsync("docker compose version")
-                .Returns(new SshCommandResult("docker compose version", "Docker Compose version v2.20.2"));
+            _sshService.ExecuteCommandAsync("sudo docker compose version")
+                .Returns(new SshCommandResult("sudo docker compose version", "Docker Compose version v2.20.2"));
         }
 
         private void SetupDockerComposeV1Detection()
         {
             // Setup v1 detection - v2 fails, v1 succeeds
-            _sshService.ExecuteCommandAsync("docker compose version")
+            _sshService.ExecuteCommandAsync("sudo docker compose version")
                 .Returns(new SshCommandResult
                 {
-                    Command = "docker compose version",
+                    Command = "sudo docker compose version",
                     Output = "",
                     Error = "command not found",
                     ExitCode = 1
                 });
-            _sshService.ExecuteCommandAsync("docker-compose --version")
-                .Returns(new SshCommandResult("docker-compose --version", "docker-compose version 1.29.2"));
+            _sshService.ExecuteCommandAsync("sudo docker-compose --version")
+                .Returns(new SshCommandResult("sudo docker-compose --version", "docker-compose version 1.29.2"));
         }
 
         [Fact]
@@ -131,10 +132,11 @@ namespace ModelingEvolution.AutoUpdater.Tests.Services
         public async Task StartServicesAsync_WithSingleFile_ShouldExecuteCorrectCommand()
         {
             // Arrange
+            SetupDockerComposeV2Detection();
             var composeFiles = new[] { "docker-compose.yml" };
             const string workingDirectory = "/app";
             const string expectedCommand = "sudo docker compose -f \"docker-compose.yml\" up -d";
-            
+
             _sshService.ExecuteCommandAsync(expectedCommand, workingDirectory).Returns(new SshCommandResult(expectedCommand,"Started successfully"));
 
             // Act
@@ -148,10 +150,11 @@ namespace ModelingEvolution.AutoUpdater.Tests.Services
         public async Task StartServicesAsync_WithMultipleFiles_ShouldExecuteCorrectCommand()
         {
             // Arrange
+            SetupDockerComposeV2Detection();
             var composeFiles = new[] { "docker-compose.yml", "docker-compose.x64.yml" };
             const string workingDirectory = "/app";
             const string expectedCommand = "sudo docker compose -f \"docker-compose.yml\" -f \"docker-compose.x64.yml\" up -d";
-            
+
             _sshService.ExecuteCommandAsync(expectedCommand, workingDirectory).Returns(new SshCommandResult(expectedCommand, "Started successfully"));
 
             // Act
@@ -165,10 +168,11 @@ namespace ModelingEvolution.AutoUpdater.Tests.Services
         public async Task StopServicesAsync_WithValidParameters_ShouldExecuteCorrectCommand()
         {
             // Arrange
+            SetupDockerComposeV2Detection();
             var composeFiles = new[] { "docker-compose.yml", "docker-compose.arm64.yml" };
             const string workingDirectory = "/app";
             const string expectedCommand = "sudo docker compose -f \"docker-compose.yml\" -f \"docker-compose.arm64.yml\" down";
-            
+
             _sshService.ExecuteCommandAsync(expectedCommand, workingDirectory).Returns(new SshCommandResult(expectedCommand,"Stopped successfully"));
 
             // Act
@@ -183,28 +187,30 @@ namespace ModelingEvolution.AutoUpdater.Tests.Services
         public async Task PullImagesAsync_WithValidParameters_ShouldExecuteCorrectCommand()
         {
             // Arrange
+            SetupDockerComposeV2Detection();
             var composeFiles = new[] { "docker-compose.yml" };
             const string workingDirectory = "/app";
             const string expectedCommand = "sudo docker compose -f \"docker-compose.yml\" pull";
-            
-            _sshService.ExecuteCommandAsync(expectedCommand, workingDirectory).Returns(new SshCommandResult(expectedCommand,"Pulled successfully"));
+
+            _sshService.ExecuteCommandAsync(expectedCommand, Arg.Any<TimeSpan>(), workingDirectory).Returns(new SshCommandResult(expectedCommand,"Pulled successfully"));
 
             // Act
             await _service.PullImagesAsync(composeFiles, workingDirectory);
 
             // Assert
-            await _sshService.Received(1).ExecuteCommandAsync(expectedCommand, workingDirectory);
+            await _sshService.Received(1).ExecuteCommandAsync(expectedCommand, Arg.Any<TimeSpan>(), workingDirectory);
         }
 
         [Fact]
         public async Task GetServicesStatusAsync_WithValidParameters_ShouldExecuteCorrectCommand()
         {
             // Arrange
+            SetupDockerComposeV2Detection();
             var composeFiles = new[] { "docker-compose.yml" };
             const string workingDirectory = "/app";
             const string expectedCommand = "sudo docker compose -f \"docker-compose.yml\" ps";
             const string expectedOutput = "service1  running\nservice2  stopped";
-            
+
             _sshService.ExecuteCommandAsync(expectedCommand, workingDirectory).Returns(new SshCommandResult(expectedCommand, expectedOutput));
 
             // Act
@@ -219,10 +225,11 @@ namespace ModelingEvolution.AutoUpdater.Tests.Services
         public async Task RestartServicesAsync_WithValidParameters_ShouldExecuteCorrectCommand()
         {
             // Arrange
+            SetupDockerComposeV2Detection();
             var composeFiles = new[] { "docker-compose.yml", "docker-compose.x64.yml" };
             const string workingDirectory = "/app";
             const string expectedCommand = "sudo docker compose -f \"docker-compose.yml\" -f \"docker-compose.x64.yml\" down && sudo docker compose -f \"docker-compose.yml\" -f \"docker-compose.x64.yml\" up -d";
-            
+
             _sshService.ExecuteCommandAsync(expectedCommand, workingDirectory).Returns(new SshCommandResult(expectedCommand, "Restarted successfully"));
 
             // Act
@@ -321,10 +328,11 @@ namespace ModelingEvolution.AutoUpdater.Tests.Services
         public async Task StartServicesAsync_WithArm64ComposeFiles_ShouldExecuteCorrectCommand()
         {
             // Arrange - This reproduces the exact scenario from the logs
+            SetupDockerComposeV2Detection();
             var composeFiles = new[] { "docker-compose.yml", "docker-compose.arm64.yml" };
             const string workingDirectory = "/var/docker/configuration/rocket-welder";
             const string expectedCommand = "sudo docker compose -f \"docker-compose.yml\" -f \"docker-compose.arm64.yml\" up -d";
-            
+
             _sshService.ExecuteCommandAsync(expectedCommand, workingDirectory)
                 .Returns(new SshCommandResult(expectedCommand, "Started successfully"));
 
@@ -339,10 +347,11 @@ namespace ModelingEvolution.AutoUpdater.Tests.Services
         public async Task RestartServicesAsync_WithArm64ComposeFiles_ShouldExecuteCorrectCommand()
         {
             // Arrange - This reproduces the exact scenario from the system logs
+            SetupDockerComposeV2Detection();
             var composeFiles = new[] { "docker-compose.yml", "docker-compose.arm64.yml" };
             const string workingDirectory = "/var/docker/configuration/rocket-welder";
             const string expectedCommand = "sudo docker compose -f \"docker-compose.yml\" -f \"docker-compose.arm64.yml\" down && sudo docker compose -f \"docker-compose.yml\" -f \"docker-compose.arm64.yml\" up -d";
-            
+
             _sshService.ExecuteCommandAsync(expectedCommand, workingDirectory)
                 .Returns(new SshCommandResult(expectedCommand, "Restarted successfully"));
 
@@ -370,7 +379,7 @@ namespace ModelingEvolution.AutoUpdater.Tests.Services
             await _service.StartServicesAsync(composeFiles, workingDirectory);
 
             // Assert
-            await _sshService.Received(1).ExecuteCommandAsync("docker-compose --version");
+            await _sshService.Received(1).ExecuteCommandAsync("sudo docker-compose --version");
             await _sshService.Received(1).ExecuteCommandAsync(expectedCommand, workingDirectory);
         }
 
@@ -378,18 +387,18 @@ namespace ModelingEvolution.AutoUpdater.Tests.Services
         public async Task GetDockerComposeCommand_WhenBothVersionsFail_ShouldDefaultToV2()
         {
             // Arrange
-            _sshService.ExecuteCommandAsync("docker compose version")
+            _sshService.ExecuteCommandAsync("sudo docker compose version")
                 .Returns(new SshCommandResult
                 {
-                    Command = "docker compose version",
+                    Command = "sudo docker compose version",
                     Output = "",
                     Error = "command not found",
                     ExitCode = 1
                 });
-            _sshService.ExecuteCommandAsync("docker-compose --version")
+            _sshService.ExecuteCommandAsync("sudo docker-compose --version")
                 .Returns(new SshCommandResult
                 {
-                    Command = "docker-compose --version",
+                    Command = "sudo docker-compose --version",
                     Output = "",
                     Error = "command not found",
                     ExitCode = 1
@@ -406,8 +415,8 @@ namespace ModelingEvolution.AutoUpdater.Tests.Services
             await _service.StartServicesAsync(composeFiles, workingDirectory);
 
             // Assert
-            await _sshService.Received(1).ExecuteCommandAsync("docker compose version");
-            await _sshService.Received(1).ExecuteCommandAsync("docker-compose --version");
+            await _sshService.Received(1).ExecuteCommandAsync("sudo docker compose version");
+            await _sshService.Received(1).ExecuteCommandAsync("sudo docker-compose --version");
             await _sshService.Received(1).ExecuteCommandAsync(expectedCommand, workingDirectory);
         }
 
@@ -415,10 +424,11 @@ namespace ModelingEvolution.AutoUpdater.Tests.Services
         public async Task GetDockerComposeCommand_ShouldCacheDetectionResult()
         {
             // Arrange
+            SetupDockerComposeV2Detection();
             var composeFiles = new[] { "docker-compose.yml" };
             const string workingDirectory = "/app";
             const string expectedCommand = "sudo docker compose -f \"docker-compose.yml\" up -d";
-            
+
             _sshService.ExecuteCommandAsync(expectedCommand, workingDirectory)
                 .Returns(new SshCommandResult(expectedCommand, "Started successfully"));
 
@@ -427,7 +437,7 @@ namespace ModelingEvolution.AutoUpdater.Tests.Services
             await _service.StartServicesAsync(composeFiles, workingDirectory);
 
             // Assert - Detection should only happen once
-            await _sshService.Received(1).ExecuteCommandAsync("docker compose version");
+            await _sshService.Received(1).ExecuteCommandAsync("sudo docker compose version");
             await _sshService.Received(2).ExecuteCommandAsync(expectedCommand, workingDirectory);
         }
 
@@ -435,9 +445,10 @@ namespace ModelingEvolution.AutoUpdater.Tests.Services
         public async Task StopServicesAsync_WithProjectName_ShouldDetectAndUseCorrectCommand()
         {
             // Arrange
+            SetupDockerComposeV2Detection();
             const string projectName = "rocket-welder";
             const string expectedCommand = "sudo docker compose -p \"rocket-welder\" down";
-            
+
             _sshService.ExecuteCommandAsync(expectedCommand)
                 .Returns(new SshCommandResult(expectedCommand, "Stopped successfully"));
 
@@ -472,9 +483,10 @@ namespace ModelingEvolution.AutoUpdater.Tests.Services
         public async Task GetDockerComposeStatusAsync_ShouldDetectAndUseCorrectCommand()
         {
             // Arrange
+            SetupDockerComposeV2Detection();
             const string expectedCommand = "sudo docker compose ls --format json";
             const string jsonOutput = "[{\"Name\":\"test-project\",\"Status\":\"running\",\"ConfigFiles\":\"docker-compose.yml\"}]";
-            
+
             _sshService.ExecuteCommandAsync(expectedCommand)
                 .Returns(new SshCommandResult(expectedCommand, jsonOutput));
 
