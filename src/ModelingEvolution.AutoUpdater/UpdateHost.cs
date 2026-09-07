@@ -180,7 +180,7 @@ public class UpdateHost : IHostedService
         if (!await _updateLock.WaitAsync(100))
         {
             _log.LogWarning("Update already in progress, request rejected");
-            return UpdateResult.CreateFailed("Update already in progress", null, new List<string>());
+            return UpdateResult.CreateFailed(AlreadyInProgressMessage, null, new List<string>());
         }
 
         try
@@ -628,6 +628,11 @@ public class UpdateHost : IHostedService
 
         _progressService.LogPhaseProgress(operation, overall, p.BytesPercent, phaseMessage);
     }
+
+    /// <summary>
+    /// Error message of the result returned when an update is requested while another one runs.
+    /// </summary>
+    public const string AlreadyInProgressMessage = "Update already in progress";
 
     private const float PullProgressStart = 30f;
     private const float PullProgressEnd = 40f;

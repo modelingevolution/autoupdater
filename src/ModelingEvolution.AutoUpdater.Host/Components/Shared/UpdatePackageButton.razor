@@ -109,7 +109,7 @@
             try
             {
                 var updateResult = await UpdateHost.UpdateAsync(packageConfig);
-                if (!updateResult.Success && updateResult.ErrorMessage == "Update already in progress")
+                if (!updateResult.Success && updateResult.ErrorMessage == ModelingEvolution.AutoUpdater.UpdateHost.AlreadyInProgressMessage)
                 {
                     _updateRequested = false;
                 }
