@@ -22,7 +22,6 @@ namespace ModelingEvolution.AutoUpdater.Services
         private const string TextDownloading = "Downloading";
         private const string TextDownloadComplete = "Download complete";
         private const string TextPullComplete = "Pull complete";
-        private const string TextAlreadyExists = "Already exists";
         private const string TextError = "Error";
         private const string TextSkippedPrefix = "Skipped";
 
@@ -146,7 +145,6 @@ namespace ModelingEvolution.AutoUpdater.Services
 
                 case TextDownloadComplete:
                 case TextPullComplete:
-                case TextAlreadyExists:
                     if (_layers.TryGetValue((parentId, id), out var layer))
                     {
                         _layers[(parentId, id)] = (layer.Total, layer.Total);

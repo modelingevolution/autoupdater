@@ -25,7 +25,10 @@
     private bool _hasUpdateAvailable = false;
     private SubscriptionSet? _subscriptions;
 
-    private bool IsUpdating => ReadModel.GetPackageState(PackageName)?.IsUpdateInProgress ?? false;
+    // Set on click, before the update task publishes UpdateStartedEvent, so a second click in that window is ignored.
+    private bool _updateRequested;
+
+    private bool IsUpdating => _updateRequested || (ReadModel.GetPackageState(PackageName)?.IsUpdateInProgress ?? false);
 
     protected override void OnInitialized()
     {
@@ -66,6 +69,7 @@
     {
         if (evt.ApplicationName == PackageName.ToString())
         {
+            _updateRequested = false;
             _hasUpdateAvailable = false;
             InvokeAsync(StateHasChanged);
         }
@@ -96,6 +100,8 @@
             return;
         }
 
+        _updateRequested = true;
+
         // Run in background thread to avoid blocking UI
         // UI state is managed by PackageStateReadModel via events
         _ = Task.Run(async () =>
@@ -103,6 +109,10 @@
             try
             {
                 var updateResult = await UpdateHost.UpdateAsync(packageConfig);
+                if (!updateResult.Success && updateResult.ErrorMessage == "Update already in progress")
+                {
+                    _updateRequested = false;
+                }
 
                 Logger.LogInformation("Update completed for package: {PackageName}, Status: {Status}, Success: {Success}",
                     PackageName, updateResult.Status, updateResult.Success);

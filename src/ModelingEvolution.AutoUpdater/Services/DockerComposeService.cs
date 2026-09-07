@@ -20,7 +20,7 @@ namespace ModelingEvolution.AutoUpdater.Services
     /// <summary>
     /// Implementation of Docker Compose service
     /// </summary>
-    public class DockerComposeService : IDockerComposeService
+    public partial class DockerComposeService : IDockerComposeService
     {
         private readonly ISshService _sshService;
         private readonly ILogger<DockerComposeService> _logger;
@@ -86,7 +86,7 @@ namespace ModelingEvolution.AutoUpdater.Services
                 {
                     _dockerComposeCommand = "docker compose";
                     _dockerComposeVersion = ParseComposeVersion(result.Output);
-                    _logger.LogInformation("Detected Docker Compose v2 (docker compose) version {Version}", _dockerComposeVersion);
+                    _logger.LogInformation("Detected Docker Compose v2 (docker compose) version {Version}", _dockerComposeVersion?.ToString() ?? "unknown (streamed pull progress disabled)");
                     return _dockerComposeCommand;
                 }
 
@@ -436,9 +436,12 @@ namespace ModelingEvolution.AutoUpdater.Services
             return string.Join(" | ", lines.Skip(Math.Max(0, lines.Length - tailLines)));
         }
 
+        [GeneratedRegex(@"version\s+v?(\d+)\.(\d+)\.(\d+)", RegexOptions.IgnoreCase)]
+        private static partial Regex ComposeVersionRegex();
+
         internal static Version? ParseComposeVersion(string versionOutput)
         {
-            var match = Regex.Match(versionOutput ?? string.Empty, @"version\s+v?(\d+)\.(\d+)\.(\d+)", RegexOptions.IgnoreCase);
+            var match = ComposeVersionRegex().Match(versionOutput ?? string.Empty);
             return match.Success
                 ? new Version(int.Parse(match.Groups[1].Value), int.Parse(match.Groups[2].Value), int.Parse(match.Groups[3].Value))
                 : null;

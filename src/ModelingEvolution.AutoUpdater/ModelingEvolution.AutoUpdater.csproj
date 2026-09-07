@@ -33,6 +33,7 @@
     <PackageReference Include="Docker.DotNet" Version="3.125.15" />
     <PackageReference Include="Ductus.FluentDocker" Version="2.10.59" />
     <PackageReference Include="LibGit2Sharp" Version="0.31.0" />
+    <PackageReference Include="ModelingEvolution.Bytes" Version="3.0.0" />
     <PackageReference Include="ModelingEvolution.JsonParsableConverter" Version="1.0.0" />
     <PackageReference Include="SSH.NET" Version="2024.2.0" />
     <PackageReference Include="Microsoft.Extensions.Configuration.Abstractions" Version="10.0.11" />

@@ -295,11 +295,12 @@ namespace ModelingEvolution.AutoUpdater.Tests.Services
         }
 
         [Theory]
-        [InlineData(0, "0 B")]
-        [InlineData(1023, "1023 B")]
+        [InlineData(0, "0.0 bytes")]
+        [InlineData(1023, "1.0 KB")]
         [InlineData(1048576, "1.0 MB")]
         [InlineData(432013312, "412.0 MB")]
         [InlineData(1288490188, "1.2 GB")]
+        // Format is ModelingEvolution.Bytes' own (precision 1); these pin what the UI shows.
         public void FormatBytes_ProducesHumanReadableSizes(long bytes, string expected)
         {
             PullProgress.FormatBytes(bytes).Should().Be(expected);

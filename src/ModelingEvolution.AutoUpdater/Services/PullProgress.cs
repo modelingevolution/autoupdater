@@ -1,5 +1,4 @@
 using System;
-using System.Globalization;
 
 namespace ModelingEvolution.AutoUpdater.Services
 {
@@ -45,20 +44,6 @@ namespace ModelingEvolution.AutoUpdater.Services
             return $"{ImagesPulled}/{ImagesTotal} images, {FormatBytes()}";
         }
 
-        internal static string FormatBytes(long bytes)
-        {
-            string[] units = { "B", "KB", "MB", "GB", "TB" };
-            double value = bytes;
-            var unit = 0;
-            while (value >= 1024 && unit < units.Length - 1)
-            {
-                value /= 1024;
-                unit++;
-            }
-
-            return unit == 0
-                ? $"{bytes} B"
-                : string.Create(CultureInfo.InvariantCulture, $"{value:0.0} {units[unit]}");
-        }
+        internal static string FormatBytes(long bytes) => new Bytes(bytes, precision: 1).ToString();
     }
 }
