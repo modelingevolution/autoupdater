@@ -74,6 +74,12 @@ namespace ModelingEvolution.AutoUpdater.Services
             }
         }
 
+        /// <summary>
+        /// How long to wait for the output pump to see end-of-stream after the command itself has returned,
+        /// before the stream is closed underneath it.
+        /// </summary>
+        internal TimeSpan OutputDrainTimeout { get; set; } = TimeSpan.FromSeconds(5);
+
         public async Task<SshCommandResult> ExecuteCommandAsync(string command, TimeSpan timeout, string? workingDirectory, Action<string> onOutputLine)
         {
             ArgumentNullException.ThrowIfNull(onOutputLine);
@@ -98,15 +104,21 @@ namespace ModelingEvolution.AutoUpdater.Services
                 }
                 finally
                 {
-                    // The output stream ends when the channel closes; give the pump a moment to drain.
-                    await Task.WhenAny(pump, Task.Delay(TimeSpan.FromSeconds(5)));
+                    // The stream ends when the channel closes. If that does not happen in time, close it ourselves
+                    // so the pump cannot outlive this call, then wait for the pump - it never throws.
+                    if (await Task.WhenAny(pump, Task.Delay(OutputDrainTimeout)) != pump)
+                    {
+                        _logger.LogWarning("Output of SSH command did not reach end-of-stream within {Drain}; closing it: {Command}", OutputDrainTimeout, command);
+                        sshCommand.OutputStream.Dispose();
+                    }
+                    await pump;
                 }
 
                 var commandResult = new SshCommandResult
                 {
                     Command = command,
                     ExitCode = sshCommand.ExitStatus ?? 0,
-                    Output = output.ToString(),
+                    Output = SnapshotOutput(output),
                     Error = sshCommand.Error
                 };
 
@@ -125,12 +137,20 @@ namespace ModelingEvolution.AutoUpdater.Services
             catch (OperationCanceledException)
             {
                 _logger.LogError("Streamed SSH command timed out after {Timeout}: {Command}", timeout, command);
-                return SshCommandResult.Failed(command, -1, output.ToString(), $"Command timed out after {timeout}");
+                return SshCommandResult.Failed(command, -1, SnapshotOutput(output), $"Command timed out after {timeout}");
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Failed to execute streamed SSH command: {Command}", command);
-                return SshCommandResult.Failed(command, -1, output.ToString(), ex.Message);
+                return SshCommandResult.Failed(command, -1, SnapshotOutput(output), ex.Message);
+            }
+        }
+
+        private static string SnapshotOutput(StringBuilder output)
+        {
+            lock (output)
+            {
+                return output.ToString();
             }
         }
 
@@ -141,7 +161,11 @@ namespace ModelingEvolution.AutoUpdater.Services
                 using var reader = new StreamReader(stream, Encoding.UTF8, detectEncodingFromByteOrderMarks: false, bufferSize: 4096, leaveOpen: true);
                 while (await reader.ReadLineAsync() is { } line)
                 {
-                    output.AppendLine(line);
+                    lock (output)
+                    {
+                        output.AppendLine(line);
+                    }
+
                     try
                     {
                         onOutputLine(line);
@@ -154,7 +178,7 @@ namespace ModelingEvolution.AutoUpdater.Services
             }
             catch (ObjectDisposedException)
             {
-                // Channel closed underneath us - nothing more to read.
+                // Stream closed underneath us - nothing more to read.
             }
             catch (Exception ex)
             {

@@ -158,11 +158,22 @@ namespace ModelingEvolution.AutoUpdater.Tests.Services
         {
             // Arrange
             SetupDockerComposeV2Detection("Docker Compose version v2.40.3");
-            var lines = new[]
-            {
-                """{"id":"a","text":"Pulling"}""",
-                """{"error":true,"message":"unable to get image 'x': access denied"}""",
-            };
+            SetupStreamedCommand(JsonPullCommand, "/app", DockerPullProgressParserTests.CapturedFailedPull, exitCode: 1);
+
+            // Act
+            var act = async () => await _service.PullAsync(new[] { "docker-compose.yml" }, "/app", TimeSpan.FromMinutes(1), new RecordingProgress());
+
+            // Assert
+            await act.Should().ThrowAsync<InvalidOperationException>()
+                .WithMessage("*Error response from daemon: pull access denied for modelingevolution/does-not-exist-zz*");
+        }
+
+        [Fact]
+        public async Task PullAsync_WhenStreamedPullFailsWithoutJsonError_ThrowsWithTailOfOutput()
+        {
+            // Arrange: stderr is redirected into stdout on the streamed path, so Error is empty and the reason must come from Output
+            SetupDockerComposeV2Detection("Docker Compose version v2.40.3");
+            var lines = new[] { """{"id":"a","text":"Pulling"}""", "Error response from daemon: Get https://registry: dial tcp: i/o timeout" };
             SetupStreamedCommand(JsonPullCommand, "/app", lines, exitCode: 1);
 
             // Act
@@ -170,7 +181,15 @@ namespace ModelingEvolution.AutoUpdater.Tests.Services
 
             // Assert
             await act.Should().ThrowAsync<InvalidOperationException>()
-                .WithMessage("*unable to get image 'x': access denied*");
+                .WithMessage("*dial tcp: i/o timeout*");
+        }
+
+        [Fact]
+        public void DescribeFailure_PrefersStderr_ThenTailOfStdout_ThenExitCode()
+        {
+            DockerComposeService.DescribeFailure(new SshCommandResult { ExitCode = 1, Error = " boom \n", Output = "x" }).Should().Be("boom");
+            DockerComposeService.DescribeFailure(new SshCommandResult { ExitCode = 1, Output = "l1\nl2\nl3\nl4\nl5\nl6\nl7" }).Should().Be("l3 | l4 | l5 | l6 | l7");
+            DockerComposeService.DescribeFailure(new SshCommandResult { ExitCode = 137 }).Should().Be("exit code 137, no output");
         }
 
         [Theory]

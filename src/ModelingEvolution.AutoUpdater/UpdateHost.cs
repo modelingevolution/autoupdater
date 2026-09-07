@@ -245,7 +245,7 @@ public class UpdateHost : IHostedService
             // Phase 1: Pull Docker Images (before any system changes)
             var pullResult = await PullDockerImagesAsync(composeFiles, configuration.HostComposeFolderPath, 
                 currentVersion, executedScripts);
-            if (pullResult != null) return pullResult;
+            if (pullResult != null) return await CompleteAsync(configuration, currentVersion, targetVersion.Value.ToString(), pullResult);
 
             // Phase 2: Backup Creation
             // Note: Backup is performed before stopping services because the backup script
@@ -256,7 +256,7 @@ public class UpdateHost : IHostedService
             }
             catch (InvalidOperationException ex)
             {
-                return UpdateResult.CreateFailed(ex.Message, currentVersion, executedScripts);
+                return await CompleteAsync(configuration, currentVersion, targetVersion.Value.ToString(), UpdateResult.CreateFailed(ex.Message, currentVersion, executedScripts));
             }
 
             // Phase 3: Migration Scripts
@@ -269,15 +269,15 @@ public class UpdateHost : IHostedService
             if (!migrationResult.Success)
             {
                 if (backup?.Success != true)
-                    return UpdateResult.CreateFailed(
+                    return await CompleteAsync(configuration, currentVersion, targetVersion.Value.ToString(), UpdateResult.CreateFailed(
                         $"Migration failed: {migrationResult.Error} - No recovery possible without backup",
-                        currentVersion, executedScripts, recoveryPerformed: false);
+                        currentVersion, executedScripts, recoveryPerformed: false));
                 
                 _log.LogInformation("Performing rollback with backup recovery");
                 await PerformRollbackWithBackupAsync(executedVersions, backup, composeFiles,
                     configuration.HostComposeFolderPath);
-                return UpdateResult.CreateFailed($"Migration failed: {migrationResult.Error}", currentVersion,
-                    executedScripts, recoveryPerformed: true, backup.BackupFilePath);
+                return await CompleteAsync(configuration, currentVersion, targetVersion.Value.ToString(), UpdateResult.CreateFailed($"Migration failed: {migrationResult.Error}", currentVersion,
+                    executedScripts, recoveryPerformed: true, backup.BackupFilePath));
             }
 
             // Phase 4: Stop and Restart Docker Services
@@ -287,14 +287,14 @@ public class UpdateHost : IHostedService
             if (!restartResult.Success)
             {
                 if (backup?.Success != true)
-                    return UpdateResult.CreateFailed(
+                    return await CompleteAsync(configuration, currentVersion, targetVersion.Value.ToString(), UpdateResult.CreateFailed(
                         $"Docker startup failed: {restartResult.Error} - No recovery possible without backup",
-                        currentVersion, executedScripts, recoveryPerformed: false);
+                        currentVersion, executedScripts, recoveryPerformed: false));
                 
                 _log.LogInformation("Docker startup failed - performing rollback with backup recovery");
                 await PerformRollbackWithBackupAsync(executedVersions, backup, composeFiles, configuration.HostComposeFolderPath);
-                return UpdateResult.CreateFailed($"Docker startup failed: {restartResult.Error}", currentVersion,
-                    executedScripts, recoveryPerformed: true, backup.BackupFilePath);
+                return await CompleteAsync(configuration, currentVersion, targetVersion.Value.ToString(), UpdateResult.CreateFailed($"Docker startup failed: {restartResult.Error}", currentVersion,
+                    executedScripts, recoveryPerformed: true, backup.BackupFilePath));
             }
 
             // Phase 5: Health Check
@@ -313,17 +313,17 @@ public class UpdateHost : IHostedService
                     _log.LogInformation("Critical services failed - performing rollback with backup recovery");
                     await PerformRollbackWithBackupAsync(executedVersions, backup, composeFiles,
                         configuration.HostComposeFolderPath);
-                    return UpdateResult.CreateFailed(
+                    return await CompleteAsync(configuration, currentVersion, targetVersion.Value.ToString(), UpdateResult.CreateFailed(
                         "Critical services unhealthy after deployment",
-                        currentVersion, executedScripts, recoveryPerformed: true, backup.BackupFilePath);
+                        currentVersion, executedScripts, recoveryPerformed: true, backup.BackupFilePath));
                 }
 
                 // Partial success - keep running services
                 _log.LogInformation("Accepting partial deployment state - some services healthy");
                 await UpdateDeploymentStateAsync(currentDeploymentState, targetVersion.Value.ToString(),
                     executedVersions, configuration.HostComposeFolderPath);
-                return UpdateResult.CreatePartialSuccess(
-                    targetVersion.Value.ToString(), currentVersion, executedScripts, healthCheck);
+                return await CompleteAsync(configuration, currentVersion, targetVersion.Value.ToString(), UpdateResult.CreatePartialSuccess(
+                    targetVersion.Value.ToString(), currentVersion, executedScripts, healthCheck));
             }
 
             // Phase 6: Complete Success
@@ -332,17 +332,8 @@ public class UpdateHost : IHostedService
             await UpdateDeploymentStateAsync(currentDeploymentState, targetVersion.Value.ToString(), executedVersions,
                 configuration.HostComposeFolderPath);
 
-            // Publish successful update completion event
-            await _eventHub.PublishAsync(new UpdateCompletedEvent(
-                configuration.FriendlyName,
-                currentVersion,
-                targetVersion.Value.ToString(),
-                true,
-                null,
-                executedScripts));
-
-            return UpdateResult.CreateSuccess(
-                targetVersion.Value.ToString(), currentVersion, executedScripts, healthCheck, backup?.BackupFilePath);
+            return await CompleteAsync(configuration, currentVersion, targetVersion.Value.ToString(), UpdateResult.CreateSuccess(
+                targetVersion.Value.ToString(), currentVersion, executedScripts, healthCheck, backup?.BackupFilePath));
         }
         catch (RestartPendingException)
         {
@@ -602,6 +593,22 @@ public class UpdateHost : IHostedService
             return UpdateResult.CreateFailed($"Docker image pull failed: {ex.Message}", currentVersion,
                 executedScripts, recoveryPerformed: false);
         }
+    }
+
+    /// <summary>
+    /// Publishes <see cref="UpdateCompletedEvent"/> for a result reached after <see cref="UpdateStartedEvent"/> went out,
+    /// so read models never keep a package latched in "updating" after an early failure or a partial deployment.
+    /// </summary>
+    private async Task<UpdateResult> CompleteAsync(DockerComposeConfiguration configuration, string? currentVersion, string targetVersion, UpdateResult result)
+    {
+        await _eventHub.PublishAsync(new UpdateCompletedEvent(
+            configuration.FriendlyName,
+            currentVersion,
+            result.Version ?? targetVersion,
+            result.Success,
+            result.Success ? null : result.ErrorMessage,
+            result.ExecutedScripts));
+        return result;
     }
 
     /// <summary>

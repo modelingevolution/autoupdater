@@ -3,6 +3,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using ModelingEvolution.AutoUpdater;
 using ModelingEvolution.AutoUpdater.Common;
+using ModelingEvolution.AutoUpdater.Common.Events;
 using ModelingEvolution.AutoUpdater.Models;
 using ModelingEvolution.AutoUpdater.Services;
 using NSubstitute;
@@ -153,6 +154,38 @@ namespace ModelingEvolution.AutoUpdater.Tests.Services
                 _progressService.LogPhaseProgress("Pulling Docker images (2/2)", 40f, 100f, "All images pulled");
                 _progressService.LogOperationProgress("Creating backup", 40f, Arg.Any<string?>(), Arg.Any<object[]>());
             });
+        }
+
+        [Fact]
+        public async Task UpdateAsync_WhenPullFails_PublishesFailedUpdateCompletedEvent()
+        {
+            // Arrange: a failed pull returns early; the read model must still be told the update is over
+            var config = CreateTestConfiguration();
+            _deploymentStateProvider.GetDeploymentStateAsync(Arg.Any<string>())
+                      .Returns(new DeploymentState(new PackageVersion("1.0.0"), DateTime.Now)
+                      {
+                          Up = ImmutableSortedSet<PackageVersion>.Empty,
+                          Failed = ImmutableSortedSet<PackageVersion>.Empty
+                      });
+            _gitService.GetAvailableVersionsAsync(Arg.Any<string>()).Returns(new[] { new PackageVersion("1.1.0") });
+            var mockSshService = Substitute.For<ISshService>();
+            mockSshService.GetArchitectureAsync().Returns(CpuArchitecture.X64);
+            _sshConnectionManager.CreateSshServiceAsync().Returns(mockSshService);
+            _dockerService.GetComposeFiles(Arg.Any<string>(), CpuArchitecture.X64).Returns(new[] { "docker-compose.yml" });
+            _dockerService.PullAsync(Arg.Any<string[]>(), Arg.Any<string>(), Arg.Any<TimeSpan>(), Arg.Any<IProgress<PullProgress>?>())
+                         .Returns<Task>(_ => throw new InvalidOperationException("Failed to pull Docker images: access denied"));
+
+            var updateHost = new UpdateHost(_configuration, _logger, _gitService, _scriptService, _sshConnectionManager, _dockerService, _deploymentStateProvider, _backupService, _healthCheckService, _progressService, _eventHub);
+
+            // Act
+            var result = await updateHost.UpdateAsync(config);
+
+            // Assert
+            result.Success.Should().BeFalse();
+            await _eventHub.Received(1).PublishAsync(Arg.Any<UpdateStartedEvent>());
+            await _eventHub.Received(1).PublishAsync(Arg.Is<UpdateCompletedEvent>(e =>
+                !e.Success && e.ErrorMessage!.Contains("access denied")));
+            await _backupService.DidNotReceive().BackupScriptExistsAsync(Arg.Any<string>());
         }
 
         [Fact]

@@ -324,8 +324,9 @@ namespace ModelingEvolution.AutoUpdater.Services
 
                 if (!result.IsSuccess)
                 {
-                    _logger.LogError("Failed to pull Docker images: {Error}", result.Error);
-                    throw new InvalidOperationException($"Failed to pull Docker images: {result.Error}");
+                    var reason = DescribeFailure(result);
+                    _logger.LogError("Failed to pull Docker images (exit {ExitCode}): {Reason}", result.ExitCode, reason);
+                    throw new InvalidOperationException($"Failed to pull Docker images: {reason}");
                 }
 
                 _logger.LogInformation("Docker images pulled successfully");
@@ -402,6 +403,27 @@ namespace ModelingEvolution.AutoUpdater.Services
             }
 
             return result;
+        }
+
+        /// <summary>
+        /// Human-readable reason for a failed command. Falls back to the tail of stdout when stderr is empty,
+        /// which is the case for the streamed pull (stderr is redirected into stdout there).
+        /// </summary>
+        internal static string DescribeFailure(SshCommandResult result, int tailLines = 5)
+        {
+            if (!string.IsNullOrWhiteSpace(result.Error))
+            {
+                return result.Error.Trim();
+            }
+
+            var lines = (result.Output ?? string.Empty)
+                .Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+            if (lines.Length == 0)
+            {
+                return $"exit code {result.ExitCode}, no output";
+            }
+
+            return string.Join(" | ", lines.Skip(Math.Max(0, lines.Length - tailLines)));
         }
 
         internal static Version? ParseComposeVersion(string versionOutput)

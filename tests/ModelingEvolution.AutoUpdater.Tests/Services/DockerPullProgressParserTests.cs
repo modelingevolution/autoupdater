@@ -178,16 +178,57 @@ namespace ModelingEvolution.AutoUpdater.Tests.Services
             parser.Current.ImagesTotal.Should().Be(1);
         }
 
+        /// <summary>
+        /// Captured verbatim on saturn (compose 2.40.3) for a service "x" whose image does not exist on the registry.
+        /// </summary>
+        public static readonly string[] CapturedFailedPull =
+        {
+            """{"id":"x","text":"Pulling"}""",
+            """{"id":"x","text":"Error","status":"pull access denied for modelingevolution/does-not-exist-zz, repository does not exist or may require 'docker login'"}""",
+            """{"error":true,"message":"Error response from daemon: pull access denied for modelingevolution/does-not-exist-zz, repository does not exist or may require 'docker login'"}""",
+        };
+
         [Fact]
-        public void Feed_ErrorLine_CapturesMessageAndDoesNotChangeProgress()
+        public void Feed_CapturedFailedPull_ExposesDaemonMessageAndKeepsImageCount()
         {
             var parser = new DockerPullProgressParser();
 
-            var changed = parser.Feed("""{"error":true,"message":"unable to get image 'busybox:1.36': access denied"}""");
+            var snapshots = FeedAll(parser, CapturedFailedPull);
 
-            changed.Should().BeFalse();
-            parser.ErrorMessage.Should().Be("unable to get image 'busybox:1.36': access denied");
-            parser.Current.Should().Be(PullProgress.Empty);
+            parser.ErrorMessage.Should().Be("Error response from daemon: pull access denied for modelingevolution/does-not-exist-zz, repository does not exist or may require 'docker login'");
+            parser.Current.ImagesTotal.Should().Be(1);
+            parser.Current.ImagesPulled.Should().Be(0);
+            snapshots.Should().HaveCount(1, "only the first 'Pulling' line changes the snapshot");
+        }
+
+        [Fact]
+        public void Feed_ImageLevelErrorWithoutFinalErrorLine_StillExposesReason()
+        {
+            var parser = new DockerPullProgressParser();
+
+            parser.Feed(CapturedFailedPull[0]);
+            parser.Feed(CapturedFailedPull[1]);
+
+            parser.ErrorMessage.Should().StartWith("pull access denied for modelingevolution/does-not-exist-zz");
+        }
+
+        [Fact]
+        public void Feed_SharedBaseLayerUnderTwoImages_IsCountedPerImage()
+        {
+            var parser = new DockerPullProgressParser();
+            var lines = new[]
+            {
+                """{"id":"a","text":"Pulling"}""",
+                """{"id":"b","text":"Pulling"}""",
+                """{"id":"base","parent_id":"a","text":"Downloading","current":100,"total":1000}""",
+                """{"id":"base","parent_id":"b","text":"Downloading","current":100,"total":1000}""",
+                """{"id":"base","parent_id":"a","text":"Download complete"}""",
+            };
+
+            FeedAll(parser, lines);
+
+            parser.Current.BytesTotal.Should().Be(2000);
+            parser.Current.BytesDownloaded.Should().Be(1100);
         }
 
         [Theory]

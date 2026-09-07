@@ -23,10 +23,12 @@ namespace ModelingEvolution.AutoUpdater.Services
         private const string TextDownloadComplete = "Download complete";
         private const string TextPullComplete = "Pull complete";
         private const string TextAlreadyExists = "Already exists";
+        private const string TextError = "Error";
 
         private readonly HashSet<string> _images = new(StringComparer.Ordinal);
         private readonly HashSet<string> _pulled = new(StringComparer.Ordinal);
-        private readonly Dictionary<string, (string Image, long Current, long Total)> _layers = new(StringComparer.Ordinal);
+        // Keyed by image + layer id: two services sharing a base layer report the same layer id under two parents.
+        private readonly Dictionary<(string Image, string Layer), (long Current, long Total)> _layers = new();
 
         /// <summary>
         /// Latest snapshot.
@@ -75,7 +77,8 @@ namespace ModelingEvolution.AutoUpdater.Services
 
                 if (root.TryGetProperty("error", out var error) && error.ValueKind == JsonValueKind.True)
                 {
-                    ErrorMessage = GetString(root, "message") ?? "docker compose pull reported an error";
+                    // The daemon message is the most specific one and arrives last: let it win.
+                    ErrorMessage = GetString(root, "message") ?? ErrorMessage ?? "docker compose pull reported an error";
                     return false;
                 }
 
@@ -87,6 +90,12 @@ namespace ModelingEvolution.AutoUpdater.Services
 
                 var parentId = GetString(root, "parent_id");
                 var text = GetString(root, "text") ?? string.Empty;
+
+                if (text == TextError)
+                {
+                    // Image-level failure; the daemon message usually follows in a final {"error":true} line.
+                    ErrorMessage ??= GetString(root, "status") ?? $"pull of {id} failed";
+                }
 
                 if (parentId == null)
                 {
@@ -119,16 +128,16 @@ namespace ModelingEvolution.AutoUpdater.Services
                 case TextDownloading:
                     if (total > 0)
                     {
-                        _layers[id] = (parentId, Math.Min(current, total), total);
+                        _layers[(parentId, id)] = (Math.Min(current, total), total);
                     }
                     break;
 
                 case TextDownloadComplete:
                 case TextPullComplete:
                 case TextAlreadyExists:
-                    if (_layers.TryGetValue(id, out var layer))
+                    if (_layers.TryGetValue((parentId, id), out var layer))
                     {
-                        _layers[id] = (layer.Image, layer.Total, layer.Total);
+                        _layers[(parentId, id)] = (layer.Total, layer.Total);
                     }
                     break;
             }
@@ -138,9 +147,9 @@ namespace ModelingEvolution.AutoUpdater.Services
         {
             long downloaded = 0;
             long total = 0;
-            foreach (var layer in _layers.Values)
+            foreach (var (key, layer) in _layers)
             {
-                if (_pulled.Contains(layer.Image))
+                if (_pulled.Contains(key.Image))
                 {
                     continue;
                 }
