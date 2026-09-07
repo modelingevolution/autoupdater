@@ -134,6 +134,7 @@ namespace ModelingEvolution.AutoUpdater.Tests.Services
                              progress.Report(new PullProgress(2, 0, 0, 0, null));
                              progress.Report(new PullProgress(2, 0, 432013312, 1288490188, 33.5f));
                              progress.Report(new PullProgress(2, 1, 900000000, 1288490188, 69.8f));
+                             progress.Report(new PullProgress(2, 1, 1288490188, 1288490188, 100f, LayersExtracting: 3));
                              progress.Report(new PullProgress(2, 2, 0, 0, 100f));
                              return Task.CompletedTask;
                          });
@@ -151,6 +152,7 @@ namespace ModelingEvolution.AutoUpdater.Tests.Services
                 _progressService.LogPhaseProgress("Pulling Docker images (0/2)", 30f, null, "Resolving images");
                 _progressService.LogPhaseProgress("Pulling Docker images (0/2)", 30f, 33.5f, "Downloading 412.0 MB / 1.2 GB");
                 _progressService.LogPhaseProgress("Pulling Docker images (1/2)", 35f, 69.8f, "Downloading 858.3 MB / 1.2 GB");
+                _progressService.LogPhaseProgress("Pulling Docker images (1/2)", 35f, 100f, "Extracting 3 layer(s), downloaded 1.2 GB / 1.2 GB");
                 _progressService.LogPhaseProgress("Pulling Docker images (2/2)", 40f, 100f, "All images pulled");
                 _progressService.LogOperationProgress("Creating backup", 40f, Arg.Any<string?>(), Arg.Any<object[]>());
             });

@@ -104,6 +104,44 @@ namespace ModelingEvolution.AutoUpdater.Tests.Services
         }
 
         [Fact]
+        public async Task PullAsync_WhenLastLinesFallInsideTheInterval_StillFlushesTheLatestState()
+        {
+            // Arrange: a burst of Downloading lines for one image, all inside the interval, then silence while compose extracts.
+            SetupDockerComposeV2Detection("Docker Compose version v2.40.3");
+            var gate = new TaskCompletionSource();
+            var lines = new[]
+            {
+                """{"id":"a","text":"Pulling"}""",
+                """{"id":"l1","parent_id":"a","text":"Downloading","current":100,"total":1000}""",
+                """{"id":"l1","parent_id":"a","text":"Downloading","current":900,"total":1000}""",
+                """{"id":"l1","parent_id":"a","text":"Download complete","percent":100}""",
+                """{"id":"l1","parent_id":"a","text":"Extracting","status":"1 s","current":1}""",
+            };
+            _sshService.ExecuteCommandAsync(JsonPullCommand, Arg.Any<TimeSpan>(), "/app", Arg.Any<Action<string>>())
+                .Returns(async call =>
+                {
+                    var onLine = call.Arg<Action<string>>();
+                    foreach (var line in lines) onLine(line);
+                    await gate.Task;                       // compose is "extracting": no more lines for a while
+                    onLine("""{"id":"a","text":"Pulled"}""");
+                    return new SshCommandResult { Command = JsonPullCommand, ExitCode = 0 };
+                });
+            _service.ProgressReportInterval = TimeSpan.FromMilliseconds(100);
+            var progress = new RecordingProgress();
+
+            // Act
+            var pull = _service.PullAsync(new[] { "docker-compose.yml" }, "/app", TimeSpan.FromMinutes(1), progress);
+            await Task.Delay(400);                          // longer than the interval, shorter than any real extraction
+            var reportsDuringExtraction = progress.Reports.ToList();
+            gate.SetResult();
+            await pull;
+
+            // Assert: while compose was silent, the trailing flush delivered the extracting state
+            reportsDuringExtraction.Last().Should().Be(new PullProgress(1, 0, 1000, 1000, 100f, LayersExtracting: 1));
+            progress.Reports.Last().IsComplete.Should().BeTrue();
+        }
+
+        [Fact]
         public async Task PullAsync_WithComposeOlderThan227_FallsBackToBlockingPull()
         {
             // Arrange

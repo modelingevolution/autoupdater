@@ -248,6 +248,30 @@ namespace ModelingEvolution.AutoUpdater.Tests.Services
         }
 
         [Fact]
+        public void Feed_ExtractingAfterDownloadComplete_ReportsLayersExtractingUntilPullComplete()
+        {
+            var parser = new DockerPullProgressParser();
+            var lines = new[]
+            {
+                """{"id":"a","text":"Pulling"}""",
+                """{"id":"l1","parent_id":"a","text":"Downloading","current":500,"total":1000}""",
+                """{"id":"l1","parent_id":"a","text":"Download complete","percent":100}""",
+                """{"id":"l1","parent_id":"a","text":"Extracting","status":"1 s","current":1}""",
+                """{"id":"l1","parent_id":"a","text":"Extracting","status":"2 s","current":2}""",
+            };
+
+            var snapshots = FeedAll(parser, lines);
+
+            parser.Current.BytesDownloaded.Should().Be(1000);
+            parser.Current.LayersExtracting.Should().Be(1);
+            snapshots.Should().HaveCount(4, "the second identical Extracting tick changes nothing");
+
+            parser.Feed("""{"id":"l1","parent_id":"a","text":"Pull complete"}""");
+
+            parser.Current.LayersExtracting.Should().Be(0);
+        }
+
+        [Fact]
         public void Feed_SharedBaseLayerUnderTwoImages_IsCountedPerImage()
         {
             var parser = new DockerPullProgressParser();

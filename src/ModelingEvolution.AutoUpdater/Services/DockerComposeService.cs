@@ -369,6 +369,10 @@ namespace ModelingEvolution.AutoUpdater.Services
 
             // Lines arrive on the SSH output pump thread; the final report runs on the caller's thread.
             // One lock serialises parser and throttle state across both.
+            var flushScheduled = false;
+            var finished = false;
+
+            // Called under lock (parser).
             void Report(bool force)
             {
                 var current = parser.Current;
@@ -381,6 +385,23 @@ namespace ModelingEvolution.AutoUpdater.Services
                                     || current.ImagesTotal != lastReported.ImagesTotal;
                 if (!force && !imagesChanged && stopwatch.Elapsed - lastReportAt < ProgressReportInterval)
                 {
+                    // Suppressed by the interval: make sure the latest state still gets out once the interval elapses,
+                    // otherwise a burst followed by silence (e.g. the extraction phase) would show a stale caption.
+                    if (!flushScheduled)
+                    {
+                        flushScheduled = true;
+                        _ = Task.Delay(ProgressReportInterval).ContinueWith(_ =>
+                        {
+                            lock (parser)
+                            {
+                                flushScheduled = false;
+                                if (!finished)
+                                {
+                                    Report(force: false);
+                                }
+                            }
+                        }, TaskScheduler.Default);
+                    }
                     return;
                 }
 
@@ -404,6 +425,7 @@ namespace ModelingEvolution.AutoUpdater.Services
             lock (parser)
             {
                 Report(force: true);
+                finished = true;
                 composeError = parser.ErrorMessage;
             }
 

@@ -22,11 +22,13 @@ namespace ModelingEvolution.AutoUpdater.Services
         private const string TextDownloading = "Downloading";
         private const string TextDownloadComplete = "Download complete";
         private const string TextPullComplete = "Pull complete";
+        private const string TextExtracting = "Extracting";
         private const string TextError = "Error";
         private const string TextSkippedPrefix = "Skipped";
 
         private readonly HashSet<string> _images = new(StringComparer.Ordinal);
-        private readonly HashSet<string> _pulled = new(StringComparer.Ordinal);
+        private readonly HashSet<string> _finished = new(StringComparer.Ordinal);
+        private readonly HashSet<(string Image, string Layer)> _extracting = new();
         // Keyed by image + layer id: two services sharing a base layer report the same layer id under two parents.
         private readonly Dictionary<(string Image, string Layer), (long Current, long Total)> _layers = new();
 
@@ -115,7 +117,7 @@ namespace ModelingEvolution.AutoUpdater.Services
             _images.Add(id);
             if (IsTerminal(text))
             {
-                _pulled.Add(id);
+                _finished.Add(id);
             }
         }
 
@@ -144,10 +146,22 @@ namespace ModelingEvolution.AutoUpdater.Services
                     break;
 
                 case TextDownloadComplete:
-                case TextPullComplete:
                     if (_layers.TryGetValue((parentId, id), out var layer))
                     {
                         _layers[(parentId, id)] = (layer.Total, layer.Total);
+                    }
+                    break;
+
+                case TextExtracting:
+                    // Compose reports elapsed seconds here, not bytes; only the fact that extraction is running is usable.
+                    _extracting.Add((parentId, id));
+                    break;
+
+                case TextPullComplete:
+                    _extracting.Remove((parentId, id));
+                    if (_layers.TryGetValue((parentId, id), out var done))
+                    {
+                        _layers[(parentId, id)] = (done.Total, done.Total);
                     }
                     break;
             }
@@ -159,7 +173,7 @@ namespace ModelingEvolution.AutoUpdater.Services
             long total = 0;
             foreach (var (key, layer) in _layers)
             {
-                if (_pulled.Contains(key.Image))
+                if (_finished.Contains(key.Image))
                 {
                     continue;
                 }
@@ -167,8 +181,17 @@ namespace ModelingEvolution.AutoUpdater.Services
                 total += layer.Total;
             }
 
+            var extracting = 0;
+            foreach (var key in _extracting)
+            {
+                if (!_finished.Contains(key.Image))
+                {
+                    extracting++;
+                }
+            }
+
             float? percent = null;
-            if (_images.Count > 0 && _pulled.Count == _images.Count)
+            if (_images.Count > 0 && _finished.Count == _images.Count)
             {
                 percent = 100f;
             }
@@ -177,7 +200,7 @@ namespace ModelingEvolution.AutoUpdater.Services
                 percent = Math.Min(100f, 100f * downloaded / total);
             }
 
-            var next = new PullProgress(_images.Count, _pulled.Count, downloaded, total, percent);
+            var next = new PullProgress(_images.Count, _finished.Count, downloaded, total, percent, extracting);
             if (next == Current)
             {
                 return false;

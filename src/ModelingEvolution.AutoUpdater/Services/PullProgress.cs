@@ -10,12 +10,14 @@ namespace ModelingEvolution.AutoUpdater.Services
     /// <param name="BytesDownloaded">Bytes downloaded across known-size layers of images still in flight.</param>
     /// <param name="BytesTotal">Total bytes across known-size layers of images still in flight.</param>
     /// <param name="BytesPercent">In-flight download completion 0-100; 100 once every image is pulled; null when no layer size is known yet.</param>
+    /// <param name="LayersExtracting">Layers of in-flight images currently being extracted (compose reports no bytes for this phase).</param>
     public readonly record struct PullProgress(
         int ImagesTotal,
         int ImagesPulled,
         long BytesDownloaded,
         long BytesTotal,
-        float? BytesPercent)
+        float? BytesPercent,
+        int LayersExtracting = 0)
     {
         public static readonly PullProgress Empty = new(0, 0, 0, 0, null);
 

@@ -622,6 +622,7 @@ public class UpdateHost : IHostedService
             ? $"Pulling Docker images ({p.ImagesPulled}/{p.ImagesTotal})"
             : "Pulling Docker images";
         var phaseMessage = p.IsComplete ? "All images pulled"
+            : p.LayersExtracting > 0 && p.BytesDownloaded == p.BytesTotal ? $"Extracting {p.LayersExtracting} layer(s), downloaded {p.FormatBytes()}"
             : p.BytesTotal > 0 ? $"Downloading {p.FormatBytes()}"
             : "Resolving images";
 
