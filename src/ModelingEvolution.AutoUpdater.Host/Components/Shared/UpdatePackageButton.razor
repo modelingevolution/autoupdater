@@ -12,26 +12,29 @@
 @implements IDisposable
 
 <MudTooltip Text="@GetTooltipText()">
-    <MudIconButton Icon="@(_isUpdating? Icons.Material.Filled.HourglassEmpty : @Icons.Material.Filled.DirectionsRun)"
-                   Color="Color.Default" 
+    <MudIconButton Icon="@(IsUpdating ? Icons.Material.Filled.HourglassEmpty : @Icons.Material.Filled.DirectionsRun)"
+                   Color="Color.Default"
                    Size="Size.Small"
                    OnClick="UpdatePackageAsync"
-                   Disabled="@(_isUpdating || !_hasUpdateAvailable)" />
+                   Disabled="@(IsUpdating || !_hasUpdateAvailable)" />
 </MudTooltip>
 
 @code {
     [Parameter] public PackageName PackageName { get; set; }
-    
-    private bool _isUpdating = false;
+
     private bool _hasUpdateAvailable = false;
-    private IEventSubscription? _versionCheckSubscription;
-    
+    private SubscriptionSet? _subscriptions;
+
+    private bool IsUpdating => ReadModel.GetPackageState(PackageName)?.IsUpdateInProgress ?? false;
+
     protected override void OnInitialized()
     {
-        _versionCheckSubscription = EventHub.Subscribe<VersionCheckCompletedEvent>(OnVersionCheckCompleted);
+        _subscriptions = EventHub.Subscribe<VersionCheckCompletedEvent>(OnVersionCheckCompleted)
+            + EventHub.Subscribe<UpdateStartedEvent>(OnUpdateStateChanged)
+            + EventHub.Subscribe<UpdateCompletedEvent>(OnUpdateStateChanged);
         CheckInitialUpdateStatus();
     }
-    
+
     private void CheckInitialUpdateStatus()
     {
         var packageState = ReadModel.GetPackageState(PackageName);
@@ -41,7 +44,7 @@
             StateHasChanged();
         }
     }
-    
+
     private void OnVersionCheckCompleted(VersionCheckCompletedEvent evt)
     {
         if (evt.ApplicationName == PackageName.ToString())
@@ -50,69 +53,73 @@
             InvokeAsync(StateHasChanged);
         }
     }
-    
+
+    private void OnUpdateStateChanged(UpdateStartedEvent evt)
+    {
+        if (evt.ApplicationName == PackageName.ToString())
+        {
+            InvokeAsync(StateHasChanged);
+        }
+    }
+
+    private void OnUpdateStateChanged(UpdateCompletedEvent evt)
+    {
+        if (evt.ApplicationName == PackageName.ToString())
+        {
+            _hasUpdateAvailable = false;
+            InvokeAsync(StateHasChanged);
+        }
+    }
+
     private string GetTooltipText()
     {
-        if (_isUpdating) return "Updating package...";
+        if (IsUpdating) return "Updating package...";
         if (!_hasUpdateAvailable) return "No update available";
         return "Update package";
     }
 
     private async Task UpdatePackageAsync()
     {
-        if (_isUpdating) return;
-        
+        if (IsUpdating) return;
+
         // Clear logs and enable logging
         LoggerSink.Clear();
         LoggerSink.Enabled = true;
-        
-        _isUpdating = true;
-        
-        try
+
+        Logger.LogInformation("Starting update for package: {PackageName}", PackageName);
+
+        // Get the package configuration
+        var packageConfig = ConfigurationModel.GetPackage(PackageName);
+        if (packageConfig == null)
         {
-            Logger.LogInformation("Starting update for package: {PackageName}", PackageName);
-            
-            // Run in background thread to avoid blocking UI
-            _ = Task.Run(async () =>
+            Logger.LogError("Package configuration not found for: {PackageName}", PackageName);
+            return;
+        }
+
+        // Run in background thread to avoid blocking UI
+        // UI state is managed by PackageStateReadModel via events
+        _ = Task.Run(async () =>
+        {
+            try
             {
-                try
-                {
-                    // Get the package configuration
-                    var packageConfig = ConfigurationModel.GetPackage(PackageName);
-                    if (packageConfig == null)
-                    {
-                        Logger.LogError("Package configuration not found for: {PackageName}", PackageName);
-                        return;
-                    }
+                var updateResult = await UpdateHost.UpdateAsync(packageConfig);
 
-                    // Call the real UpdateHost service
-                    Logger.LogInformation("Starting real update for package: {PackageName}", PackageName);
-                    var updateResult = await UpdateHost.UpdateAsync(packageConfig);
-
-                    Logger.LogInformation("Update completed for package: {PackageName}, Status: {Status}, Success: {Success}",
-                        PackageName, updateResult.Status, updateResult.Success);
-                }
-                catch (RestartPendingException ex)
-                {
-                    Logger.LogInformation("Restart pending...");
-                }
-                catch (Exception ex)
-                {
-                    Logger.LogError(ex, "Error during update for package: {PackageName}", PackageName);
-                }
-            });
-        }
-        finally
-        {
-            _isUpdating = false;
-            
-            // Ensure UI update happens on UI thread
-            await InvokeAsync(StateHasChanged);
-        }
+                Logger.LogInformation("Update completed for package: {PackageName}, Status: {Status}, Success: {Success}",
+                    PackageName, updateResult.Status, updateResult.Success);
+            }
+            catch (RestartPendingException)
+            {
+                Logger.LogInformation("Restart pending...");
+            }
+            catch (Exception ex)
+            {
+                Logger.LogError(ex, "Error during update for package: {PackageName}", PackageName);
+            }
+        });
     }
-    
+
     public void Dispose()
     {
-        _versionCheckSubscription?.Dispose();
+        _subscriptions?.Dispose();
     }
 }
