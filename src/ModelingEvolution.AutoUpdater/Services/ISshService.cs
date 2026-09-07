@@ -25,6 +25,17 @@ namespace ModelingEvolution.AutoUpdater.Services
         /// <returns>The result of the SSH command execution</returns>
         Task<SshCommandResult> ExecuteCommandAsync(string command, TimeSpan timeout, string? workingDirectory = null);
 
+        /// <summary>
+        /// Executes a command via SSH and streams its standard output line by line while it runs.
+        /// Standard error is not streamed; redirect it in the command (<c>2&gt;&amp;1</c>) when it matters.
+        /// </summary>
+        /// <param name="command">The command to execute</param>
+        /// <param name="timeout">Command execution timeout</param>
+        /// <param name="workingDirectory">Optional working directory for the command</param>
+        /// <param name="onOutputLine">Invoked for every line of standard output, in order, as it arrives</param>
+        /// <returns>The result of the SSH command execution; Output holds the full streamed text</returns>
+        Task<SshCommandResult> ExecuteCommandAsync(string command, TimeSpan timeout, string? workingDirectory, Action<string> onOutputLine);
+
 
         /// <summary>
         /// Reads the content of a file on the remote host

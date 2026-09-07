@@ -58,7 +58,8 @@ namespace ModelingEvolution.AutoUpdater.Services
         /// <param name="composeFiles">The compose files to pull images for</param>
         /// <param name="workingDirectory">The working directory for the compose command</param>
         /// <param name="timeout">Timeout for the pull operation</param>
-        Task PullAsync(string[] composeFiles, string workingDirectory, TimeSpan timeout);
+        /// <param name="progress">Optional receiver of pull progress. Reported when the remote compose supports JSON progress (v2.27+); otherwise a single final snapshot is reported.</param>
+        Task PullAsync(string[] composeFiles, string workingDirectory, TimeSpan timeout, IProgress<PullProgress>? progress = null);
 
         /// <summary>
         /// Gets volume mappings for the specified container

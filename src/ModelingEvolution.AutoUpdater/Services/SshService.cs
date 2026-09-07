@@ -3,6 +3,8 @@ using Renci.SshNet;
 using System;
 using System.IO;
 using System.Net.Mail;
+using System.Text;
+using System.Threading;
 using System.Threading.Tasks;
 
 namespace ModelingEvolution.AutoUpdater.Services
@@ -69,6 +71,94 @@ namespace ModelingEvolution.AutoUpdater.Services
             {
                 _logger.LogError(ex, "Failed to execute SSH command: {Command}", command);
                 return SshCommandResult.Failed(command, -1, string.Empty, ex.Message);
+            }
+        }
+
+        public async Task<SshCommandResult> ExecuteCommandAsync(string command, TimeSpan timeout, string? workingDirectory, Action<string> onOutputLine)
+        {
+            ArgumentNullException.ThrowIfNull(onOutputLine);
+
+            var fullCommand = workingDirectory != null ? $"cd {workingDirectory} && {command}" : command;
+            var output = new StringBuilder();
+
+            try
+            {
+                _logger.LogDebug("Executing streamed SSH command with timeout {Timeout}: {Command}", timeout, command);
+
+                using var sshCommand = _sshClient.CreateCommand(fullCommand);
+                sshCommand.CommandTimeout = timeout;
+
+                using var cts = new CancellationTokenSource(timeout);
+                var execution = sshCommand.ExecuteAsync(cts.Token);
+                var pump = PumpOutputAsync(sshCommand.OutputStream, output, onOutputLine, command);
+
+                try
+                {
+                    await execution;
+                }
+                finally
+                {
+                    // The output stream ends when the channel closes; give the pump a moment to drain.
+                    await Task.WhenAny(pump, Task.Delay(TimeSpan.FromSeconds(5)));
+                }
+
+                var commandResult = new SshCommandResult
+                {
+                    Command = command,
+                    ExitCode = sshCommand.ExitStatus ?? 0,
+                    Output = output.ToString(),
+                    Error = sshCommand.Error
+                };
+
+                if (commandResult.IsSuccess)
+                {
+                    _logger.LogDebug("Streamed SSH command completed successfully: {Command}", command);
+                }
+                else
+                {
+                    _logger.LogWarning("Streamed SSH command failed with exit code {ExitCode}: {Command}. Error: {Error}",
+                        commandResult.ExitCode, command, commandResult.Error);
+                }
+
+                return commandResult;
+            }
+            catch (OperationCanceledException)
+            {
+                _logger.LogError("Streamed SSH command timed out after {Timeout}: {Command}", timeout, command);
+                return SshCommandResult.Failed(command, -1, output.ToString(), $"Command timed out after {timeout}");
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to execute streamed SSH command: {Command}", command);
+                return SshCommandResult.Failed(command, -1, output.ToString(), ex.Message);
+            }
+        }
+
+        private async Task PumpOutputAsync(Stream stream, StringBuilder output, Action<string> onOutputLine, string command)
+        {
+            try
+            {
+                using var reader = new StreamReader(stream, Encoding.UTF8, detectEncodingFromByteOrderMarks: false, bufferSize: 4096, leaveOpen: true);
+                while (await reader.ReadLineAsync() is { } line)
+                {
+                    output.AppendLine(line);
+                    try
+                    {
+                        onOutputLine(line);
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogWarning(ex, "Output line handler failed for command {Command}", command);
+                    }
+                }
+            }
+            catch (ObjectDisposedException)
+            {
+                // Channel closed underneath us - nothing more to read.
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Reading streamed output failed for command {Command}", command);
             }
         }
 

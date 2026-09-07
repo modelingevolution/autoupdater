@@ -67,11 +67,11 @@ namespace ModelingEvolution.AutoUpdater.Tests.Services
                          .Returns(new[] { "docker-compose.yml", "docker-compose.x64.yml" });
             
             // Setup pull mock - needed for the new workflow
-            _dockerService.PullAsync(Arg.Any<string[]>(), Arg.Any<string>(), Arg.Any<TimeSpan>())
+            _dockerService.PullAsync(Arg.Any<string[]>(), Arg.Any<string>(), Arg.Any<TimeSpan>(), Arg.Any<IProgress<PullProgress>?>())
                          .Returns(Task.CompletedTask);
             
             // Setup pull mock - needed for the new workflow
-            _dockerService.PullAsync(Arg.Any<string[]>(), Arg.Any<string>(), Arg.Any<TimeSpan>())
+            _dockerService.PullAsync(Arg.Any<string[]>(), Arg.Any<string>(), Arg.Any<TimeSpan>(), Arg.Any<IProgress<PullProgress>?>())
                          .Returns(Task.CompletedTask);
 
             // Setup backup and health check mocks
@@ -93,12 +93,66 @@ namespace ModelingEvolution.AutoUpdater.Tests.Services
             result.PreviousVersion.Should().Be("1.0.0");
             
             // Verify new workflow steps
-            await _dockerService.Received(1).PullAsync(Arg.Any<string[]>(), Arg.Any<string>(), Arg.Any<TimeSpan>());
+            await _dockerService.Received(1).PullAsync(Arg.Any<string[]>(), Arg.Any<string>(), Arg.Any<TimeSpan>(), Arg.Any<IProgress<PullProgress>?>());
             await _backupService.Received(1).BackupScriptExistsAsync(Arg.Any<string>());
             await _dockerService.Received(1).StopServicesAsync(Arg.Any<string[]>(), Arg.Any<string>());
             await _scriptService.Received(1).ExecuteScriptsAsync(migrationScripts, Arg.Any<string>());
             await _dockerService.Received(1).StartServicesAsync(Arg.Any<string[]>(), Arg.Any<string>());
             await _healthCheckService.Received(1).CheckServicesHealthAsync(Arg.Any<string[]>(), Arg.Any<string>());
+        }
+
+        [Fact]
+        public async Task UpdateAsync_MapsPullProgressIntoMainBandAndPhaseBar()
+        {
+            // Arrange
+            var config = CreateTestConfiguration();
+            _deploymentStateProvider.GetDeploymentStateAsync(Arg.Any<string>())
+                      .Returns(new DeploymentState(new PackageVersion("1.0.0"), DateTime.Now)
+                      {
+                          Up = ImmutableSortedSet<PackageVersion>.Empty,
+                          Failed = ImmutableSortedSet<PackageVersion>.Empty
+                      });
+            _gitService.GetAvailableVersionsAsync(Arg.Any<string>()).Returns(new[] { new PackageVersion("1.1.0") });
+            _scriptService.DiscoverScriptsAsync(Arg.Any<string>()).Returns(Array.Empty<MigrationScript>());
+            _scriptService.FilterScriptsForMigrationAsync(Arg.Any<IEnumerable<MigrationScript>>(), Arg.Any<PackageVersion?>(), Arg.Any<PackageVersion>(), Arg.Any<ImmutableSortedSet<PackageVersion>?>())
+                         .Returns(Array.Empty<MigrationScript>());
+
+            var mockSshService = Substitute.For<ISshService>();
+            mockSshService.GetArchitectureAsync().Returns(CpuArchitecture.X64);
+            _sshConnectionManager.CreateSshServiceAsync().Returns(mockSshService);
+            _dockerService.GetComposeFiles(Arg.Any<string>(), CpuArchitecture.X64).Returns(new[] { "docker-compose.yml" });
+            _backupService.BackupScriptExistsAsync(Arg.Any<string>()).Returns(false);
+            _healthCheckService.CheckServicesHealthAsync(Arg.Any<string[]>(), Arg.Any<string>())
+                              .Returns(HealthCheckResult.Healthy(new List<string> { "api" }));
+
+            // The compose service streams four snapshots of a two-image pull
+            _dockerService.PullAsync(Arg.Any<string[]>(), Arg.Any<string>(), Arg.Any<TimeSpan>(), Arg.Any<IProgress<PullProgress>?>())
+                         .Returns(call =>
+                         {
+                             var progress = call.Arg<IProgress<PullProgress>?>()!;
+                             progress.Report(new PullProgress(2, 0, 0, 0, null));
+                             progress.Report(new PullProgress(2, 0, 432013312, 1288490188, 33.5f));
+                             progress.Report(new PullProgress(2, 1, 900000000, 1288490188, 69.8f));
+                             progress.Report(new PullProgress(2, 2, 0, 0, 100f));
+                             return Task.CompletedTask;
+                         });
+
+            var updateHost = new UpdateHost(_configuration, _logger, _gitService, _scriptService, _sshConnectionManager, _dockerService, _deploymentStateProvider, _backupService, _healthCheckService, _progressService, _eventHub);
+
+            // Act
+            var result = await updateHost.UpdateAsync(config);
+
+            // Assert
+            result.Success.Should().BeTrue();
+            Received.InOrder(() =>
+            {
+                _progressService.LogOperationProgress("Pulling Docker images", 30f, Arg.Any<string?>(), Arg.Any<object[]>());
+                _progressService.LogPhaseProgress("Pulling Docker images (0/2)", 30f, null, "Resolving images");
+                _progressService.LogPhaseProgress("Pulling Docker images (0/2)", 30f, 33.5f, "Downloading 412.0 MB / 1.2 GB");
+                _progressService.LogPhaseProgress("Pulling Docker images (1/2)", 35f, 69.8f, "Downloading 858.3 MB / 1.2 GB");
+                _progressService.LogPhaseProgress("Pulling Docker images (2/2)", 40f, 100f, "All images pulled");
+                _progressService.LogOperationProgress("Creating backup", 40f, Arg.Any<string?>(), Arg.Any<object[]>());
+            });
         }
 
         [Fact]
@@ -170,7 +224,7 @@ namespace ModelingEvolution.AutoUpdater.Tests.Services
                          .Returns(new[] { "docker-compose.yml", "docker-compose.x64.yml" });
             
             // Setup pull mock - needed for the new workflow
-            _dockerService.PullAsync(Arg.Any<string[]>(), Arg.Any<string>(), Arg.Any<TimeSpan>())
+            _dockerService.PullAsync(Arg.Any<string[]>(), Arg.Any<string>(), Arg.Any<TimeSpan>(), Arg.Any<IProgress<PullProgress>?>())
                          .Returns(Task.CompletedTask);
 
             // Setup backup to test decision tree: no backup available
@@ -189,7 +243,7 @@ namespace ModelingEvolution.AutoUpdater.Tests.Services
             result.RecoveryPerformed.Should().BeFalse();
             
             // Verify workflow: migration failed before stopping services, no docker operations after pull
-            await _dockerService.Received(1).PullAsync(Arg.Any<string[]>(), Arg.Any<string>(), Arg.Any<TimeSpan>());
+            await _dockerService.Received(1).PullAsync(Arg.Any<string[]>(), Arg.Any<string>(), Arg.Any<TimeSpan>(), Arg.Any<IProgress<PullProgress>?>());
             await _dockerService.DidNotReceive().StopServicesAsync(Arg.Any<string[]>(), Arg.Any<string>());
             await _dockerService.DidNotReceive().StartServicesAsync(Arg.Any<string[]>(), Arg.Any<string>());
             await _healthCheckService.DidNotReceive().CheckServicesHealthAsync(Arg.Any<string[]>(), Arg.Any<string>());
@@ -268,7 +322,7 @@ namespace ModelingEvolution.AutoUpdater.Tests.Services
                          .Returns(new[] { "docker-compose.yml", "docker-compose.x64.yml" });
             
             // Setup pull mock - needed for the new workflow
-            _dockerService.PullAsync(Arg.Any<string[]>(), Arg.Any<string>(), Arg.Any<TimeSpan>())
+            _dockerService.PullAsync(Arg.Any<string[]>(), Arg.Any<string>(), Arg.Any<TimeSpan>(), Arg.Any<IProgress<PullProgress>?>())
                          .Returns(Task.CompletedTask);
 
             // Test decision point: Backup Available? YES
@@ -291,7 +345,7 @@ namespace ModelingEvolution.AutoUpdater.Tests.Services
             result.BackupId.Should().Be("/backup/backup-123.tar.gz");
             
             // Verify rollback sequence was performed
-            await _dockerService.Received(1).PullAsync(Arg.Any<string[]>(), Arg.Any<string>(), Arg.Any<TimeSpan>());
+            await _dockerService.Received(1).PullAsync(Arg.Any<string[]>(), Arg.Any<string>(), Arg.Any<TimeSpan>(), Arg.Any<IProgress<PullProgress>?>());
             await _backupService.Received(1).CreateBackupAsync(Arg.Any<string>());
             await _dockerService.Received(1).StopServicesAsync(Arg.Any<string[]>(), Arg.Any<string>()); // Only stop in rollback (migration failed before service restart)
             await _backupService.Received(1).RestoreBackupAsync(Arg.Any<string>(), "/backup/backup-123.tar.gz");
@@ -334,7 +388,7 @@ namespace ModelingEvolution.AutoUpdater.Tests.Services
                          .Returns(new[] { "docker-compose.yml", "docker-compose.x64.yml" });
             
             // Setup pull mock - needed for the new workflow
-            _dockerService.PullAsync(Arg.Any<string[]>(), Arg.Any<string>(), Arg.Any<TimeSpan>())
+            _dockerService.PullAsync(Arg.Any<string[]>(), Arg.Any<string>(), Arg.Any<TimeSpan>(), Arg.Any<IProgress<PullProgress>?>())
                          .Returns(Task.CompletedTask);
 
             // Test decision point: docker-compose up fails (but rollback should succeed)
@@ -407,7 +461,7 @@ namespace ModelingEvolution.AutoUpdater.Tests.Services
                          .Returns(new[] { "docker-compose.yml", "docker-compose.x64.yml" });
             
             // Setup pull mock - needed for the new workflow
-            _dockerService.PullAsync(Arg.Any<string[]>(), Arg.Any<string>(), Arg.Any<TimeSpan>())
+            _dockerService.PullAsync(Arg.Any<string[]>(), Arg.Any<string>(), Arg.Any<TimeSpan>(), Arg.Any<IProgress<PullProgress>?>())
                          .Returns(Task.CompletedTask);
 
             _backupService.BackupScriptExistsAsync(Arg.Any<string>()).Returns(false);
@@ -476,7 +530,7 @@ namespace ModelingEvolution.AutoUpdater.Tests.Services
                          .Returns(new[] { "docker-compose.yml", "docker-compose.x64.yml" });
             
             // Setup pull mock - needed for the new workflow
-            _dockerService.PullAsync(Arg.Any<string[]>(), Arg.Any<string>(), Arg.Any<TimeSpan>())
+            _dockerService.PullAsync(Arg.Any<string[]>(), Arg.Any<string>(), Arg.Any<TimeSpan>(), Arg.Any<IProgress<PullProgress>?>())
                          .Returns(Task.CompletedTask);
 
             // Test decision point: Backup Available? YES
@@ -535,7 +589,7 @@ namespace ModelingEvolution.AutoUpdater.Tests.Services
                          .Returns(new[] { "docker-compose.yml", "docker-compose.x64.yml" });
             
             // Setup pull mock - needed for the new workflow
-            _dockerService.PullAsync(Arg.Any<string[]>(), Arg.Any<string>(), Arg.Any<TimeSpan>())
+            _dockerService.PullAsync(Arg.Any<string[]>(), Arg.Any<string>(), Arg.Any<TimeSpan>(), Arg.Any<IProgress<PullProgress>?>())
                          .Returns(Task.CompletedTask);
 
             // Test decision point: Backup Available? YES

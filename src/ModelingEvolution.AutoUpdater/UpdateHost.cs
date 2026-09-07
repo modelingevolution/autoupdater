@@ -583,14 +583,15 @@ public class UpdateHost : IHostedService
         string? currentVersion,
         List<string> executedScripts)
     {
-        _progressService.LogOperationProgress("Pulling Docker images", 30,
+        _progressService.LogOperationProgress("Pulling Docker images", PullProgressStart,
             "Pulling latest Docker images with 30-minute timeout");
         
         _log.LogInformation("Pulling Docker images for new version before making any system changes");
         
         try
         {
-            await _dockerComposeService.PullAsync(composeFiles, workingDirectory, TimeSpan.FromMinutes(30));
+            var progress = new SynchronousProgress<PullProgress>(ReportPullProgress);
+            await _dockerComposeService.PullAsync(composeFiles, workingDirectory, TimeSpan.FromMinutes(30), progress);
             _log.LogInformation("Docker images pulled successfully");
             return null; // Success
         }
@@ -602,6 +603,26 @@ public class UpdateHost : IHostedService
                 executedScripts, recoveryPerformed: false);
         }
     }
+
+    /// <summary>
+    /// Pull owns the 30-40% band of the overall bar: it advances one step per pulled image.
+    /// Byte-level download progress goes to the sub-phase bar.
+    /// </summary>
+    private void ReportPullProgress(PullProgress p)
+    {
+        var overall = PullProgressStart + (PullProgressEnd - PullProgressStart) * p.ImagesFraction;
+        var operation = p.ImagesTotal > 0
+            ? $"Pulling Docker images ({p.ImagesPulled}/{p.ImagesTotal})"
+            : "Pulling Docker images";
+        var phaseMessage = p.IsComplete ? "All images pulled"
+            : p.BytesTotal > 0 ? $"Downloading {p.FormatBytes()}"
+            : "Resolving images";
+
+        _progressService.LogPhaseProgress(operation, overall, p.BytesPercent, phaseMessage);
+    }
+
+    private const float PullProgressStart = 30f;
+    private const float PullProgressEnd = 40f;
 
     /// <summary>
     /// Creates a backup if needed

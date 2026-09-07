@@ -38,6 +38,17 @@ namespace ModelingEvolution.AutoUpdater.Services
         string StatusMessage { get; }
 
         /// <summary>
+        /// Completion of the sub-phase inside the current operation (0-100), or null when the sub-phase
+        /// has no measurable progress yet. Meaningful only while <see cref="PhaseMessage"/> is set.
+        /// </summary>
+        float? PhaseProgress { get; }
+
+        /// <summary>
+        /// Caption of the sub-phase inside the current operation, or null when no sub-phase is running.
+        /// </summary>
+        string? PhaseMessage { get; }
+
+        /// <summary>
         /// Number of packages being updated
         /// </summary>
         int TotalPackages { get; }
@@ -100,5 +111,15 @@ namespace ModelingEvolution.AutoUpdater.Services
         /// <param name="logMessage">Optional log message template</param>
         /// <param name="args">Optional log message arguments for structured logging</param>
         void LogOperationProgress(string message, float? percentage = null, string? logMessage = null, params object[] args);
+
+        /// <summary>
+        /// Reports progress of a sub-phase inside the current operation. Updates the operation, the overall
+        /// percentage and the sub-phase bar in one change notification. Any other operation update clears the sub-phase.
+        /// </summary>
+        /// <param name="operation">The operation message</param>
+        /// <param name="percentage">Overall progress percentage (0-100)</param>
+        /// <param name="phasePercentage">Sub-phase completion (0-100), or null for indeterminate</param>
+        /// <param name="phaseMessage">Sub-phase caption</param>
+        void LogPhaseProgress(string operation, float percentage, float? phasePercentage, string phaseMessage);
     }
 }

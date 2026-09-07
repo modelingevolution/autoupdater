@@ -3,6 +3,8 @@ using Microsoft.Extensions.Logging;
 using ModelingEvolution.AutoUpdater.Services;
 using NSubstitute;
 using System;
+using System.Collections.Generic;
+using System.Linq;
 using System.Threading.Tasks;
 using NSubstitute.ExceptionExtensions;
 using Xunit;
@@ -27,6 +29,182 @@ namespace ModelingEvolution.AutoUpdater.Tests.Services
             // Default to Docker Compose v2 for tests
             _sshService.ExecuteCommandAsync("sudo docker compose version")
                 .Returns(new SshCommandResult("sudo docker compose version", "Docker Compose version v2.20.2"));
+        }
+
+        private void SetupDockerComposeV2Detection(string versionOutput)
+        {
+            _sshService.ExecuteCommandAsync("sudo docker compose version")
+                .Returns(new SshCommandResult("sudo docker compose version", versionOutput));
+        }
+
+        /// <summary>
+        /// Makes the streamed SSH overload replay <paramref name="lines"/> into the caller's line handler,
+        /// then finish with <paramref name="exitCode"/>.
+        /// </summary>
+        private void SetupStreamedCommand(string expectedCommand, string workingDirectory, IEnumerable<string> lines, int exitCode = 0)
+        {
+            _sshService.ExecuteCommandAsync(expectedCommand, Arg.Any<TimeSpan>(), workingDirectory, Arg.Any<Action<string>>())
+                .Returns(call =>
+                {
+                    var onLine = call.Arg<Action<string>>();
+                    foreach (var line in lines)
+                    {
+                        onLine(line);
+                    }
+                    return new SshCommandResult { Command = expectedCommand, ExitCode = exitCode, Output = string.Join("\n", lines) };
+                });
+        }
+
+        private const string JsonPullCommand = "sudo docker compose --progress json -f \"docker-compose.yml\" pull 2>&1";
+        private const string BlockingPullCommand = "sudo docker compose -f \"docker-compose.yml\" pull";
+
+        private sealed class RecordingProgress : IProgress<PullProgress>
+        {
+            public List<PullProgress> Reports { get; } = new();
+            public void Report(PullProgress value) => Reports.Add(value);
+        }
+
+        [Fact]
+        public async Task PullAsync_WithJsonCapableCompose_StreamsProgressFromRemoteOutput()
+        {
+            // Arrange
+            SetupDockerComposeV2Detection("Docker Compose version 2.40.3+ds1-0ubuntu1");
+            SetupStreamedCommand(JsonPullCommand, "/app", DockerPullProgressParserTests.CapturedPull);
+            _service.ProgressReportInterval = TimeSpan.Zero;
+            var progress = new RecordingProgress();
+
+            // Act
+            await _service.PullAsync(new[] { "docker-compose.yml" }, "/app", TimeSpan.FromMinutes(1), progress);
+
+            // Assert
+            await _sshService.Received(1).ExecuteCommandAsync(JsonPullCommand, Arg.Any<TimeSpan>(), "/app", Arg.Any<Action<string>>());
+            await _sshService.DidNotReceive().ExecuteCommandAsync(BlockingPullCommand, Arg.Any<TimeSpan>(), Arg.Any<string?>());
+
+            progress.Reports.Should().NotBeEmpty();
+            progress.Reports.Select(r => r.ImagesPulled).Should().BeInAscendingOrder();
+            progress.Reports.Select(r => r.ImagesPulled).Distinct().Should().Equal(0, 1, 2);
+            progress.Reports.Last().Should().Be(new PullProgress(2, 2, 0, 0, 100f));
+        }
+
+        [Fact]
+        public async Task PullAsync_WithThrottling_StillReportsEveryPulledImageAndTheFinalSnapshot()
+        {
+            // Arrange: an interval no test can outrun, so only image-count changes and the final report get through
+            SetupDockerComposeV2Detection("Docker Compose version v2.27.0");
+            SetupStreamedCommand(JsonPullCommand, "/app", DockerPullProgressParserTests.CapturedPull);
+            _service.ProgressReportInterval = TimeSpan.FromHours(1);
+            var progress = new RecordingProgress();
+
+            // Act
+            await _service.PullAsync(new[] { "docker-compose.yml" }, "/app", TimeSpan.FromMinutes(1), progress);
+
+            // Assert
+            progress.Reports.Select(r => (r.ImagesTotal, r.ImagesPulled)).Should().Equal((1, 0), (2, 0), (2, 1), (2, 2));
+            progress.Reports.Last().BytesPercent.Should().Be(100f);
+        }
+
+        [Fact]
+        public async Task PullAsync_WithComposeOlderThan227_FallsBackToBlockingPull()
+        {
+            // Arrange
+            SetupDockerComposeV2Detection("Docker Compose version v2.20.2");
+            _sshService.ExecuteCommandAsync(BlockingPullCommand, Arg.Any<TimeSpan>(), "/app")
+                .Returns(new SshCommandResult(BlockingPullCommand, "Pulled"));
+            var progress = new RecordingProgress();
+
+            // Act
+            await _service.PullAsync(new[] { "docker-compose.yml" }, "/app", TimeSpan.FromMinutes(1), progress);
+
+            // Assert
+            await _sshService.Received(1).ExecuteCommandAsync(BlockingPullCommand, Arg.Any<TimeSpan>(), "/app");
+            await _sshService.DidNotReceive().ExecuteCommandAsync(Arg.Any<string>(), Arg.Any<TimeSpan>(), Arg.Any<string?>(), Arg.Any<Action<string>>());
+            progress.Reports.Should().BeEmpty();
+        }
+
+        [Fact]
+        public async Task PullAsync_WithComposeV1_FallsBackToBlockingPull()
+        {
+            // Arrange
+            SetupDockerComposeV1Detection();
+            const string v1Command = "sudo docker-compose -f \"docker-compose.yml\" pull";
+            _sshService.ExecuteCommandAsync(v1Command, Arg.Any<TimeSpan>(), "/app")
+                .Returns(new SshCommandResult(v1Command, "Pulled"));
+
+            // Act
+            await _service.PullAsync(new[] { "docker-compose.yml" }, "/app", TimeSpan.FromMinutes(1), new RecordingProgress());
+
+            // Assert
+            await _sshService.Received(1).ExecuteCommandAsync(v1Command, Arg.Any<TimeSpan>(), "/app");
+            await _sshService.DidNotReceive().ExecuteCommandAsync(Arg.Any<string>(), Arg.Any<TimeSpan>(), Arg.Any<string?>(), Arg.Any<Action<string>>());
+        }
+
+        [Fact]
+        public async Task PullAsync_WithoutProgressReceiver_UsesBlockingPullEvenOnNewCompose()
+        {
+            // Arrange
+            SetupDockerComposeV2Detection("Docker Compose version v2.40.3");
+            _sshService.ExecuteCommandAsync(BlockingPullCommand, Arg.Any<TimeSpan>(), "/app")
+                .Returns(new SshCommandResult(BlockingPullCommand, "Pulled"));
+
+            // Act
+            await _service.PullAsync(new[] { "docker-compose.yml" }, "/app", TimeSpan.FromMinutes(1));
+
+            // Assert
+            await _sshService.Received(1).ExecuteCommandAsync(BlockingPullCommand, Arg.Any<TimeSpan>(), "/app");
+        }
+
+        [Fact]
+        public async Task PullAsync_WhenStreamedPullFails_ThrowsWithComposeErrorMessage()
+        {
+            // Arrange
+            SetupDockerComposeV2Detection("Docker Compose version v2.40.3");
+            var lines = new[]
+            {
+                """{"id":"a","text":"Pulling"}""",
+                """{"error":true,"message":"unable to get image 'x': access denied"}""",
+            };
+            SetupStreamedCommand(JsonPullCommand, "/app", lines, exitCode: 1);
+
+            // Act
+            var act = async () => await _service.PullAsync(new[] { "docker-compose.yml" }, "/app", TimeSpan.FromMinutes(1), new RecordingProgress());
+
+            // Assert
+            await act.Should().ThrowAsync<InvalidOperationException>()
+                .WithMessage("*unable to get image 'x': access denied*");
+        }
+
+        [Theory]
+        [InlineData("Docker Compose version v2.40.3", 2, 40, 3)]
+        [InlineData("Docker Compose version 2.40.3+ds1-0ubuntu1", 2, 40, 3)]
+        [InlineData("Docker Compose version v2.27.0", 2, 27, 0)]
+        public void ParseComposeVersion_ReadsSemanticVersion(string output, int major, int minor, int build)
+        {
+            DockerComposeService.ParseComposeVersion(output).Should().Be(new Version(major, minor, build));
+        }
+
+        [Theory]
+        [InlineData("")]
+        [InlineData("docker: command not found")]
+        public void ParseComposeVersion_WithoutVersion_ReturnsNull(string output)
+        {
+            DockerComposeService.ParseComposeVersion(output).Should().BeNull();
+        }
+
+        [Theory]
+        [InlineData("Docker Compose version v2.26.1", false)]
+        [InlineData("Docker Compose version v2.27.0", true)]
+        [InlineData("Docker Compose version 2.40.3+ds1-0ubuntu1", true)]
+        public async Task SupportsJsonProgress_DependsOnDetectedVersion(string versionOutput, bool expected)
+        {
+            SetupDockerComposeV2Detection(versionOutput);
+            _sshService.ExecuteCommandAsync(Arg.Any<string>(), Arg.Any<TimeSpan>(), Arg.Any<string?>())
+                .Returns(new SshCommandResult("pull", "Pulled"));
+            _sshService.ExecuteCommandAsync(Arg.Any<string>(), Arg.Any<TimeSpan>(), Arg.Any<string?>(), Arg.Any<Action<string>>())
+                .Returns(new SshCommandResult("pull", ""));
+
+            await _service.PullAsync(new[] { "docker-compose.yml" }, "/app", TimeSpan.FromMinutes(1));
+
+            _service.SupportsJsonProgress.Should().Be(expected);
         }
 
         private void SetupDockerComposeV1Detection()

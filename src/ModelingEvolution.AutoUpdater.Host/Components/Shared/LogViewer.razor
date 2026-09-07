@@ -31,6 +31,15 @@
                 <MudText Typo="Typo.body1" Class="mb-2">@ProgressService.CurrentOperation</MudText>
                 <MudProgressLinear Value="@ProgressService.ProgressPercentage" Class="mb-2" Color="@(ProgressService.IsRunning ? Color.Primary : Color.Success)" />
                 <MudText Typo="Typo.caption">@ProgressService.ProgressPercentage%</MudText>
+                @if (ProgressService.PhaseMessage != null)
+                {
+                    <MudProgressLinear Value="@(ProgressService.PhaseProgress ?? 0)"
+                                       Indeterminate="@(ProgressService.PhaseProgress == null)"
+                                       Color="Color.Secondary"
+                                       Class="mt-3 mb-2"
+                                       data-testid="phase-progress" />
+                    <MudText Typo="Typo.caption" data-testid="phase-message">@ProgressService.PhaseMessage</MudText>
+                }
             </MudCardContent>
         </MudCard>
     }

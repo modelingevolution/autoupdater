@@ -30,12 +30,15 @@ namespace ModelingEvolution.AutoUpdater.Services
         public string StatusMessage { get; private set; } = string.Empty;
         public int TotalPackages { get; private set; }
         public int CompletedPackages { get; private set; }
+        public float? PhaseProgress { get; private set; }
+        public string? PhaseMessage { get; private set; }
 
         public void UpdateOperation(string operation)
         {
             lock (_lock)
             {
                 CurrentOperation = operation;
+                ClearPhase();
                 NotifyChanged();
                 PublishProgressEvent();
             }
@@ -97,6 +100,7 @@ namespace ModelingEvolution.AutoUpdater.Services
                 TotalPackages = totalPackages;
                 CompletedPackages = 0;
                 ProgressPercentage = 0;
+                ClearPhase();
                 StatusMessage = "Starting operation...";
                 NotifyChanged();
                 PublishProgressEvent();
@@ -109,6 +113,7 @@ namespace ModelingEvolution.AutoUpdater.Services
             {
                 IsRunning = false;
                 ProgressPercentage = 100;
+                ClearPhase();
                 CurrentOperation = "Completed";
                 StatusMessage = "Operation completed successfully";
                 NotifyChanged();
@@ -121,6 +126,7 @@ namespace ModelingEvolution.AutoUpdater.Services
             {
                 IsRunning = false;
                 CurrentOperation = string.Empty;
+                ClearPhase();
                 ProgressPercentage = 0;
                 StatusMessage = string.Empty;
                 TotalPackages = 0;
@@ -140,6 +146,7 @@ namespace ModelingEvolution.AutoUpdater.Services
             {
                 CurrentOperation = message;
                 
+                ClearPhase();
                 if (percentage.HasValue)
                 {
                     ProgressPercentage = Math.Clamp((int)percentage.Value, 0, 100);
@@ -160,6 +167,25 @@ namespace ModelingEvolution.AutoUpdater.Services
                     }
                 }
             }
+        }
+
+        public void LogPhaseProgress(string operation, float percentage, float? phasePercentage, string phaseMessage)
+        {
+            lock (_lock)
+            {
+                CurrentOperation = operation;
+                ProgressPercentage = Math.Clamp((int)percentage, 0, 100);
+                PhaseProgress = phasePercentage.HasValue ? Math.Clamp(phasePercentage.Value, 0f, 100f) : null;
+                PhaseMessage = phaseMessage;
+                NotifyChanged();
+                PublishProgressEvent();
+            }
+        }
+
+        private void ClearPhase()
+        {
+            PhaseProgress = null;
+            PhaseMessage = null;
         }
 
         private void PublishProgressEvent()

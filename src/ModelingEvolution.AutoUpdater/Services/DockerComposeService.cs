@@ -8,7 +8,9 @@ using System.Collections.Generic;
 using System.Collections.Immutable;
 using System.IO;
 using System.Linq;
+using System.Diagnostics;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Xml;
@@ -32,6 +34,22 @@ namespace ModelingEvolution.AutoUpdater.Services
         
         // Docker Compose command detection
         private string? _dockerComposeCommand;
+        private Version? _dockerComposeVersion;
+
+        /// <summary>
+        /// First Docker Compose release that understands <c>--progress json</c>.
+        /// </summary>
+        internal static readonly Version JsonProgressMinVersion = new(2, 27, 0);
+
+        /// <summary>
+        /// Minimum spacing between two byte-level progress reports. Reports that change the pulled-image count are never delayed.
+        /// </summary>
+        internal TimeSpan ProgressReportInterval { get; set; } = TimeSpan.FromMilliseconds(250);
+
+        /// <summary>
+        /// Detected Docker Compose version, or null when detection did not run or failed to parse.
+        /// </summary>
+        internal Version? DockerComposeVersion => _dockerComposeVersion;
         private readonly SemaphoreSlim _commandDetectionLock = new(1, 1);
 
         public DockerComposeService(ISshService sshService, ILogger<DockerComposeService> logger, IEventHub? eventHub = null)
@@ -67,7 +85,8 @@ namespace ModelingEvolution.AutoUpdater.Services
                 if (result.IsSuccess && result.Output.Contains("Docker Compose"))
                 {
                     _dockerComposeCommand = "docker compose";
-                    _logger.LogInformation("Detected Docker Compose v2 (docker compose)");
+                    _dockerComposeVersion = ParseComposeVersion(result.Output);
+                    _logger.LogInformation("Detected Docker Compose v2 (docker compose) version {Version}", _dockerComposeVersion);
                     return _dockerComposeCommand;
                 }
 
@@ -278,7 +297,7 @@ namespace ModelingEvolution.AutoUpdater.Services
             await PullAsync(composeFiles, workingDirectory, TimeSpan.FromMinutes(10));
         }
 
-        public async Task PullAsync(string[] composeFiles, string workingDirectory, TimeSpan timeout)
+        public async Task PullAsync(string[] composeFiles, string workingDirectory, TimeSpan timeout, IProgress<PullProgress>? progress = null)
         {
             try
             {
@@ -298,11 +317,10 @@ namespace ModelingEvolution.AutoUpdater.Services
                 // Build the docker-compose command with multiple -f flags
                 var composeFileArgs = string.Join(" ", composeFiles.Select(f => $"-f \"{f}\""));
                 var composeCommand = await GetDockerComposeCommandAsync();
-                var command = $"sudo {composeCommand} {composeFileArgs} pull";
 
-                _logger.LogDebug("Executing Docker Compose command with timeout {Timeout}: {Command}", timeout, command);
-
-                var result = await _sshService.ExecuteCommandAsync(command, timeout, workingDirectory);
+                var result = progress != null && SupportsJsonProgress
+                    ? await PullWithProgressAsync(composeCommand, composeFileArgs, workingDirectory, timeout, progress)
+                    : await PullBlockingAsync(composeCommand, composeFileArgs, workingDirectory, timeout);
 
                 if (!result.IsSuccess)
                 {
@@ -318,6 +336,80 @@ namespace ModelingEvolution.AutoUpdater.Services
                 _logger.LogError(ex, "Failed to pull Docker images");
                 throw;
             }
+        }
+
+        /// <summary>
+        /// True when the detected compose binary understands <c>--progress json</c>.
+        /// </summary>
+        internal bool SupportsJsonProgress =>
+            _dockerComposeCommand == "docker compose"
+            && _dockerComposeVersion != null
+            && _dockerComposeVersion >= JsonProgressMinVersion;
+
+        private async Task<SshCommandResult> PullBlockingAsync(string composeCommand, string composeFileArgs, string workingDirectory, TimeSpan timeout)
+        {
+            var command = $"sudo {composeCommand} {composeFileArgs} pull";
+            _logger.LogDebug("Executing Docker Compose command with timeout {Timeout}: {Command}", timeout, command);
+            return await _sshService.ExecuteCommandAsync(command, timeout, workingDirectory);
+        }
+
+        /// <summary>
+        /// Pulls with <c>--progress json</c> and forwards parsed snapshots. Compose writes progress to stderr, hence the redirect.
+        /// </summary>
+        private async Task<SshCommandResult> PullWithProgressAsync(string composeCommand, string composeFileArgs, string workingDirectory, TimeSpan timeout, IProgress<PullProgress> progress)
+        {
+            var command = $"sudo {composeCommand} --progress json {composeFileArgs} pull 2>&1";
+            _logger.LogDebug("Executing streamed Docker Compose command with timeout {Timeout}: {Command}", timeout, command);
+
+            var parser = new DockerPullProgressParser();
+            var stopwatch = Stopwatch.StartNew();
+            var lastReported = PullProgress.Empty;
+            var lastReportAt = TimeSpan.MinValue;
+
+            void Report(bool force)
+            {
+                var current = parser.Current;
+                if (current == lastReported)
+                {
+                    return;
+                }
+
+                var imagesChanged = current.ImagesPulled != lastReported.ImagesPulled
+                                    || current.ImagesTotal != lastReported.ImagesTotal;
+                if (!force && !imagesChanged && stopwatch.Elapsed - lastReportAt < ProgressReportInterval)
+                {
+                    return;
+                }
+
+                lastReported = current;
+                lastReportAt = stopwatch.Elapsed;
+                progress.Report(current);
+            }
+
+            var result = await _sshService.ExecuteCommandAsync(command, timeout, workingDirectory, line =>
+            {
+                if (parser.Feed(line))
+                {
+                    Report(force: false);
+                }
+            });
+
+            Report(force: true);
+
+            if (!result.IsSuccess && parser.ErrorMessage != null)
+            {
+                return result with { Error = parser.ErrorMessage };
+            }
+
+            return result;
+        }
+
+        internal static Version? ParseComposeVersion(string versionOutput)
+        {
+            var match = Regex.Match(versionOutput ?? string.Empty, @"version\s+v?(\d+)\.(\d+)\.(\d+)", RegexOptions.IgnoreCase);
+            return match.Success
+                ? new Version(int.Parse(match.Groups[1].Value), int.Parse(match.Groups[2].Value), int.Parse(match.Groups[3].Value))
+                : null;
         }
 
         public async Task<IDictionary<string, string>> GetVolumeMappingsAsync(string containerId)
