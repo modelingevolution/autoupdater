@@ -7,7 +7,7 @@ namespace ModelingEvolution.AutoUpdater.Services
     /// Snapshot of a <c>docker compose pull</c> in flight.
     /// </summary>
     /// <param name="ImagesTotal">Number of images the pull covers (grows as compose announces them).</param>
-    /// <param name="ImagesPulled">Number of images compose has reported as fully pulled.</param>
+    /// <param name="ImagesPulled">Number of images compose is finished with: pulled, skipped (build-only services) or failed.</param>
     /// <param name="BytesDownloaded">Bytes downloaded across known-size layers of images still in flight.</param>
     /// <param name="BytesTotal">Total bytes across known-size layers of images still in flight.</param>
     /// <param name="BytesPercent">In-flight download completion 0-100; 100 once every image is pulled; null when no layer size is known yet.</param>
@@ -36,7 +36,7 @@ namespace ModelingEvolution.AutoUpdater.Services
         }
 
         /// <summary>
-        /// True once compose reported every image as pulled.
+        /// True once compose is finished with every image (pulled, skipped or failed).
         /// </summary>
         public bool IsComplete => ImagesTotal > 0 && ImagesPulled == ImagesTotal;
 

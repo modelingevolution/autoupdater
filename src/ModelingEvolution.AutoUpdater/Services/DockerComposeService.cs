@@ -367,6 +367,8 @@ namespace ModelingEvolution.AutoUpdater.Services
             var lastReported = PullProgress.Empty;
             var lastReportAt = TimeSpan.MinValue;
 
+            // Lines arrive on the SSH output pump thread; the final report runs on the caller's thread.
+            // One lock serialises parser and throttle state across both.
             void Report(bool force)
             {
                 var current = parser.Current;
@@ -389,17 +391,25 @@ namespace ModelingEvolution.AutoUpdater.Services
 
             var result = await _sshService.ExecuteCommandAsync(command, timeout, workingDirectory, line =>
             {
-                if (parser.Feed(line))
+                lock (parser)
                 {
-                    Report(force: false);
+                    if (parser.Feed(line))
+                    {
+                        Report(force: false);
+                    }
                 }
             });
 
-            Report(force: true);
-
-            if (!result.IsSuccess && parser.ErrorMessage != null)
+            string? composeError;
+            lock (parser)
             {
-                return result with { Error = parser.ErrorMessage };
+                Report(force: true);
+                composeError = parser.ErrorMessage;
+            }
+
+            if (!result.IsSuccess && composeError != null)
+            {
+                return result with { Error = composeError };
             }
 
             return result;

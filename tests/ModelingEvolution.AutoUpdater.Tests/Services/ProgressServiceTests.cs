@@ -1,15 +1,48 @@
 using FluentAssertions;
 using Microsoft.Extensions.Logging;
 using ModelingEvolution.AutoUpdater.Common;
+using ModelingEvolution.AutoUpdater.Common.Events;
 using ModelingEvolution.AutoUpdater.Services;
 using NSubstitute;
+using System.Collections.Generic;
+using System.Linq;
+using System.Threading.Tasks;
 using Xunit;
 
 namespace ModelingEvolution.AutoUpdater.Tests.Services
 {
     public class ProgressServiceTests
     {
-        private readonly ProgressService _service = new(Substitute.For<IEventHub>(), Substitute.For<ILogger<ProgressService>>());
+        private readonly IEventHub _eventHub = Substitute.For<IEventHub>();
+        private readonly ProgressService _service;
+
+        public ProgressServiceTests()
+        {
+            _service = new ProgressService(_eventHub, Substitute.For<ILogger<ProgressService>>());
+        }
+
+        [Fact]
+        public async Task ProgressEvents_ArePublishedInOrderWithPinnedState_AndDeduplicated()
+        {
+            var published = new List<(string Op, int Pct)>();
+            _eventHub.PublishAsync(Arg.Do<UpdateProgressEvent>(e => published.Add((e.Operation, e.ProgressPercentage))))
+                     .Returns(Task.CompletedTask);
+            _service.StartOperation("Update", "app");
+
+            _service.LogPhaseProgress("Pulling Docker images (0/2)", 30f, 10f, "a");
+            _service.LogPhaseProgress("Pulling Docker images (0/2)", 30f, 20f, "b");   // same visible triple: no event
+            _service.LogPhaseProgress("Pulling Docker images (1/2)", 35f, 5f, "c");
+            _service.LogPhaseProgress("Pulling Docker images (2/2)", 40f, 100f, "d");
+            _service.LogOperationProgress("Creating backup", 40);
+            await _service.PublishedEvents;
+
+            published.Should().Equal(
+                ("Update", 0),
+                ("Pulling Docker images (0/2)", 30),
+                ("Pulling Docker images (1/2)", 35),
+                ("Pulling Docker images (2/2)", 40),
+                ("Creating backup", 40));
+        }
 
         [Fact]
         public void LogPhaseProgress_SetsOperationOverallAndPhaseInOneNotification()

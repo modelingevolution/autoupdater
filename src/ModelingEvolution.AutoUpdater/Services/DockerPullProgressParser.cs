@@ -24,6 +24,7 @@ namespace ModelingEvolution.AutoUpdater.Services
         private const string TextPullComplete = "Pull complete";
         private const string TextAlreadyExists = "Already exists";
         private const string TextError = "Error";
+        private const string TextSkippedPrefix = "Skipped";
 
         private readonly HashSet<string> _images = new(StringComparer.Ordinal);
         private readonly HashSet<string> _pulled = new(StringComparer.Ordinal);
@@ -113,10 +114,21 @@ namespace ModelingEvolution.AutoUpdater.Services
         private void ApplyImage(string id, string text)
         {
             _images.Add(id);
-            if (text == TextPulled)
+            if (IsTerminal(text))
             {
                 _pulled.Add(id);
             }
+        }
+
+        /// <summary>
+        /// Image events after which compose will not touch the image again: pulled, skipped
+        /// ("Skipped - No image to be pulled" for build-only services) or failed.
+        /// </summary>
+        private static bool IsTerminal(string text)
+        {
+            return text == TextPulled
+                   || text == TextError
+                   || text.StartsWith(TextSkippedPrefix, StringComparison.Ordinal);
         }
 
         private void ApplyLayer(string id, string parentId, string text, long current, long total)

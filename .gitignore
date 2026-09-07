@@ -4,11 +4,11 @@
 
 /.vs/ModelingEvolution.AutoUpdater/CopilotIndices/17.14.670.39694
 /.vs/ModelingEvolution.AutoUpdater
-/src/ModelingEvolution.AutoUpdater/bin/Debug
+/src/ModelingEvolution.AutoUpdater/bin
 /src/ModelingEvolution.AutoUpdater/obj
-/src/ModelingEvolution.AutoUpdater.Host/bin/Debug/net9.0
+/src/ModelingEvolution.AutoUpdater.Host/bin
 /src/ModelingEvolution.AutoUpdater.Host/obj
-/tests/ModelingEvolution.AutoUpdater.Tests/bin/Debug/net9.0
+/tests/ModelingEvolution.AutoUpdater.Tests/bin
 /tests/ModelingEvolution.AutoUpdater.Tests/obj
 
 # Jekyll build output
@@ -20,7 +20,7 @@ docs/.jekyll-metadata
 /.vs/ProjectEvaluation
 /bin/Debug
 /obj/Debug
-/tests/ModelingEvolution.AutoUpdater.IntegrationTests/bin/Debug/net9.0
+/tests/ModelingEvolution.AutoUpdater.IntegrationTests/bin
 /tests/ModelingEvolution.AutoUpdater.IntegrationTests/obj
 /data
 /src/ModelingEvolution.AutoUpdater.Host/bin/Release/net9.0

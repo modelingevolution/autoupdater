@@ -188,25 +188,44 @@ namespace ModelingEvolution.AutoUpdater.Services
             PhaseMessage = null;
         }
 
+        private (string Application, string Operation, int Percentage)? _lastPublished;
+        private Task _publishChain = Task.CompletedTask;
+
+        /// <summary>
+        /// Completes when every progress event published so far has been delivered. Test seam.
+        /// </summary>
+        internal Task PublishedEvents => _publishChain;
+
+        /// <summary>
+        /// Publishes the current state as an <see cref="UpdateProgressEvent"/>, off the caller's thread but in order,
+        /// and only when the visible triple changed. Called under <see cref="_lock"/>.
+        /// </summary>
         private void PublishProgressEvent()
         {
-            if (!string.IsNullOrEmpty(CurrentApplication) && !string.IsNullOrEmpty(CurrentOperation))
+            if (string.IsNullOrEmpty(CurrentApplication) || string.IsNullOrEmpty(CurrentOperation))
+            {
+                return;
+            }
+
+            var snapshot = (CurrentApplication, CurrentOperation, ProgressPercentage);
+            if (snapshot == _lastPublished)
+            {
+                return;
+            }
+
+            _lastPublished = snapshot;
+            var (application, operation, percentage) = snapshot;
+            _publishChain = _publishChain.ContinueWith(async _ =>
             {
                 try
                 {
-                    _ = Task.Run(async () =>
-                    {
-                        await _eventHub.PublishAsync(new UpdateProgressEvent(
-                            CurrentApplication,
-                            CurrentOperation,
-                            ProgressPercentage));
-                    });
+                    await _eventHub.PublishAsync(new UpdateProgressEvent(application, operation, percentage));
                 }
                 catch (Exception ex)
                 {
-                    _logger.LogError(ex, "Failed to publish progress event");
+                    _logger.LogError(ex, "Failed to publish progress event {Operation} {Percentage}%", operation, percentage);
                 }
-            }
+            }, TaskScheduler.Default).Unwrap();
         }
     }
 }

@@ -197,8 +197,8 @@ namespace ModelingEvolution.AutoUpdater.Tests.Services
 
             parser.ErrorMessage.Should().Be("Error response from daemon: pull access denied for modelingevolution/does-not-exist-zz, repository does not exist or may require 'docker login'");
             parser.Current.ImagesTotal.Should().Be(1);
-            parser.Current.ImagesPulled.Should().Be(0);
-            snapshots.Should().HaveCount(1, "only the first 'Pulling' line changes the snapshot");
+            parser.Current.ImagesPulled.Should().Be(1, "a failed image is finished as far as the bar is concerned");
+            snapshots.Should().HaveCount(2, "the 'Pulling' and 'Error' lines change the snapshot; the final error line does not");
         }
 
         [Fact]
@@ -210,6 +210,41 @@ namespace ModelingEvolution.AutoUpdater.Tests.Services
             parser.Feed(CapturedFailedPull[1]);
 
             parser.ErrorMessage.Should().StartWith("pull access denied for modelingevolution/does-not-exist-zz");
+        }
+
+        /// <summary>
+        /// Captured verbatim on saturn (compose 2.40.3): a build-only service "built" next to an image service "a".
+        /// </summary>
+        public static readonly string[] CapturedPullWithBuildOnlyService =
+        {
+            """{"id":"built","text":"Skipped - No image to be pulled"}""",
+            """{"id":"a","text":"Pulling"}""",
+            """{"id":"a","text":"Pulled"}""",
+        };
+
+        [Fact]
+        public void Feed_BuildOnlyServiceIsSkipped_CountsAsFinishedSoTheBarCompletes()
+        {
+            var parser = new DockerPullProgressParser();
+
+            FeedAll(parser, CapturedPullWithBuildOnlyService);
+
+            parser.Current.ImagesTotal.Should().Be(2);
+            parser.Current.ImagesPulled.Should().Be(2);
+            parser.Current.IsComplete.Should().BeTrue();
+            parser.Current.BytesPercent.Should().Be(100f);
+        }
+
+        [Fact]
+        public void Feed_FailedImage_CountsAsFinishedSoTheBarDoesNotStall()
+        {
+            var parser = new DockerPullProgressParser();
+
+            FeedAll(parser, CapturedFailedPull);
+
+            parser.Current.ImagesTotal.Should().Be(1);
+            parser.Current.ImagesPulled.Should().Be(1);
+            parser.ErrorMessage.Should().NotBeNull();
         }
 
         [Fact]
