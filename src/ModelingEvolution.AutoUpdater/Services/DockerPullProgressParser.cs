@@ -242,7 +242,7 @@ namespace ModelingEvolution.AutoUpdater.Services
                         if (!layer.Sized || total > layer.Size)
                         {
                             // Growth only: a size learned late adds to the total, it never replaces a larger one.
-                            layer.Size = Math.Max(layer.Size, total);
+                            layer.Size = total;
                             layer.Sized = true;
                         }
                         layer.Downloaded = Math.Max(layer.Downloaded, Math.Min(current, layer.Size));

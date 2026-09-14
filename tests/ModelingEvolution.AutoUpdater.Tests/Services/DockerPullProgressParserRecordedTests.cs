@@ -128,6 +128,37 @@ namespace ModelingEvolution.AutoUpdater.Tests.Services
             parser.Current.BytesDownloaded.Should().Be(NginxOwnSize);
         }
 
+        [Fact]
+        public async Task Feed_LocalLayerAnnouncedBeforeAlreadyExists_NeverShowsAsNotSized()
+        {
+            // The classic daemon sometimes prints "Pulling fs layer" for a local layer before "Already exists" (seen in the plain
+            // output of `docker pull docker:29-dind`: 4f4fb700ef54). The recorded partial transcript goes straight to
+            // "Already exists", so the announcement is inserted in front of it, in compose 2.40's own line shape.
+            var lines = Lines("overlay2-compose2.40/pull-partial.jsonl").ToList();
+            var alreadyExists = lines.FindIndex(l => l.Contains(AlpineBaseLayer) && l.Contains("Already exists"));
+            alreadyExists.Should().BeGreaterThan(0);
+            lines.Insert(alreadyExists, $$"""{"id":"{{AlpineBaseLayer}}","parent_id":"n","text":"Pulling fs layer"}""");
+            var parser = new DockerPullProgressParser(await PartialTableAsync());
+
+            var snapshots = FeedAll(parser, lines);
+
+            snapshots.Should().AllSatisfy(s => s.LayersNotSized.Should().Be(0));
+        }
+
+        [Fact]
+        public async Task Feed_LayerTheResolverThoughtLocalIsDownloadedAnyway_TotalGrowsByItsSize()
+        {
+            // The resolver can be wrong in the direction it is allowed to be wrong in reverse: here it counted the alpine base as
+            // present (partial table) but the daemon is cold (recorded cold transcript downloads it). The total must grow, not lie.
+            var parser = new DockerPullProgressParser(await PartialTableAsync());
+
+            var snapshots = FeedAll(parser, Lines("overlay2-compose2.40/pull-cold.jsonl"));
+
+            snapshots.Select(s => s.BytesTotal).Should().BeInAscendingOrder();
+            parser.Current.BytesTotal.Should().BeGreaterThanOrEqualTo(NginxOwnSize + AlpineBaseSize);
+            parser.Current.BytesDownloaded.Should().BeGreaterThanOrEqualTo(NginxOwnSize + AlpineBaseSize);
+        }
+
         [Theory]
         [InlineData("containerd-compose2.40/pull-cold.jsonl")]
         [InlineData("overlay2-compose2.40/pull-cold.jsonl")]
