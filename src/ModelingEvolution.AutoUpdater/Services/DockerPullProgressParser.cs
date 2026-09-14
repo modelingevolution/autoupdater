@@ -386,7 +386,7 @@ namespace ModelingEvolution.AutoUpdater.Services
             }
             else if (total > 0 && layersTotal == known)
             {
-                percent = Math.Min(100f, 100f * downloaded / total);
+                percent = (float)Math.Min(100.0, 100.0 * downloaded / total);
             }
             // With layers not sized the total is only a lower bound: a ratio over it could read 100 % mid-pull, so none is given.
 

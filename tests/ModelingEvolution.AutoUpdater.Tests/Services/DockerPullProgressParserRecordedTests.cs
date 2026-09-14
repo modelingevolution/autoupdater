@@ -253,6 +253,9 @@ namespace ModelingEvolution.AutoUpdater.Tests.Services
             before.Should().AllSatisfy(s => (s.BytesTotal, s.LayersKnown, s.LayersTotal).Should().Be((ColdTotal, ColdLayers, ColdLayers)));
             after.Should().AllSatisfy(s => (s.BytesTotal, s.LayersKnown, s.LayersTotal).Should().Be((ColdTotal + sbomSize, ColdLayers + 1, ColdLayers + 1)));
             parser.Current.BytesDownloaded.Should().Be(ColdTotal + sbomSize);
+            // Seen live: 24039822 of 24039822 read 99.99999 % with single-precision arithmetic.
+            after.Where(s => s.BytesDownloaded == s.BytesTotal).Should().NotBeEmpty()
+                .And.AllSatisfy(s => s.BytesPercent.Should().Be(100f));
         }
 
         [Theory]
