@@ -9,7 +9,7 @@ namespace ModelingEvolution.AutoUpdater.Services
     /// <param name="ImagesPulled">Number of images compose is finished with: pulled, skipped (build-only services) or failed.</param>
     /// <param name="BytesDownloaded">Bytes downloaded so far across every image of the update; never decreases.</param>
     /// <param name="BytesTotal">Bytes the update downloads: the size resolved before the pull plus sizes learned since; never decreases.</param>
-    /// <param name="BytesPercent">Download completion 0-100 (<paramref name="BytesDownloaded"/> / <paramref name="BytesTotal"/>); 100 once every image is pulled; null when no layer size is known yet.</param>
+    /// <param name="BytesPercent">Download completion 0-100 (<paramref name="BytesDownloaded"/> / <paramref name="BytesTotal"/>); 100 once every image is pulled; null while no layer size is known or some layer is not sized.</param>
     /// <param name="LayersExtracting">Layers of in-flight images currently being extracted (compose reports no bytes for this phase).</param>
     /// <param name="LayersKnown">Layers to download whose size is known.</param>
     /// <param name="LayersTotal">Layers to download; more than <paramref name="LayersKnown"/> when some could not be sized (then <paramref name="BytesTotal"/> is a lower bound).</param>

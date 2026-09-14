@@ -384,10 +384,11 @@ namespace ModelingEvolution.AutoUpdater.Services
             {
                 percent = 100f;
             }
-            else if (total > 0)
+            else if (total > 0 && layersTotal == known)
             {
                 percent = Math.Min(100f, 100f * downloaded / total);
             }
+            // With layers not sized the total is only a lower bound: a ratio over it could read 100 % mid-pull, so none is given.
 
             return new PullProgress(imagesTotal, _finished.Count, downloaded, total, percent, extracting, known, layersTotal);
         }

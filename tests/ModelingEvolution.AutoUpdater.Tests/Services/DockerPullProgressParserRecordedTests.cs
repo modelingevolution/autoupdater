@@ -209,6 +209,8 @@ namespace ModelingEvolution.AutoUpdater.Tests.Services
 
             snapshots.Select(s => s.BytesTotal).Should().BeInAscendingOrder();
             snapshots.Should().Contain(s => s.LayersNotSized > 0);
+            // Seen live on saturn: 14.8 MB of 14.8 MB known with 6 layers not sized read 100 % mid-pull.
+            snapshots.Where(s => s.LayersNotSized > 0 && !s.IsComplete).Should().AllSatisfy(s => s.BytesPercent.Should().BeNull());
             snapshots.Should().AllSatisfy(s => s.BytesTotal.Should().BeGreaterThanOrEqualTo(AlpineBaseSize + BusyboxSize));
         }
 
