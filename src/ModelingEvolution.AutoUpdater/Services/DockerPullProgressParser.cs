@@ -44,6 +44,9 @@ namespace ModelingEvolution.AutoUpdater.Services
         private readonly PullSizeTable _table;
         private readonly HashSet<string> _images = new(StringComparer.Ordinal);
         private readonly HashSet<string> _finished = new(StringComparer.Ordinal);
+        private readonly HashSet<string> _failed = new(StringComparer.Ordinal);
+        // Table images compose has not mentioned yet: they are expected, so the image count cannot read "all pulled" early.
+        private readonly HashSet<PullImageSize> _unseenImages = new(ReferenceEqualityComparer.Instance);
         private readonly HashSet<(string Image, string Layer)> _extracting = new();
         private readonly Dictionary<string, Layer> _layers = new(StringComparer.Ordinal);
         // Unsized table images that have not shown a layer yet: each stands for at least one layer not sized.
@@ -64,6 +67,7 @@ namespace ModelingEvolution.AutoUpdater.Services
             }
             foreach (var image in _table.Images)
             {
+                _unseenImages.Add(image);
                 if (!image.IsSized)
                 {
                     _unsizedPending.Add(image);
@@ -172,25 +176,35 @@ namespace ModelingEvolution.AutoUpdater.Services
         private void ApplyImage(string id, string text)
         {
             _images.Add(id);
+            var image = FindImage(id);
+            if (image != null)
+            {
+                _unseenImages.Remove(image);
+            }
+
             if (!IsTerminal(text))
             {
                 return;
             }
 
             _finished.Add(id);
-            var image = FindImage(id);
-            if (image == null)
+            if (text == TextError)
+            {
+                _failed.Add(id);
+            }
+
+            if (image == null || !IsImageDone(image, id))
             {
                 return;
             }
 
             _unsizedPending.Remove(image);
-            if (text == TextError)
+            if (IsImageFailed(image, id))
             {
                 return;
             }
 
-            // Pulled (or skipped because present / pulled by another service): every layer of the image is local now.
+            // Pulled: every layer of the image is local now, whether or not compose reported each one.
             foreach (var layerId in image.LayersToFetch)
             {
                 if (_layers.TryGetValue(layerId, out var layer))
@@ -198,6 +212,43 @@ namespace ModelingEvolution.AutoUpdater.Services
                     layer.Downloaded = layer.Size;
                 }
             }
+        }
+
+        /// <summary>
+        /// True once compose is finished with the image under every id it uses for it: the <c>"Image &lt;reference&gt;"</c>
+        /// id of compose 5.x, or every service of the image in compose 2.x, where a second service using the same image
+        /// reports "Skipped - Image is already being pulled by …" while the first is still downloading.
+        /// </summary>
+        private bool IsImageDone(PullImageSize image, string id)
+        {
+            if (!image.Services.Contains(id, StringComparer.Ordinal))
+            {
+                return true;
+            }
+            foreach (var service in image.Services)
+            {
+                if (!_finished.Contains(service))
+                {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        private bool IsImageFailed(PullImageSize image, string id)
+        {
+            if (_failed.Contains(id))
+            {
+                return true;
+            }
+            foreach (var service in image.Services)
+            {
+                if (_failed.Contains(service))
+                {
+                    return true;
+                }
+            }
+            return false;
         }
 
         /// <summary>
@@ -214,6 +265,11 @@ namespace ModelingEvolution.AutoUpdater.Services
         private void ApplyLayer(string id, string parentId, string text, long current, long total)
         {
             _images.Add(parentId);
+            var parent = FindImage(parentId);
+            if (parent != null)
+            {
+                _unseenImages.Remove(parent);
+            }
             _layers.TryGetValue(id, out var layer);
 
             if (layer == null && IsLayerOnlyText(text) && text != TextAlreadyExists)
@@ -227,10 +283,9 @@ namespace ModelingEvolution.AutoUpdater.Services
                 // Not in the table (not sized, or the resolver was wrong): it will be downloaded, size to follow.
                 layer = new Layer();
                 _layers[id] = layer;
-                var image = FindImage(parentId);
-                if (image != null)
+                if (parent != null)
                 {
-                    _unsizedPending.Remove(image);
+                    _unsizedPending.Remove(parent);
                 }
             }
 
@@ -324,7 +379,8 @@ namespace ModelingEvolution.AutoUpdater.Services
             }
 
             float? percent = null;
-            if (_images.Count > 0 && _finished.Count == _images.Count)
+            var imagesTotal = _images.Count + _unseenImages.Count;
+            if (imagesTotal > 0 && _finished.Count == imagesTotal)
             {
                 percent = 100f;
             }
@@ -333,7 +389,7 @@ namespace ModelingEvolution.AutoUpdater.Services
                 percent = Math.Min(100f, 100f * downloaded / total);
             }
 
-            return new PullProgress(_images.Count, _finished.Count, downloaded, total, percent, extracting, known, layersTotal);
+            return new PullProgress(imagesTotal, _finished.Count, downloaded, total, percent, extracting, known, layersTotal);
         }
 
         private static string? GetString(JsonElement element, string name)

@@ -66,6 +66,38 @@ namespace ModelingEvolution.AutoUpdater.Tests.Services
         }
 
         [Theory]
+        [MemberData(nameof(ColdTranscripts), MemberType = typeof(PullFixtures))]
+        public async Task Feed_ColdPullWithTable_NeverReadsCompleteBeforeTheLastImageIsDone(string transcript)
+        {
+            // Seen end to end on saturn: "built" is Skipped first, so without the table's expected images the first snapshot
+            // was 1/1 images, 100 %, "All images pulled", before a single byte had moved.
+            var parser = new DockerPullProgressParser(await ColdTableAsync());
+            parser.Current.ImagesTotal.Should().Be(3);
+            parser.Current.IsComplete.Should().BeFalse();
+
+            var snapshots = FeedAll(parser, Lines(transcript));
+
+            snapshots.SkipLast(1).Should().AllSatisfy(s => s.IsComplete.Should().BeFalse());
+            snapshots.Last().IsComplete.Should().BeTrue();
+        }
+
+        [Theory]
+        [InlineData("overlay2-compose2.40/pull-cold.jsonl")]
+        [InlineData("containerd-compose2.40/pull-cold.jsonl")]
+        public async Task Feed_SecondServiceSkippedAsAlreadyBeingPulled_DoesNotCreditTheImageYet(string transcript)
+        {
+            // compose 2.40: {"id":"a2","text":"Skipped - Image is already being pulled by a"} arrives before "a" has downloaded.
+            var lines = Lines(transcript);
+            var skipped = lines.ToList().FindIndex(l => l.Contains("\"id\":\"a2\"") && l.Contains("already being pulled"));
+            skipped.Should().BeGreaterThanOrEqualTo(0);
+            var parser = new DockerPullProgressParser(await ColdTableAsync());
+
+            FeedAll(parser, lines.Take(skipped + 1));
+
+            parser.Current.BytesDownloaded.Should().Be(0);
+        }
+
+        [Theory]
         [MemberData(nameof(AllSuccessfulTranscripts), MemberType = typeof(PullFixtures))]
         public void Feed_AnyTranscriptWithoutTable_TotalAndDownloadedNeverDecrease(string transcript)
         {
