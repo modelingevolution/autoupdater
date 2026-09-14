@@ -34,6 +34,7 @@ public class UpdateHost : IHostedService
     private readonly IHealthCheckService _healthCheckService;
     private readonly IProgressService _progressService;
     private readonly IEventHub _eventHub;
+    private readonly IPullSizeResolver? _pullSizeResolver;
     private readonly GlobalSshConfiguration _sshConfig = new();
     private readonly SemaphoreSlim _updateLock = new(1, 1);
 
@@ -48,7 +49,8 @@ public class UpdateHost : IHostedService
         IBackupService backupService,
         IHealthCheckService healthCheckService,
         IProgressService progressService,
-        IEventHub eventHub)
+        IEventHub eventHub,
+        IPullSizeResolver? pullSizeResolver = null)
     {
         _config = config ?? throw new ArgumentNullException(nameof(config));
         _log = log ?? throw new ArgumentNullException(nameof(log));
@@ -61,6 +63,7 @@ public class UpdateHost : IHostedService
         _healthCheckService = healthCheckService ?? throw new ArgumentNullException(nameof(healthCheckService));
         _progressService = progressService ?? throw new ArgumentNullException(nameof(progressService));
         _eventHub = eventHub ?? throw new ArgumentNullException(nameof(eventHub));
+        _pullSizeResolver = pullSizeResolver;
     }
 
     public IDictionary<string, string> Volumes { get; private set; } = new Dictionary<string, string>();
@@ -581,8 +584,9 @@ public class UpdateHost : IHostedService
         
         try
         {
+            var sizes = await ResolvePullSizesAsync(composeFiles, workingDirectory);
             var progress = new SynchronousProgress<PullProgress>(ReportPullProgress);
-            await _dockerComposeService.PullAsync(composeFiles, workingDirectory, TimeSpan.FromMinutes(30), progress);
+            await _dockerComposeService.PullAsync(composeFiles, workingDirectory, TimeSpan.FromMinutes(30), progress, sizes);
             _log.LogInformation("Docker images pulled successfully");
             return null; // Success
         }
@@ -612,6 +616,28 @@ public class UpdateHost : IHostedService
     }
 
     /// <summary>
+    /// Sizes the update before the pull (epic-106 FR-1). Any failure only costs the up-front total: the pull proceeds.
+    /// </summary>
+    private async Task<PullSizeTable?> ResolvePullSizesAsync(string[] composeFiles, string workingDirectory)
+    {
+        if (_pullSizeResolver == null)
+        {
+            return null;
+        }
+
+        _progressService.LogPhaseProgress("Pulling Docker images", PullProgressStart, null, "Reading image sizes");
+        try
+        {
+            return await _pullSizeResolver.ResolveAsync(composeFiles, workingDirectory);
+        }
+        catch (Exception ex)
+        {
+            _log.LogWarning(ex, "Could not size the update; pulling without an up-front total");
+            return null;
+        }
+    }
+
+    /// <summary>
     /// Pull owns the 30-40% band of the overall bar: it advances one step per pulled image.
     /// Byte-level download progress goes to the sub-phase bar.
     /// </summary>
@@ -621,12 +647,19 @@ public class UpdateHost : IHostedService
         var operation = p.ImagesTotal > 0
             ? $"Pulling Docker images ({p.ImagesPulled}/{p.ImagesTotal})"
             : "Pulling Docker images";
-        var phaseMessage = p.IsComplete ? "All images pulled"
+        _progressService.LogPhaseProgress(operation, overall, p.BytesPercent, FormatPullPhase(p));
+    }
+
+    /// <summary>
+    /// Caption of the pull sub-phase bar. With layers not sized the total is only a lower bound, and the caption says so (FR-3).
+    /// </summary>
+    internal static string FormatPullPhase(PullProgress p)
+    {
+        return p.IsComplete ? "All images pulled"
+            : p.LayersNotSized > 0 ? $"downloaded {PullProgress.FormatBytes(p.BytesDownloaded)} of {PullProgress.FormatBytes(p.BytesTotal)} so far, {p.LayersNotSized} layers not sized"
             : p.LayersExtracting > 0 && p.BytesDownloaded == p.BytesTotal ? $"Extracting {p.LayersExtracting} layer(s), downloaded {p.FormatBytes()}"
             : p.BytesTotal > 0 ? $"Downloading {p.FormatBytes()}"
             : "Resolving images";
-
-        _progressService.LogPhaseProgress(operation, overall, p.BytesPercent, phaseMessage);
     }
 
     /// <summary>

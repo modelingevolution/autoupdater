@@ -1,0 +1,14 @@
+name: epic106fx
+services:
+  a:
+    image: public.ecr.aws/docker/library/alpine:3.21.3
+  a2:
+    image: public.ecr.aws/docker/library/alpine:3.21.3
+  b:
+    image: public.ecr.aws/docker/library/busybox:1.36
+  n:
+    image: public.ecr.aws/docker/library/nginx:1.27-alpine
+  built:
+    build:
+      context: .
+      dockerfile_inline: "FROM scratch"

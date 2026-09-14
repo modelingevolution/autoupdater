@@ -1,0 +1,105 @@
+{"id":"built","status":"Done","text":"Skipped","details":"No image to be pulled"}
+{"id":"Image public.ecr.aws/docker/library/nginx:1.27-alpine","status":"Working","text":"Pulling"}
+{"id":"Image public.ecr.aws/docker/library/alpine:3.21.3","status":"Working","text":"Pulling"}
+{"id":"Image public.ecr.aws/docker/library/busybox:1.36","status":"Working","text":"Pulling"}
+{"id":"f18232174bc9","parent_id":"Image public.ecr.aws/docker/library/alpine:3.21.3","status":"Working","text":"Pulling fs layer","details":"0B"}
+{"id":"034d6572bf28","parent_id":"Image public.ecr.aws/docker/library/busybox:1.36","status":"Working","text":"Pulling fs layer","details":"0B"}
+{"id":"f18232174bc9","parent_id":"Image public.ecr.aws/docker/library/nginx:1.27-alpine","status":"Working","text":"Pulling fs layer","details":"0B"}
+{"id":"61ca4f733c80","parent_id":"Image public.ecr.aws/docker/library/nginx:1.27-alpine","status":"Working","text":"Pulling fs layer","details":"0B"}
+{"id":"b464cfdf2a63","parent_id":"Image public.ecr.aws/docker/library/nginx:1.27-alpine","status":"Working","text":"Pulling fs layer","details":"0B"}
+{"id":"d7e507024086","parent_id":"Image public.ecr.aws/docker/library/nginx:1.27-alpine","status":"Working","text":"Pulling fs layer","details":"0B"}
+{"id":"81bd8ed7ec67","parent_id":"Image public.ecr.aws/docker/library/nginx:1.27-alpine","status":"Working","text":"Pulling fs layer","details":"0B"}
+{"id":"197eb75867ef","parent_id":"Image public.ecr.aws/docker/library/nginx:1.27-alpine","status":"Working","text":"Pulling fs layer","details":"0B"}
+{"id":"b464cfdf2a63","parent_id":"Image public.ecr.aws/docker/library/nginx:1.27-alpine","status":"Working","text":"Waiting","details":"0B"}
+{"id":"34a64644b756","parent_id":"Image public.ecr.aws/docker/library/nginx:1.27-alpine","status":"Working","text":"Pulling fs layer","details":"0B"}
+{"id":"d7e507024086","parent_id":"Image public.ecr.aws/docker/library/nginx:1.27-alpine","status":"Working","text":"Waiting","details":"0B"}
+{"id":"81bd8ed7ec67","parent_id":"Image public.ecr.aws/docker/library/nginx:1.27-alpine","status":"Working","text":"Waiting","details":"0B"}
+{"id":"39c2ddfd6010","parent_id":"Image public.ecr.aws/docker/library/nginx:1.27-alpine","status":"Working","text":"Pulling fs layer","details":"0B"}
+{"id":"197eb75867ef","parent_id":"Image public.ecr.aws/docker/library/nginx:1.27-alpine","status":"Working","text":"Waiting","details":"0B"}
+{"id":"34a64644b756","parent_id":"Image public.ecr.aws/docker/library/nginx:1.27-alpine","status":"Working","text":"Waiting","details":"0B"}
+{"id":"39c2ddfd6010","parent_id":"Image public.ecr.aws/docker/library/nginx:1.27-alpine","status":"Working","text":"Waiting","details":"0B"}
+{"id":"034d6572bf28","parent_id":"Image public.ecr.aws/docker/library/busybox:1.36","status":"Working","text":"Downloading","details":"32.16kB","current":32165,"total":2206402,"percent":1}
+{"id":"f18232174bc9","parent_id":"Image public.ecr.aws/docker/library/nginx:1.27-alpine","status":"Working","text":"Downloading","details":"49.15kB","current":49152,"total":3642247,"percent":1}
+{"id":"f18232174bc9","parent_id":"Image public.ecr.aws/docker/library/alpine:3.21.3","status":"Working","text":"Downloading","details":"49.15kB","current":49152,"total":3642247,"percent":1}
+{"id":"61ca4f733c80","parent_id":"Image public.ecr.aws/docker/library/nginx:1.27-alpine","status":"Working","text":"Downloading","details":"32.77kB","current":32768,"total":1791436,"percent":1}
+{"id":"034d6572bf28","parent_id":"Image public.ecr.aws/docker/library/busybox:1.36","status":"Working","text":"Downloading","details":"2.206MB","current":2206402,"total":2206402,"percent":100}
+{"id":"034d6572bf28","parent_id":"Image public.ecr.aws/docker/library/busybox:1.36","status":"Working","text":"Verifying Checksum","details":"0B"}
+{"id":"034d6572bf28","parent_id":"Image public.ecr.aws/docker/library/busybox:1.36","status":"Done","text":"Download complete","details":"0B","percent":100}
+{"id":"034d6572bf28","parent_id":"Image public.ecr.aws/docker/library/busybox:1.36","status":"Working","text":"Extracting","details":"32.77kB","current":32768,"total":2206402,"percent":1}
+{"id":"f18232174bc9","parent_id":"Image public.ecr.aws/docker/library/alpine:3.21.3","status":"Working","text":"Downloading","details":"2.423MB","current":2423312,"total":3642247,"percent":66}
+{"id":"f18232174bc9","parent_id":"Image public.ecr.aws/docker/library/nginx:1.27-alpine","status":"Working","text":"Downloading","details":"2.423MB","current":2423312,"total":3642247,"percent":66}
+{"id":"61ca4f733c80","parent_id":"Image public.ecr.aws/docker/library/nginx:1.27-alpine","status":"Working","text":"Downloading","details":"1.726MB","current":1726231,"total":1791436,"percent":96}
+{"id":"f18232174bc9","parent_id":"Image public.ecr.aws/docker/library/alpine:3.21.3","status":"Working","text":"Verifying Checksum","details":"0B"}
+{"id":"f18232174bc9","parent_id":"Image public.ecr.aws/docker/library/nginx:1.27-alpine","status":"Working","text":"Verifying Checksum","details":"0B"}
+{"id":"f18232174bc9","parent_id":"Image public.ecr.aws/docker/library/alpine:3.21.3","status":"Done","text":"Download complete","details":"0B","percent":100}
+{"id":"f18232174bc9","parent_id":"Image public.ecr.aws/docker/library/nginx:1.27-alpine","status":"Done","text":"Download complete","details":"0B","percent":100}
+{"id":"61ca4f733c80","parent_id":"Image public.ecr.aws/docker/library/nginx:1.27-alpine","status":"Working","text":"Downloading","details":"1.791MB","current":1791436,"total":1791436,"percent":100}
+{"id":"61ca4f733c80","parent_id":"Image public.ecr.aws/docker/library/nginx:1.27-alpine","status":"Working","text":"Verifying Checksum","details":"0B"}
+{"id":"61ca4f733c80","parent_id":"Image public.ecr.aws/docker/library/nginx:1.27-alpine","status":"Done","text":"Download complete","details":"0B","percent":100}
+{"id":"f18232174bc9","parent_id":"Image public.ecr.aws/docker/library/alpine:3.21.3","status":"Working","text":"Extracting","details":"65.54kB","current":65536,"total":3642247,"percent":1}
+{"id":"f18232174bc9","parent_id":"Image public.ecr.aws/docker/library/nginx:1.27-alpine","status":"Working","text":"Extracting","details":"65.54kB","current":65536,"total":3642247,"percent":1}
+{"id":"034d6572bf28","parent_id":"Image public.ecr.aws/docker/library/busybox:1.36","status":"Working","text":"Extracting","details":"852kB","current":851968,"total":2206402,"percent":38}
+{"id":"b464cfdf2a63","parent_id":"Image public.ecr.aws/docker/library/nginx:1.27-alpine","status":"Working","text":"Downloading","details":"629B","current":629,"total":629,"percent":100}
+{"id":"b464cfdf2a63","parent_id":"Image public.ecr.aws/docker/library/nginx:1.27-alpine","status":"Working","text":"Verifying Checksum","details":"0B"}
+{"id":"b464cfdf2a63","parent_id":"Image public.ecr.aws/docker/library/nginx:1.27-alpine","status":"Done","text":"Download complete","details":"0B","percent":100}
+{"id":"034d6572bf28","parent_id":"Image public.ecr.aws/docker/library/busybox:1.36","status":"Working","text":"Extracting","details":"2.206MB","current":2206402,"total":2206402,"percent":100}
+{"id":"f18232174bc9","parent_id":"Image public.ecr.aws/docker/library/alpine:3.21.3","status":"Working","text":"Extracting","details":"917.5kB","current":917504,"total":3642247,"percent":25}
+{"id":"f18232174bc9","parent_id":"Image public.ecr.aws/docker/library/nginx:1.27-alpine","status":"Working","text":"Extracting","details":"917.5kB","current":917504,"total":3642247,"percent":25}
+{"id":"034d6572bf28","parent_id":"Image public.ecr.aws/docker/library/busybox:1.36","status":"Done","text":"Pull complete","details":"0B","percent":100}
+{"id":"Image public.ecr.aws/docker/library/busybox:1.36","status":"Done","text":"Pulled"}
+{"id":"d7e507024086","parent_id":"Image public.ecr.aws/docker/library/nginx:1.27-alpine","status":"Working","text":"Downloading","details":"955B","current":955,"total":955,"percent":100}
+{"id":"d7e507024086","parent_id":"Image public.ecr.aws/docker/library/nginx:1.27-alpine","status":"Working","text":"Verifying Checksum","details":"0B"}
+{"id":"d7e507024086","parent_id":"Image public.ecr.aws/docker/library/nginx:1.27-alpine","status":"Done","text":"Download complete","details":"0B","percent":100}
+{"id":"f18232174bc9","parent_id":"Image public.ecr.aws/docker/library/nginx:1.27-alpine","status":"Working","text":"Extracting","details":"2.687MB","current":2686976,"total":3642247,"percent":73}
+{"id":"f18232174bc9","parent_id":"Image public.ecr.aws/docker/library/alpine:3.21.3","status":"Working","text":"Extracting","details":"2.687MB","current":2686976,"total":3642247,"percent":73}
+{"id":"81bd8ed7ec67","parent_id":"Image public.ecr.aws/docker/library/nginx:1.27-alpine","status":"Working","text":"Downloading","details":"402B","current":402,"total":402,"percent":100}
+{"id":"81bd8ed7ec67","parent_id":"Image public.ecr.aws/docker/library/nginx:1.27-alpine","status":"Working","text":"Verifying Checksum","details":"0B"}
+{"id":"81bd8ed7ec67","parent_id":"Image public.ecr.aws/docker/library/nginx:1.27-alpine","status":"Done","text":"Download complete","details":"0B","percent":100}
+{"id":"f18232174bc9","parent_id":"Image public.ecr.aws/docker/library/nginx:1.27-alpine","status":"Working","text":"Extracting","details":"3.642MB","current":3642247,"total":3642247,"percent":100}
+{"id":"f18232174bc9","parent_id":"Image public.ecr.aws/docker/library/alpine:3.21.3","status":"Working","text":"Extracting","details":"3.642MB","current":3642247,"total":3642247,"percent":100}
+{"id":"f18232174bc9","parent_id":"Image public.ecr.aws/docker/library/alpine:3.21.3","status":"Working","text":"Extracting","details":"3.642MB","current":3642247,"total":3642247,"percent":100}
+{"id":"f18232174bc9","parent_id":"Image public.ecr.aws/docker/library/nginx:1.27-alpine","status":"Working","text":"Extracting","details":"3.642MB","current":3642247,"total":3642247,"percent":100}
+{"id":"f18232174bc9","parent_id":"Image public.ecr.aws/docker/library/alpine:3.21.3","status":"Done","text":"Pull complete","details":"0B","percent":100}
+{"id":"f18232174bc9","parent_id":"Image public.ecr.aws/docker/library/nginx:1.27-alpine","status":"Done","text":"Pull complete","details":"0B","percent":100}
+{"id":"61ca4f733c80","parent_id":"Image public.ecr.aws/docker/library/nginx:1.27-alpine","status":"Working","text":"Extracting","details":"32.77kB","current":32768,"total":1791436,"percent":1}
+{"id":"Image public.ecr.aws/docker/library/alpine:3.21.3","status":"Done","text":"Pulled"}
+{"id":"197eb75867ef","parent_id":"Image public.ecr.aws/docker/library/nginx:1.27-alpine","status":"Working","text":"Downloading","details":"1.209kB","current":1209,"total":1209,"percent":100}
+{"id":"197eb75867ef","parent_id":"Image public.ecr.aws/docker/library/nginx:1.27-alpine","status":"Working","text":"Verifying Checksum","details":"0B"}
+{"id":"197eb75867ef","parent_id":"Image public.ecr.aws/docker/library/nginx:1.27-alpine","status":"Done","text":"Download complete","details":"0B","percent":100}
+{"id":"34a64644b756","parent_id":"Image public.ecr.aws/docker/library/nginx:1.27-alpine","status":"Working","text":"Downloading","details":"1.397kB","current":1397,"total":1397,"percent":100}
+{"id":"34a64644b756","parent_id":"Image public.ecr.aws/docker/library/nginx:1.27-alpine","status":"Working","text":"Verifying Checksum","details":"0B"}
+{"id":"34a64644b756","parent_id":"Image public.ecr.aws/docker/library/nginx:1.27-alpine","status":"Done","text":"Download complete","details":"0B","percent":100}
+{"id":"61ca4f733c80","parent_id":"Image public.ecr.aws/docker/library/nginx:1.27-alpine","status":"Working","text":"Extracting","details":"1.791MB","current":1791436,"total":1791436,"percent":100}
+{"id":"61ca4f733c80","parent_id":"Image public.ecr.aws/docker/library/nginx:1.27-alpine","status":"Working","text":"Extracting","details":"1.791MB","current":1791436,"total":1791436,"percent":100}
+{"id":"39c2ddfd6010","parent_id":"Image public.ecr.aws/docker/library/nginx:1.27-alpine","status":"Working","text":"Downloading","details":"163.8kB","current":163840,"total":15522356,"percent":1}
+{"id":"39c2ddfd6010","parent_id":"Image public.ecr.aws/docker/library/nginx:1.27-alpine","status":"Working","text":"Downloading","details":"3.941MB","current":3941283,"total":15522356,"percent":25}
+{"id":"61ca4f733c80","parent_id":"Image public.ecr.aws/docker/library/nginx:1.27-alpine","status":"Done","text":"Pull complete","details":"0B","percent":100}
+{"id":"b464cfdf2a63","parent_id":"Image public.ecr.aws/docker/library/nginx:1.27-alpine","status":"Working","text":"Extracting","details":"629B","current":629,"total":629,"percent":100}
+{"id":"b464cfdf2a63","parent_id":"Image public.ecr.aws/docker/library/nginx:1.27-alpine","status":"Working","text":"Extracting","details":"629B","current":629,"total":629,"percent":100}
+{"id":"b464cfdf2a63","parent_id":"Image public.ecr.aws/docker/library/nginx:1.27-alpine","status":"Done","text":"Pull complete","details":"0B","percent":100}
+{"id":"d7e507024086","parent_id":"Image public.ecr.aws/docker/library/nginx:1.27-alpine","status":"Working","text":"Extracting","details":"955B","current":955,"total":955,"percent":100}
+{"id":"d7e507024086","parent_id":"Image public.ecr.aws/docker/library/nginx:1.27-alpine","status":"Working","text":"Extracting","details":"955B","current":955,"total":955,"percent":100}
+{"id":"39c2ddfd6010","parent_id":"Image public.ecr.aws/docker/library/nginx:1.27-alpine","status":"Working","text":"Downloading","details":"8.216MB","current":8215583,"total":15522356,"percent":52}
+{"id":"d7e507024086","parent_id":"Image public.ecr.aws/docker/library/nginx:1.27-alpine","status":"Done","text":"Pull complete","details":"0B","percent":100}
+{"id":"81bd8ed7ec67","parent_id":"Image public.ecr.aws/docker/library/nginx:1.27-alpine","status":"Working","text":"Extracting","details":"402B","current":402,"total":402,"percent":100}
+{"id":"81bd8ed7ec67","parent_id":"Image public.ecr.aws/docker/library/nginx:1.27-alpine","status":"Working","text":"Extracting","details":"402B","current":402,"total":402,"percent":100}
+{"id":"81bd8ed7ec67","parent_id":"Image public.ecr.aws/docker/library/nginx:1.27-alpine","status":"Done","text":"Pull complete","details":"0B","percent":100}
+{"id":"197eb75867ef","parent_id":"Image public.ecr.aws/docker/library/nginx:1.27-alpine","status":"Working","text":"Extracting","details":"1.209kB","current":1209,"total":1209,"percent":100}
+{"id":"197eb75867ef","parent_id":"Image public.ecr.aws/docker/library/nginx:1.27-alpine","status":"Working","text":"Extracting","details":"1.209kB","current":1209,"total":1209,"percent":100}
+{"id":"197eb75867ef","parent_id":"Image public.ecr.aws/docker/library/nginx:1.27-alpine","status":"Done","text":"Pull complete","details":"0B","percent":100}
+{"id":"34a64644b756","parent_id":"Image public.ecr.aws/docker/library/nginx:1.27-alpine","status":"Working","text":"Extracting","details":"1.397kB","current":1397,"total":1397,"percent":100}
+{"id":"34a64644b756","parent_id":"Image public.ecr.aws/docker/library/nginx:1.27-alpine","status":"Working","text":"Extracting","details":"1.397kB","current":1397,"total":1397,"percent":100}
+{"id":"34a64644b756","parent_id":"Image public.ecr.aws/docker/library/nginx:1.27-alpine","status":"Done","text":"Pull complete","details":"0B","percent":100}
+{"id":"39c2ddfd6010","parent_id":"Image public.ecr.aws/docker/library/nginx:1.27-alpine","status":"Working","text":"Downloading","details":"15.39MB","current":15386071,"total":15522356,"percent":99}
+{"id":"39c2ddfd6010","parent_id":"Image public.ecr.aws/docker/library/nginx:1.27-alpine","status":"Working","text":"Verifying Checksum","details":"0B"}
+{"id":"39c2ddfd6010","parent_id":"Image public.ecr.aws/docker/library/nginx:1.27-alpine","status":"Done","text":"Download complete","details":"0B","percent":100}
+{"id":"39c2ddfd6010","parent_id":"Image public.ecr.aws/docker/library/nginx:1.27-alpine","status":"Working","text":"Extracting","details":"163.8kB","current":163840,"total":15522356,"percent":1}
+{"id":"39c2ddfd6010","parent_id":"Image public.ecr.aws/docker/library/nginx:1.27-alpine","status":"Working","text":"Extracting","details":"491.5kB","current":491520,"total":15522356,"percent":3}
+{"id":"39c2ddfd6010","parent_id":"Image public.ecr.aws/docker/library/nginx:1.27-alpine","status":"Working","text":"Extracting","details":"3.441MB","current":3440640,"total":15522356,"percent":22}
+{"id":"39c2ddfd6010","parent_id":"Image public.ecr.aws/docker/library/nginx:1.27-alpine","status":"Working","text":"Extracting","details":"6.39MB","current":6389760,"total":15522356,"percent":41}
+{"id":"39c2ddfd6010","parent_id":"Image public.ecr.aws/docker/library/nginx:1.27-alpine","status":"Working","text":"Extracting","details":"9.503MB","current":9502720,"total":15522356,"percent":61}
+{"id":"39c2ddfd6010","parent_id":"Image public.ecr.aws/docker/library/nginx:1.27-alpine","status":"Working","text":"Extracting","details":"12.12MB","current":12124160,"total":15522356,"percent":78}
+{"id":"39c2ddfd6010","parent_id":"Image public.ecr.aws/docker/library/nginx:1.27-alpine","status":"Working","text":"Extracting","details":"14.91MB","current":14909440,"total":15522356,"percent":96}
+{"id":"39c2ddfd6010","parent_id":"Image public.ecr.aws/docker/library/nginx:1.27-alpine","status":"Working","text":"Extracting","details":"15.52MB","current":15522356,"total":15522356,"percent":100}
+{"id":"39c2ddfd6010","parent_id":"Image public.ecr.aws/docker/library/nginx:1.27-alpine","status":"Done","text":"Pull complete","details":"0B","percent":100}
+{"id":"Image public.ecr.aws/docker/library/nginx:1.27-alpine","status":"Done","text":"Pulled"}

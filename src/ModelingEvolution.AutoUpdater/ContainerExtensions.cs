@@ -32,6 +32,7 @@ namespace ModelingEvolution.AutoUpdater
             container.AddSingleton<ISshService>(sshService);
             
             container.AddSingleton<IDockerComposeService, DockerComposeService>();
+            container.AddSingleton<IPullSizeResolver, DockerPullSizeResolver>();
             container.AddSingleton<IDeploymentStateProvider, DeploymentStateProvider>();
             container.AddSingleton<IBackupService, BackupService>();
             container.AddSingleton<IHealthCheckService, HealthCheckService>();

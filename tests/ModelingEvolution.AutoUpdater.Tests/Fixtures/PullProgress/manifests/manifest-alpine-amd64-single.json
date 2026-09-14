@@ -1,0 +1,38 @@
+{
+	"Ref": "public.ecr.aws/docker/library/alpine@sha256:1c4eef651f65e2f7daee7ee785882ac164b02b78fb74503052a26dc061c90474",
+	"Descriptor": {
+		"mediaType": "application/vnd.oci.image.manifest.v1+json",
+		"digest": "sha256:1c4eef651f65e2f7daee7ee785882ac164b02b78fb74503052a26dc061c90474",
+		"size": 1022,
+		"platform": {
+			"architecture": "amd64",
+			"os": "linux"
+		}
+	},
+	"Raw": "ewogICJzY2hlbWFWZXJzaW9uIjogMiwKICAibWVkaWFUeXBlIjogImFwcGxpY2F0aW9uL3ZuZC5vY2kuaW1hZ2UubWFuaWZlc3QudjEranNvbiIsCiAgImNvbmZpZyI6IHsKICAgICJtZWRpYVR5cGUiOiAiYXBwbGljYXRpb24vdm5kLm9jaS5pbWFnZS5jb25maWcudjEranNvbiIsCiAgICAiZGlnZXN0IjogInNoYTI1NjphZGVkMWUxYTViMzcwNTExNmZhMGE5MmJhMDc0YTVlMGIwMDMxNjQ3ZDljMzE1OTgzY2NiYTJlZTU0MjhlYzhiIiwKICAgICJzaXplIjogNTgxCiAgfSwKICAibGF5ZXJzIjogWwogICAgewogICAgICAibWVkaWFUeXBlIjogImFwcGxpY2F0aW9uL3ZuZC5vY2kuaW1hZ2UubGF5ZXIudjEudGFyK2d6aXAiLAogICAgICAiZGlnZXN0IjogInNoYTI1NjpmMTgyMzIxNzRiYzkxNzQxZmRmM2RhOTZkODUwMTEwOTIxMDFhMDMyYTkzYTM4OGI3OWU5OWU2OWMyZDVjODcwIiwKICAgICAgInNpemUiOiAzNjQyMjQ3CiAgICB9CiAgXSwKICAiYW5ub3RhdGlvbnMiOiB7CiAgICAiY29tLmRvY2tlci5vZmZpY2lhbC1pbWFnZXMuYmFzaGJyZXcuYXJjaCI6ICJhbWQ2NCIsCiAgICAib3JnLm9wZW5jb250YWluZXJzLmltYWdlLmJhc2UubmFtZSI6ICJzY3JhdGNoIiwKICAgICJvcmcub3BlbmNvbnRhaW5lcnMuaW1hZ2UuY3JlYXRlZCI6ICIyMDI1LTAyLTE0VDAzOjI4OjM2WiIsCiAgICAib3JnLm9wZW5jb250YWluZXJzLmltYWdlLnJldmlzaW9uIjogIjE3ZmUzZDFlMmQyY2JmNTRkNzQ1MTM5ZWFiNzQ5YzI1MmUzNWI4ODMiLAogICAgIm9yZy5vcGVuY29udGFpbmVycy5pbWFnZS5zb3VyY2UiOiAiaHR0cHM6Ly9naXRodWIuY29tL2FscGluZWxpbnV4L2RvY2tlci1hbHBpbmUuZ2l0IzE3ZmUzZDFlMmQyY2JmNTRkNzQ1MTM5ZWFiNzQ5YzI1MmUzNWI4ODM6eDg2XzY0IiwKICAgICJvcmcub3BlbmNvbnRhaW5lcnMuaW1hZ2UudXJsIjogImh0dHBzOi8vaHViLmRvY2tlci5jb20vXy9hbHBpbmUiLAogICAgIm9yZy5vcGVuY29udGFpbmVycy5pbWFnZS52ZXJzaW9uIjogIjMuMjEuMyIKICB9Cn0=",
+	"OCIManifest": {
+		"schemaVersion": 2,
+		"mediaType": "application/vnd.oci.image.manifest.v1+json",
+		"config": {
+			"mediaType": "application/vnd.oci.image.config.v1+json",
+			"digest": "sha256:aded1e1a5b3705116fa0a92ba074a5e0b0031647d9c315983ccba2ee5428ec8b",
+			"size": 581
+		},
+		"layers": [
+			{
+				"mediaType": "application/vnd.oci.image.layer.v1.tar+gzip",
+				"digest": "sha256:f18232174bc91741fdf3da96d85011092101a032a93a388b79e99e69c2d5c870",
+				"size": 3642247
+			}
+		],
+		"annotations": {
+			"com.docker.official-images.bashbrew.arch": "amd64",
+			"org.opencontainers.image.base.name": "scratch",
+			"org.opencontainers.image.created": "2025-02-14T03:28:36Z",
+			"org.opencontainers.image.revision": "17fe3d1e2d2cbf54d745139eab749c252e35b883",
+			"org.opencontainers.image.source": "https://github.com/alpinelinux/docker-alpine.git#17fe3d1e2d2cbf54d745139eab749c252e35b883:x86_64",
+			"org.opencontainers.image.url": "https://hub.docker.com/_/alpine",
+			"org.opencontainers.image.version": "3.21.3"
+		}
+	}
+}

@@ -1,0 +1,54 @@
+{
+  "name": "epic106fx",
+  "networks": {
+    "default": {
+      "name": "epic106fx_default",
+      "ipam": {}
+    }
+  },
+  "services": {
+    "a": {
+      "command": null,
+      "entrypoint": null,
+      "image": "public.ecr.aws/docker/library/alpine:3.21.3",
+      "networks": {
+        "default": null
+      }
+    },
+    "a2": {
+      "command": null,
+      "entrypoint": null,
+      "image": "public.ecr.aws/docker/library/alpine:3.21.3",
+      "networks": {
+        "default": null
+      }
+    },
+    "b": {
+      "command": null,
+      "entrypoint": null,
+      "image": "public.ecr.aws/docker/library/busybox:1.36",
+      "networks": {
+        "default": null
+      }
+    },
+    "built": {
+      "build": {
+        "context": "/tmp/claude-1000/-mnt-d-source-modelingevolution/9c8737eb-532e-4edd-a449-3df8d153111e/scratchpad/fx",
+        "dockerfile_inline": "FROM scratch"
+      },
+      "command": null,
+      "entrypoint": null,
+      "networks": {
+        "default": null
+      }
+    },
+    "n": {
+      "command": null,
+      "entrypoint": null,
+      "image": "public.ecr.aws/docker/library/nginx:1.27-alpine",
+      "networks": {
+        "default": null
+      }
+    }
+  }
+}

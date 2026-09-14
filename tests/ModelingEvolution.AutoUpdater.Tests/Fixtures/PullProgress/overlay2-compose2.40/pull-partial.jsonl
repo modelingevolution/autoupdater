@@ -1,0 +1,72 @@
+{"id":"built","text":"Skipped - No image to be pulled"}
+{"id":"a2","text":"Skipped - Image is already being pulled by a"}
+{"id":"n","text":"Pulling"}
+{"id":"b","text":"Pulling"}
+{"id":"a","text":"Pulling"}
+{"id":"b","text":"Pulled"}
+{"id":"a","text":"Pulled"}
+{"id":"f18232174bc9","parent_id":"n","text":"Already exists","percent":100}
+{"id":"61ca4f733c80","parent_id":"n","text":"Pulling fs layer"}
+{"id":"b464cfdf2a63","parent_id":"n","text":"Pulling fs layer"}
+{"id":"d7e507024086","parent_id":"n","text":"Pulling fs layer"}
+{"id":"81bd8ed7ec67","parent_id":"n","text":"Pulling fs layer"}
+{"id":"197eb75867ef","parent_id":"n","text":"Pulling fs layer"}
+{"id":"34a64644b756","parent_id":"n","text":"Pulling fs layer"}
+{"id":"39c2ddfd6010","parent_id":"n","text":"Pulling fs layer"}
+{"id":"81bd8ed7ec67","parent_id":"n","text":"Waiting"}
+{"id":"197eb75867ef","parent_id":"n","text":"Waiting"}
+{"id":"34a64644b756","parent_id":"n","text":"Waiting"}
+{"id":"39c2ddfd6010","parent_id":"n","text":"Waiting"}
+{"id":"61ca4f733c80","parent_id":"n","text":"Downloading","status":"[\u003e                                                  ]  32.14kB/1.791MB","current":32142,"total":1791436,"percent":1}
+{"id":"61ca4f733c80","parent_id":"n","text":"Verifying Checksum"}
+{"id":"61ca4f733c80","parent_id":"n","text":"Download complete","percent":100}
+{"id":"61ca4f733c80","parent_id":"n","text":"Extracting","status":"[\u003e                                                  ]  32.77kB/1.791MB","current":32768,"total":1791436,"percent":1}
+{"id":"61ca4f733c80","parent_id":"n","text":"Extracting","status":"[==================================================\u003e]  1.791MB/1.791MB","current":1791436,"total":1791436,"percent":100}
+{"id":"d7e507024086","parent_id":"n","text":"Downloading","status":"[==================================================\u003e]     955B/955B","current":955,"total":955,"percent":100}
+{"id":"d7e507024086","parent_id":"n","text":"Verifying Checksum"}
+{"id":"d7e507024086","parent_id":"n","text":"Download complete","percent":100}
+{"id":"61ca4f733c80","parent_id":"n","text":"Extracting","status":"[==================================================\u003e]  1.791MB/1.791MB","current":1791436,"total":1791436,"percent":100}
+{"id":"b464cfdf2a63","parent_id":"n","text":"Downloading","status":"[==================================================\u003e]     629B/629B","current":629,"total":629,"percent":100}
+{"id":"b464cfdf2a63","parent_id":"n","text":"Verifying Checksum"}
+{"id":"b464cfdf2a63","parent_id":"n","text":"Download complete","percent":100}
+{"id":"81bd8ed7ec67","parent_id":"n","text":"Downloading","status":"[==================================================\u003e]     402B/402B","current":402,"total":402,"percent":100}
+{"id":"81bd8ed7ec67","parent_id":"n","text":"Verifying Checksum"}
+{"id":"81bd8ed7ec67","parent_id":"n","text":"Download complete","percent":100}
+{"id":"197eb75867ef","parent_id":"n","text":"Downloading","status":"[==================================================\u003e]  1.209kB/1.209kB","current":1209,"total":1209,"percent":100}
+{"id":"197eb75867ef","parent_id":"n","text":"Verifying Checksum"}
+{"id":"197eb75867ef","parent_id":"n","text":"Download complete","percent":100}
+{"id":"34a64644b756","parent_id":"n","text":"Downloading","status":"[==================================================\u003e]  1.397kB/1.397kB","current":1397,"total":1397,"percent":100}
+{"id":"34a64644b756","parent_id":"n","text":"Verifying Checksum"}
+{"id":"34a64644b756","parent_id":"n","text":"Download complete","percent":100}
+{"id":"61ca4f733c80","parent_id":"n","text":"Pull complete","percent":100}
+{"id":"b464cfdf2a63","parent_id":"n","text":"Extracting","status":"[==================================================\u003e]     629B/629B","current":629,"total":629,"percent":100}
+{"id":"b464cfdf2a63","parent_id":"n","text":"Extracting","status":"[==================================================\u003e]     629B/629B","current":629,"total":629,"percent":100}
+{"id":"b464cfdf2a63","parent_id":"n","text":"Pull complete","percent":100}
+{"id":"d7e507024086","parent_id":"n","text":"Extracting","status":"[==================================================\u003e]     955B/955B","current":955,"total":955,"percent":100}
+{"id":"d7e507024086","parent_id":"n","text":"Extracting","status":"[==================================================\u003e]     955B/955B","current":955,"total":955,"percent":100}
+{"id":"d7e507024086","parent_id":"n","text":"Pull complete","percent":100}
+{"id":"81bd8ed7ec67","parent_id":"n","text":"Extracting","status":"[==================================================\u003e]     402B/402B","current":402,"total":402,"percent":100}
+{"id":"81bd8ed7ec67","parent_id":"n","text":"Extracting","status":"[==================================================\u003e]     402B/402B","current":402,"total":402,"percent":100}
+{"id":"81bd8ed7ec67","parent_id":"n","text":"Pull complete","percent":100}
+{"id":"197eb75867ef","parent_id":"n","text":"Extracting","status":"[==================================================\u003e]  1.209kB/1.209kB","current":1209,"total":1209,"percent":100}
+{"id":"197eb75867ef","parent_id":"n","text":"Extracting","status":"[==================================================\u003e]  1.209kB/1.209kB","current":1209,"total":1209,"percent":100}
+{"id":"39c2ddfd6010","parent_id":"n","text":"Downloading","status":"[\u003e                                                  ]  162.6kB/15.52MB","current":162564,"total":15522356,"percent":1}
+{"id":"197eb75867ef","parent_id":"n","text":"Pull complete","percent":100}
+{"id":"34a64644b756","parent_id":"n","text":"Extracting","status":"[==================================================\u003e]  1.397kB/1.397kB","current":1397,"total":1397,"percent":100}
+{"id":"34a64644b756","parent_id":"n","text":"Extracting","status":"[==================================================\u003e]  1.397kB/1.397kB","current":1397,"total":1397,"percent":100}
+{"id":"34a64644b756","parent_id":"n","text":"Pull complete","percent":100}
+{"id":"39c2ddfd6010","parent_id":"n","text":"Downloading","status":"[=========\u003e                                         ]  3.008MB/15.52MB","current":3008192,"total":15522356,"percent":19}
+{"id":"39c2ddfd6010","parent_id":"n","text":"Downloading","status":"[==================\u003e                                ]  5.854MB/15.52MB","current":5854196,"total":15522356,"percent":37}
+{"id":"39c2ddfd6010","parent_id":"n","text":"Downloading","status":"[=============================\u003e                     ]  9.239MB/15.52MB","current":9239476,"total":15522356,"percent":59}
+{"id":"39c2ddfd6010","parent_id":"n","text":"Downloading","status":"[=========================================\u003e         ]     13MB/15.52MB","current":13004248,"total":15522356,"percent":83}
+{"id":"39c2ddfd6010","parent_id":"n","text":"Verifying Checksum"}
+{"id":"39c2ddfd6010","parent_id":"n","text":"Download complete","percent":100}
+{"id":"39c2ddfd6010","parent_id":"n","text":"Extracting","status":"[\u003e                                                  ]  163.8kB/15.52MB","current":163840,"total":15522356,"percent":1}
+{"id":"39c2ddfd6010","parent_id":"n","text":"Extracting","status":"[===\u003e                                               ]  1.147MB/15.52MB","current":1146880,"total":15522356,"percent":7}
+{"id":"39c2ddfd6010","parent_id":"n","text":"Extracting","status":"[================\u003e                                  ]  5.079MB/15.52MB","current":5079040,"total":15522356,"percent":32}
+{"id":"39c2ddfd6010","parent_id":"n","text":"Extracting","status":"[===========================\u003e                       ]  8.684MB/15.52MB","current":8683520,"total":15522356,"percent":55}
+{"id":"39c2ddfd6010","parent_id":"n","text":"Extracting","status":"[====================================\u003e              ]  11.47MB/15.52MB","current":11468800,"total":15522356,"percent":73}
+{"id":"39c2ddfd6010","parent_id":"n","text":"Extracting","status":"[=================================================\u003e ]  15.24MB/15.52MB","current":15237120,"total":15522356,"percent":98}
+{"id":"39c2ddfd6010","parent_id":"n","text":"Extracting","status":"[==================================================\u003e]  15.52MB/15.52MB","current":15522356,"total":15522356,"percent":100}
+{"id":"39c2ddfd6010","parent_id":"n","text":"Pull complete","percent":100}
+{"id":"n","text":"Pulled"}

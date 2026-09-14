@@ -56,7 +56,8 @@ namespace ModelingEvolution.AutoUpdater.Tests.Services
             parser.Current.ImagesTotal.Should().Be(2);
             parser.Current.ImagesPulled.Should().Be(2);
             parser.Current.IsComplete.Should().BeTrue();
-            parser.Current.BytesTotal.Should().Be(0, "no image is in flight any more");
+            parser.Current.BytesTotal.Should().Be(3419815 + 2206402, "finished images stay in the update's total");
+            parser.Current.BytesDownloaded.Should().Be(3419815 + 2206402);
             parser.Current.BytesPercent.Should().Be(100f);
             parser.ErrorMessage.Should().BeNull();
         }
@@ -99,17 +100,16 @@ namespace ModelingEvolution.AutoUpdater.Tests.Services
         }
 
         [Fact]
-        public void Feed_WhenPulledImageLeavesFlight_BytesCoverOnlyRemainingImages()
+        public void Feed_WhenFirstImageIsPulled_ItsBytesStayInTheTotal()
         {
             var parser = new DockerPullProgressParser();
 
-            // "b" finishes first; its layer must drop out so the byte bar restarts for "a"
+            // "b" finishes first; before epic-106 its layer dropped out and the byte bar restarted for "a".
             FeedAll(parser, CapturedPull.Take(14));
 
             parser.Current.ImagesPulled.Should().Be(1);
-            parser.Current.BytesTotal.Should().Be(3419815);
-            parser.Current.BytesDownloaded.Should().Be(3419815);
-            parser.Current.BytesPercent.Should().Be(100f);
+            parser.Current.BytesTotal.Should().Be(3419815 + 2206402);
+            parser.Current.BytesDownloaded.Should().Be(3419815 + 2206402);
         }
 
         [Fact]
@@ -152,8 +152,8 @@ namespace ModelingEvolution.AutoUpdater.Tests.Services
             FeedAll(parser, lines);
 
             parser.Current.ImagesPulled.Should().Be(2);
-            parser.Current.BytesTotal.Should().Be(18300);
-            parser.Current.BytesPercent.Should().BeApproximately(100f * 5500 / 18300, 0.01f);
+            parser.Current.BytesTotal.Should().Be(3500 + 18300);
+            parser.Current.BytesPercent.Should().BeApproximately(100f * (3500 + 5500) / (3500 + 18300), 0.01f);
         }
 
         [Fact]
@@ -272,7 +272,7 @@ namespace ModelingEvolution.AutoUpdater.Tests.Services
         }
 
         [Fact]
-        public void Feed_SharedBaseLayerUnderTwoImages_IsCountedPerImage()
+        public void Feed_SharedBaseLayerUnderTwoImages_IsCountedOnce()
         {
             var parser = new DockerPullProgressParser();
             var lines = new[]
@@ -286,8 +286,9 @@ namespace ModelingEvolution.AutoUpdater.Tests.Services
 
             FeedAll(parser, lines);
 
-            parser.Current.BytesTotal.Should().Be(2000);
-            parser.Current.BytesDownloaded.Should().Be(1100);
+            // The daemon downloads a digest once; both parents report the same transfer.
+            parser.Current.BytesTotal.Should().Be(1000);
+            parser.Current.BytesDownloaded.Should().Be(1000);
         }
 
         [Theory]

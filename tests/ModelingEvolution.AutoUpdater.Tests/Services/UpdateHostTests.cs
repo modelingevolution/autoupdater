@@ -655,6 +655,108 @@ namespace ModelingEvolution.AutoUpdater.Tests.Services
             await _backupService.Received(1).RestoreBackupAsync(Arg.Any<string>(), "/backup/backup-123.tar.gz");
         }
 
+        /// <summary>
+        /// A successful update flow with no scripts and no backup, so the pull is the only step under test.
+        /// </summary>
+        private DockerComposeConfiguration ArrangeUpdateWithoutScripts()
+        {
+            _deploymentStateProvider.GetDeploymentStateAsync(Arg.Any<string>())
+                      .Returns(new DeploymentState(new PackageVersion("1.0.0"), DateTime.Now)
+                      {
+                          Up = ImmutableSortedSet<PackageVersion>.Empty,
+                          Failed = ImmutableSortedSet<PackageVersion>.Empty
+                      });
+            _gitService.GetAvailableVersionsAsync(Arg.Any<string>()).Returns(new[] { new PackageVersion("1.1.0") });
+            _scriptService.DiscoverScriptsAsync(Arg.Any<string>()).Returns(Array.Empty<MigrationScript>());
+            _scriptService.FilterScriptsForMigrationAsync(Arg.Any<IEnumerable<MigrationScript>>(), Arg.Any<PackageVersion?>(), Arg.Any<PackageVersion>(), Arg.Any<ImmutableSortedSet<PackageVersion>?>())
+                         .Returns(Array.Empty<MigrationScript>());
+            var mockSshService = Substitute.For<ISshService>();
+            mockSshService.GetArchitectureAsync().Returns(CpuArchitecture.X64);
+            _sshConnectionManager.CreateSshServiceAsync().Returns(mockSshService);
+            _dockerService.GetComposeFiles(Arg.Any<string>(), CpuArchitecture.X64).Returns(new[] { "docker-compose.yml" });
+            _backupService.BackupScriptExistsAsync(Arg.Any<string>()).Returns(false);
+            _healthCheckService.CheckServicesHealthAsync(Arg.Any<string[]>(), Arg.Any<string>())
+                              .Returns(HealthCheckResult.Healthy(new List<string> { "api" }));
+            return CreateTestConfiguration();
+        }
+
+        private UpdateHost CreateHost(IPullSizeResolver? resolver) =>
+            new(_configuration, _logger, _gitService, _scriptService, _sshConnectionManager, _dockerService, _deploymentStateProvider, _backupService, _healthCheckService, _progressService, _eventHub, resolver);
+
+        [Fact]
+        public async Task UpdateAsync_WithSizeResolver_ResolvesBeforePullingAndPassesTheTableToThePull()
+        {
+            var config = ArrangeUpdateWithoutScripts();
+            var table = await PullFixtures.ColdTableAsync();
+            var resolver = Substitute.For<IPullSizeResolver>();
+            resolver.ResolveAsync(Arg.Any<string[]>(), Arg.Any<string>()).Returns(table);
+
+            var result = await CreateHost(resolver).UpdateAsync(config);
+
+            result.Success.Should().BeTrue();
+            Received.InOrder(() =>
+            {
+                resolver.ResolveAsync(Arg.Is<string[]>(f => f.SequenceEqual(new[] { "docker-compose.yml" })), Arg.Any<string>());
+                _dockerService.PullAsync(Arg.Any<string[]>(), Arg.Any<string>(), Arg.Any<TimeSpan>(), Arg.Any<IProgress<PullProgress>?>(), table);
+            });
+        }
+
+        [Fact]
+        public async Task UpdateAsync_SizeResolverThrows_PullsWithoutTableAndSucceeds()
+        {
+            var config = ArrangeUpdateWithoutScripts();
+            var resolver = Substitute.For<IPullSizeResolver>();
+            resolver.ResolveAsync(Arg.Any<string[]>(), Arg.Any<string>()).Returns<Task<PullSizeTable>>(_ => throw new InvalidOperationException("ssh dropped"));
+
+            var result = await CreateHost(resolver).UpdateAsync(config);
+
+            result.Success.Should().BeTrue();
+            await _dockerService.Received(1).PullAsync(Arg.Any<string[]>(), Arg.Any<string>(), Arg.Any<TimeSpan>(), Arg.Any<IProgress<PullProgress>?>(), null);
+        }
+
+        [Fact]
+        public async Task UpdateAsync_PullWithUnsizedLayers_CaptionSaysSoInsteadOfATotal()
+        {
+            var config = ArrangeUpdateWithoutScripts();
+            var resolver = Substitute.For<IPullSizeResolver>();
+            resolver.ResolveAsync(Arg.Any<string[]>(), Arg.Any<string>()).Returns(PullSizeTable.Empty);
+            _dockerService.PullAsync(Arg.Any<string[]>(), Arg.Any<string>(), Arg.Any<TimeSpan>(), Arg.Any<IProgress<PullProgress>?>(), Arg.Any<PullSizeTable?>())
+                         .Returns(call =>
+                         {
+                             var progress = call.Arg<IProgress<PullProgress>?>()!;
+                             progress.Report(new PullProgress(2, 0, 432013312, 1288490188, 33.5f, LayersKnown: 5, LayersTotal: 8));
+                             progress.Report(new PullProgress(2, 2, 1288490188, 1288490188, 100f, LayersKnown: 8, LayersTotal: 8));
+                             return Task.CompletedTask;
+                         });
+
+            var result = await CreateHost(resolver).UpdateAsync(config);
+
+            result.Success.Should().BeTrue();
+            Received.InOrder(() =>
+            {
+                _progressService.LogPhaseProgress("Pulling Docker images", 30f, null, "Reading image sizes");
+                _progressService.LogPhaseProgress("Pulling Docker images (0/2)", 30f, 33.5f, "downloaded 412.0 MB of 1.2 GB so far, 3 layers not sized");
+                _progressService.LogPhaseProgress("Pulling Docker images (2/2)", 40f, 100f, "All images pulled");
+            });
+        }
+
+        [Theory]
+        [InlineData(2, 0, 0L, 0L, 0, 0, 0, "Resolving images")]
+        [InlineData(2, 0, 0L, 23167033L, 0, 9, 9, "Downloading 0.0 bytes / 22.1 MB")]
+        [InlineData(2, 1, 5848649L, 23167033L, 0, 9, 9, "Downloading 5.6 MB / 22.1 MB")]
+        [InlineData(2, 1, 23167033L, 23167033L, 3, 9, 9, "Extracting 3 layer(s), downloaded 22.1 MB / 22.1 MB")]
+        [InlineData(2, 1, 5848649L, 5848649L, 0, 2, 9, "downloaded 5.6 MB of 5.6 MB so far, 7 layers not sized")]
+        [InlineData(2, 0, 0L, 0L, 0, 0, 3, "downloaded 0.0 bytes of 0.0 bytes so far, 3 layers not sized")]
+        [InlineData(2, 1, 5848649L, 5848649L, 2, 2, 9, "downloaded 5.6 MB of 5.6 MB so far, 7 layers not sized")]
+        [InlineData(2, 2, 23167033L, 23167033L, 0, 9, 9, "All images pulled")]
+        [InlineData(2, 2, 5848649L, 5848649L, 0, 2, 9, "All images pulled")]
+        public void FormatPullPhase_EachBranch_ProducesTheCaption(int images, int pulled, long downloaded, long total, int extracting, int known, int layers, string expected)
+        {
+            var progress = new PullProgress(images, pulled, downloaded, total, null, extracting, known, layers);
+
+            UpdateHost.FormatPullPhase(progress).Should().Be(expected);
+        }
+
         private static DockerComposeConfiguration CreateTestConfiguration()
         {
             var tempDir = Path.GetTempPath();

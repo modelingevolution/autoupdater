@@ -1,0 +1,42 @@
+{"id":"built","text":"Skipped - No image to be pulled"}
+{"id":"a2","text":"Skipped - Image is already being pulled by a"}
+{"id":"b","text":"Pulling"}
+{"id":"n","text":"Pulling"}
+{"id":"a","text":"Pulling"}
+{"id":"b","text":"Pulled"}
+{"id":"a","text":"Pulled"}
+{"id":"61ca4f733c80","parent_id":"n","text":"Pulling fs layer"}
+{"id":"197eb75867ef","parent_id":"n","text":"Pulling fs layer"}
+{"id":"b464cfdf2a63","parent_id":"n","text":"Pulling fs layer"}
+{"id":"81bd8ed7ec67","parent_id":"n","text":"Pulling fs layer"}
+{"id":"39c2ddfd6010","parent_id":"n","text":"Pulling fs layer"}
+{"id":"34a64644b756","parent_id":"n","text":"Pulling fs layer"}
+{"id":"d7e507024086","parent_id":"n","text":"Pulling fs layer"}
+{"id":"61ca4f733c80","parent_id":"n","text":"Download complete","percent":100}
+{"id":"197eb75867ef","parent_id":"n","text":"Download complete","percent":100}
+{"id":"61ca4f733c80","parent_id":"n","text":"Extracting","status":"1 s","current":1}
+{"id":"d7e507024086","parent_id":"n","text":"Download complete","percent":100}
+{"id":"34a64644b756","parent_id":"n","text":"Download complete","percent":100}
+{"id":"b464cfdf2a63","parent_id":"n","text":"Download complete","percent":100}
+{"id":"81bd8ed7ec67","parent_id":"n","text":"Download complete","percent":100}
+{"id":"39c2ddfd6010","parent_id":"n","text":"Downloading","status":"[===\u003e                                               ]  1.049MB/15.52MB","current":1048576,"total":15522356,"percent":6}
+{"id":"61ca4f733c80","parent_id":"n","text":"Extracting","status":"1 s","current":1}
+{"id":"39c2ddfd6010","parent_id":"n","text":"Downloading","status":"[=====================================\u003e             ]  11.53MB/15.52MB","current":11534336,"total":15522356,"percent":74}
+{"id":"61ca4f733c80","parent_id":"n","text":"Extracting","status":"1 s","current":1}
+{"id":"b464cfdf2a63","parent_id":"n","text":"Pull complete","percent":100}
+{"id":"81bd8ed7ec67","parent_id":"n","text":"Pull complete","percent":100}
+{"id":"39c2ddfd6010","parent_id":"n","text":"Download complete","percent":100}
+{"id":"2a84448aca9c","parent_id":"n","text":"Download complete","percent":100}
+{"id":"61ca4f733c80","parent_id":"n","text":"Pull complete","percent":100}
+{"id":"197eb75867ef","parent_id":"n","text":"Pull complete","percent":100}
+{"id":"d7e507024086","parent_id":"n","text":"Pull complete","percent":100}
+{"id":"34a64644b756","parent_id":"n","text":"Pull complete","percent":100}
+{"id":"39c2ddfd6010","parent_id":"n","text":"Extracting","status":"1 s","current":1}
+{"id":"9261b9aff737","parent_id":"n","text":"Download complete","percent":100}
+{"id":"39c2ddfd6010","parent_id":"n","text":"Extracting","status":"1 s","current":1}
+{"id":"39c2ddfd6010","parent_id":"n","text":"Extracting","status":"1 s","current":1}
+{"id":"39c2ddfd6010","parent_id":"n","text":"Extracting","status":"1 s","current":1}
+{"id":"39c2ddfd6010","parent_id":"n","text":"Extracting","status":"1 s","current":1}
+{"id":"39c2ddfd6010","parent_id":"n","text":"Extracting","status":"1 s","current":1}
+{"id":"39c2ddfd6010","parent_id":"n","text":"Pull complete","percent":100}
+{"id":"n","text":"Pulled"}

@@ -83,7 +83,36 @@ namespace ModelingEvolution.AutoUpdater.Tests.Services
             progress.Reports.Should().NotBeEmpty();
             progress.Reports.Select(r => r.ImagesPulled).Should().BeInAscendingOrder();
             progress.Reports.Select(r => r.ImagesPulled).Distinct().Should().Equal(0, 1, 2);
-            progress.Reports.Last().Should().Be(new PullProgress(2, 2, 0, 0, 100f));
+            progress.Reports.Last().Should().Be(new PullProgress(2, 2, 3419815 + 2206402, 3419815 + 2206402, 100f, LayersKnown: 2, LayersTotal: 2));
+        }
+
+        [Fact]
+        public async Task PullAsync_WithSizeTable_EveryReportCarriesTheResolvedTotal()
+        {
+            // Recorded: compose 2.40.3 cold pull on the classic store, with the table the resolver builds from recorded manifests.
+            SetupDockerComposeV2Detection("Docker Compose version 2.40.3+ds1-0ubuntu1");
+            SetupStreamedCommand(JsonPullCommand, "/app", PullFixtures.Lines("overlay2-compose2.40/pull-cold.jsonl"));
+            _service.ProgressReportInterval = TimeSpan.Zero;
+            var progress = new RecordingProgress();
+            var table = await PullFixtures.ColdTableAsync();
+
+            await _service.PullAsync(new[] { "docker-compose.yml" }, "/app", TimeSpan.FromMinutes(1), progress, table);
+
+            progress.Reports.Should().NotBeEmpty();
+            progress.Reports.Should().AllSatisfy(r => r.BytesTotal.Should().Be(PullFixtures.ColdTotal));
+            progress.Reports.Last().BytesDownloaded.Should().Be(PullFixtures.ColdTotal);
+        }
+
+        [Fact]
+        public async Task PullAsync_WithSizeTableButOldCompose_RunsTheBlockingPullUnchanged()
+        {
+            SetupDockerComposeV2Detection("Docker Compose version v2.20.2");
+            _sshService.ExecuteCommandAsync(BlockingPullCommand, Arg.Any<TimeSpan>(), "/app")
+                .Returns(new SshCommandResult(BlockingPullCommand, "Pulled"));
+
+            await _service.PullAsync(new[] { "docker-compose.yml" }, "/app", TimeSpan.FromMinutes(1), new RecordingProgress(), await PullFixtures.ColdTableAsync());
+
+            await _sshService.Received(1).ExecuteCommandAsync(BlockingPullCommand, Arg.Any<TimeSpan>(), "/app");
         }
 
         [Fact]
@@ -137,7 +166,7 @@ namespace ModelingEvolution.AutoUpdater.Tests.Services
             await pull;
 
             // Assert: while compose was silent, the trailing flush delivered the extracting state
-            reportsDuringExtraction.Last().Should().Be(new PullProgress(1, 0, 1000, 1000, 100f, LayersExtracting: 1));
+            reportsDuringExtraction.Last().Should().Be(new PullProgress(1, 0, 1000, 1000, 100f, LayersExtracting: 1, LayersKnown: 1, LayersTotal: 1));
             progress.Reports.Last().IsComplete.Should().BeTrue();
         }
 

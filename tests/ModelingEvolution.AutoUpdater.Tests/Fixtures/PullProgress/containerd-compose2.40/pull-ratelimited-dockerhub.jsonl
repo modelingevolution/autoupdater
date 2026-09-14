@@ -1,0 +1,9 @@
+{"id":"built","text":"Skipped - No image to be pulled"}
+{"id":"a2","text":"Skipped - Image is already being pulled by a"}
+{"id":"n","text":"Pulling"}
+{"id":"b","text":"Pulling"}
+{"id":"a","text":"Pulling"}
+{"id":"a","text":"Error","status":"unknown: failed to resolve reference \"docker.io/library/alpine:3.21.3\": unexpected status from HEAD request to https://registry-1.docker.io/v2/library/alpine/manifests/3.21.3: 429 Too Many Requests"}
+{"id":"b","status":"Interrupted"}
+{"id":"n","status":"Interrupted"}
+{"error":true,"message":"Error response from daemon: unknown: failed to resolve reference \"docker.io/library/alpine:3.21.3\": unexpected status from HEAD request to https://registry-1.docker.io/v2/library/alpine/manifests/3.21.3: 429 Too Many Requests"}

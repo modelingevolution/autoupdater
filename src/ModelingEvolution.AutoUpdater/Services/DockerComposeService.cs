@@ -297,7 +297,7 @@ namespace ModelingEvolution.AutoUpdater.Services
             await PullAsync(composeFiles, workingDirectory, TimeSpan.FromMinutes(10));
         }
 
-        public async Task PullAsync(string[] composeFiles, string workingDirectory, TimeSpan timeout, IProgress<PullProgress>? progress = null)
+        public async Task PullAsync(string[] composeFiles, string workingDirectory, TimeSpan timeout, IProgress<PullProgress>? progress = null, PullSizeTable? sizes = null)
         {
             try
             {
@@ -319,7 +319,7 @@ namespace ModelingEvolution.AutoUpdater.Services
                 var composeCommand = await GetDockerComposeCommandAsync();
 
                 var result = progress != null && SupportsJsonProgress
-                    ? await PullWithProgressAsync(composeCommand, composeFileArgs, workingDirectory, timeout, progress)
+                    ? await PullWithProgressAsync(composeCommand, composeFileArgs, workingDirectory, timeout, progress, sizes)
                     : await PullBlockingAsync(composeCommand, composeFileArgs, workingDirectory, timeout);
 
                 if (!result.IsSuccess)
@@ -357,12 +357,12 @@ namespace ModelingEvolution.AutoUpdater.Services
         /// <summary>
         /// Pulls with <c>--progress json</c> and forwards parsed snapshots. Compose writes progress to stderr, hence the redirect.
         /// </summary>
-        private async Task<SshCommandResult> PullWithProgressAsync(string composeCommand, string composeFileArgs, string workingDirectory, TimeSpan timeout, IProgress<PullProgress> progress)
+        private async Task<SshCommandResult> PullWithProgressAsync(string composeCommand, string composeFileArgs, string workingDirectory, TimeSpan timeout, IProgress<PullProgress> progress, PullSizeTable? sizes)
         {
             var command = $"sudo {composeCommand} --progress json {composeFileArgs} pull 2>&1";
             _logger.LogDebug("Executing streamed Docker Compose command with timeout {Timeout}: {Command}", timeout, command);
 
-            var parser = new DockerPullProgressParser();
+            var parser = new DockerPullProgressParser(sizes);
             var stopwatch = Stopwatch.StartNew();
             var lastReported = PullProgress.Empty;
             var lastReportAt = TimeSpan.MinValue;
