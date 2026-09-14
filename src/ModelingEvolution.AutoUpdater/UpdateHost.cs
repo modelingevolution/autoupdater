@@ -625,9 +625,15 @@ public class UpdateHost : IHostedService
             return null;
         }
 
-        _progressService.LogPhaseProgress("Pulling Docker images", PullProgressStart, null, "Reading image sizes");
         try
         {
+            // Without JSON progress there is no bar to seed: do not spend registry requests on it.
+            if (!await _dockerComposeService.SupportsPullProgressAsync())
+            {
+                return null;
+            }
+
+            _progressService.LogPhaseProgress("Pulling Docker images", PullProgressStart, null, "Reading image sizes (skipped if the registry is slow)");
             return await _pullSizeResolver.ResolveAsync(composeFiles, workingDirectory);
         }
         catch (Exception ex)
@@ -655,12 +661,15 @@ public class UpdateHost : IHostedService
     /// </summary>
     internal static string FormatPullPhase(PullProgress p)
     {
-        return p.IsComplete ? "All images pulled"
-            : p.LayersNotSized > 0 ? $"downloaded {PullProgress.FormatBytes(p.BytesDownloaded)} of {PullProgress.FormatBytes(p.BytesTotal)} so far, {p.LayersNotSized} layers not sized"
+        return p.IsComplete && p.ImagesFailed > 0 ? $"{p.ImagesFailed} {Plural(p.ImagesFailed, "image")} failed, downloaded {PullProgress.FormatBytes(p.BytesDownloaded)} of {PullProgress.FormatBytes(p.BytesTotal)}"
+            : p.IsComplete ? "All images pulled"
+            : p.LayersNotSized > 0 ? $"downloaded {PullProgress.FormatBytes(p.BytesDownloaded)} of {PullProgress.FormatBytes(p.BytesTotal)} so far, {p.LayersNotSized} {Plural(p.LayersNotSized, "layer")} not sized"
             : p.LayersExtracting > 0 && p.BytesDownloaded == p.BytesTotal ? $"Extracting {p.LayersExtracting} layer(s), downloaded {p.FormatBytes()}"
             : p.BytesTotal > 0 ? $"Downloading {p.FormatBytes()}"
             : "Resolving images";
     }
+
+    private static string Plural(int count, string noun) => count == 1 ? noun : noun + "s";
 
     /// <summary>
     /// Error message of the result returned when an update is requested while another one runs.

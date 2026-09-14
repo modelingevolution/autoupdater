@@ -69,6 +69,8 @@ namespace ModelingEvolution.AutoUpdater.Tests.Services
         public sealed class Device
         {
             private readonly Dictionary<string, SshCommandResult> _answers = new(StringComparer.Ordinal);
+            private readonly HashSet<string> _hangs = new(StringComparer.Ordinal);
+            private bool _registryDown;
 
             public ISshService Ssh { get; } = Substitute.For<ISshService>();
 
@@ -78,6 +80,14 @@ namespace ModelingEvolution.AutoUpdater.Tests.Services
                     .Returns(call =>
                     {
                         var command = call.ArgAt<string>(0);
+                        if (_hangs.Contains(command))
+                        {
+                            return new TaskCompletionSource<SshCommandResult>().Task;
+                        }
+                        if (_registryDown && command.StartsWith("sudo docker manifest inspect ", StringComparison.Ordinal))
+                        {
+                            return Task.FromResult(SshCommandResult.Failed(command, 1, string.Empty, "toomanyrequests: Rate exceeded"));
+                        }
                         return Task.FromResult(_answers.TryGetValue(command, out var result)
                             ? result
                             : SshCommandResult.Failed(command, 127, string.Empty, $"unexpected command: {command}"));
@@ -109,10 +119,34 @@ namespace ModelingEvolution.AutoUpdater.Tests.Services
                 return this;
             }
 
+            /// <summary>
+            /// The command never returns (a black-holed registry).
+            /// </summary>
+            public Device Hang(string command)
+            {
+                _hangs.Add(command);
+                return this;
+            }
+
+            /// <summary>
+            /// Every <c>docker manifest inspect</c> fails, as recorded from ECR: "toomanyrequests: Rate exceeded".
+            /// </summary>
+            public Device RegistryDown()
+            {
+                _registryDown = true;
+                return this;
+            }
+
+            public int ManifestCalls => Ssh.ReceivedCalls().Count(c =>
+                c.GetMethodInfo().Name == nameof(ISshService.ExecuteCommandAsync)
+                && c.GetArguments()[0] is string command && command.StartsWith("sudo docker manifest inspect ", StringComparison.Ordinal));
+
+            public TimeSpan Budget { get; set; } = DockerPullSizeResolver.DefaultBudget;
+
             public Device LocalImages(string imageLsOutput) => Answer(DockerPullSizeResolver.ImageListCommand, imageLsOutput);
 
             public Task<PullSizeTable> ResolveAsync() =>
-                new DockerPullSizeResolver(Ssh, NullLogger<DockerPullSizeResolver>.Instance).ResolveAsync(ComposeFiles, WorkingDirectory);
+                new DockerPullSizeResolver(Ssh, NullLogger<DockerPullSizeResolver>.Instance) { Budget = Budget }.ResolveAsync(ComposeFiles, WorkingDirectory);
         }
 
         public static Task<PullSizeTable> ColdTableAsync() => new Device().ResolveAsync();

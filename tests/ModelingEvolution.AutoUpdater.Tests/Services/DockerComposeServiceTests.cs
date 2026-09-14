@@ -91,16 +91,40 @@ namespace ModelingEvolution.AutoUpdater.Tests.Services
         {
             // Recorded: compose 2.40.3 cold pull on the classic store, with the table the resolver builds from recorded manifests.
             SetupDockerComposeV2Detection("Docker Compose version 2.40.3+ds1-0ubuntu1");
-            SetupStreamedCommand(JsonPullCommand, "/app", PullFixtures.Lines("overlay2-compose2.40/pull-cold.jsonl"));
-            _service.ProgressReportInterval = TimeSpan.Zero;
+            var lines = PullFixtures.Lines("overlay2-compose2.40/pull-cold.jsonl");
             var progress = new RecordingProgress();
+            int? reportsBeforeFirstLine = null;
+            _sshService.ExecuteCommandAsync(JsonPullCommand, Arg.Any<TimeSpan>(), "/app", Arg.Any<Action<string>>())
+                .Returns(call =>
+                {
+                    reportsBeforeFirstLine = progress.Reports.Count;
+                    var onLine = call.Arg<Action<string>>();
+                    foreach (var line in lines)
+                    {
+                        onLine(line);
+                    }
+                    return new SshCommandResult { Command = JsonPullCommand, ExitCode = 0 };
+                });
+            _service.ProgressReportInterval = TimeSpan.Zero;
             var table = await PullFixtures.ColdTableAsync();
 
             await _service.PullAsync(new[] { "docker-compose.yml" }, "/app", TimeSpan.FromMinutes(1), progress, table);
 
-            progress.Reports.Should().NotBeEmpty();
+            reportsBeforeFirstLine.Should().Be(1, "the resolved total is reported before compose prints its first line");
+            progress.Reports[0].BytesTotal.Should().Be(PullFixtures.ColdTotal);
             progress.Reports.Should().AllSatisfy(r => r.BytesTotal.Should().Be(PullFixtures.ColdTotal));
             progress.Reports.Last().BytesDownloaded.Should().Be(PullFixtures.ColdTotal);
+        }
+
+        [Theory]
+        [InlineData("Docker Compose version 2.40.3+ds1-0ubuntu1", true)]
+        [InlineData("Docker Compose version v2.27.0", true)]
+        [InlineData("Docker Compose version v2.20.2", false)]
+        public async Task SupportsPullProgressAsync_DetectsComposeVersion(string versionOutput, bool expected)
+        {
+            SetupDockerComposeV2Detection(versionOutput);
+
+            (await _service.SupportsPullProgressAsync()).Should().Be(expected);
         }
 
         [Fact]

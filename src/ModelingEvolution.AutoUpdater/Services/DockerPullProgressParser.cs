@@ -45,8 +45,10 @@ namespace ModelingEvolution.AutoUpdater.Services
         private readonly HashSet<string> _images = new(StringComparer.Ordinal);
         private readonly HashSet<string> _finished = new(StringComparer.Ordinal);
         private readonly HashSet<string> _failed = new(StringComparer.Ordinal);
-        // Table images compose has not mentioned yet: they are expected, so the image count cannot read "all pulled" early.
-        private readonly HashSet<PullImageSize> _unseenImages = new(ReferenceEqualityComparer.Instance);
+        // Table images compose 5.x has named by an "Image <reference>" id: from then on the image counts once, not per service.
+        private readonly HashSet<PullImageSize> _namedByImageId = new(ReferenceEqualityComparer.Instance);
+        // Progress ids that are neither a table service, a table image, nor a build-only service of the table.
+        private readonly HashSet<string> _untrackedIds = new(StringComparer.Ordinal);
         private readonly HashSet<(string Image, string Layer)> _extracting = new();
         private readonly Dictionary<string, Layer> _layers = new(StringComparer.Ordinal);
         // Unsized table images that have not shown a layer yet: each stands for at least one layer not sized.
@@ -67,7 +69,6 @@ namespace ModelingEvolution.AutoUpdater.Services
             }
             foreach (var image in _table.Images)
             {
-                _unseenImages.Add(image);
                 if (!image.IsSized)
                 {
                     _unsizedPending.Add(image);
@@ -173,14 +174,32 @@ namespace ModelingEvolution.AutoUpdater.Services
             return image;
         }
 
+        /// <summary>
+        /// Records a progress id and returns the table image it names, if any.
+        /// </summary>
+        private PullImageSize? See(string id)
+        {
+            var image = FindImage(id);
+            if (_images.Add(id))
+            {
+                if (image == null)
+                {
+                    if (!_table.BuildOnlyServices.Contains(id, StringComparer.Ordinal))
+                    {
+                        _untrackedIds.Add(id);
+                    }
+                }
+                else if (id.StartsWith(PullSizeTable.ImageIdPrefix, StringComparison.Ordinal))
+                {
+                    _namedByImageId.Add(image);
+                }
+            }
+            return image;
+        }
+
         private void ApplyImage(string id, string text)
         {
-            _images.Add(id);
-            var image = FindImage(id);
-            if (image != null)
-            {
-                _unseenImages.Remove(image);
-            }
+            var image = See(id);
 
             if (!IsTerminal(text))
             {
@@ -264,12 +283,7 @@ namespace ModelingEvolution.AutoUpdater.Services
 
         private void ApplyLayer(string id, string parentId, string text, long current, long total)
         {
-            _images.Add(parentId);
-            var parent = FindImage(parentId);
-            if (parent != null)
-            {
-                _unseenImages.Remove(parent);
-            }
+            var parent = See(parentId);
             _layers.TryGetValue(id, out var layer);
 
             if (layer == null && IsLayerOnlyText(text) && text != TextAlreadyExists)
@@ -378,19 +392,35 @@ namespace ModelingEvolution.AutoUpdater.Services
                 }
             }
 
+            var imagesTotal = ExpectedImages();
             float? percent = null;
-            var imagesTotal = _images.Count + _unseenImages.Count;
-            if (imagesTotal > 0 && _finished.Count == imagesTotal)
+            if (imagesTotal > 0 && _finished.Count == imagesTotal && _failed.Count == 0)
             {
                 percent = 100f;
             }
             else if (total > 0 && layersTotal == known)
             {
+                // A failed image leaves its bytes undownloaded: the ratio stays short of 100 instead of claiming completion.
                 percent = (float)Math.Min(100.0, 100.0 * downloaded / total);
             }
             // With layers not sized the total is only a lower bound: a ratio over it could read 100 % mid-pull, so none is given.
 
-            return new PullProgress(imagesTotal, _finished.Count, downloaded, total, percent, extracting, known, layersTotal);
+            return new PullProgress(imagesTotal, _finished.Count, downloaded, total, percent, extracting, known, layersTotal, _failed.Count);
+        }
+
+        /// <summary>
+        /// Progress ids compose will report: every table service (compose 2.x ids are service names) — or one id per image
+        /// once compose 5.x names it "Image &lt;reference&gt;" — every build-only service, and any id the table did not predict.
+        /// Counting what is expected from the start keeps the image fraction from stepping backwards when compose announces more.
+        /// </summary>
+        private int ExpectedImages()
+        {
+            var count = _untrackedIds.Count + _table.BuildOnlyServices.Length;
+            foreach (var image in _table.Images)
+            {
+                count += _namedByImageId.Contains(image) ? 1 : image.Services.Length;
+            }
+            return count;
         }
 
         private static string? GetString(JsonElement element, string name)

@@ -339,6 +339,12 @@ namespace ModelingEvolution.AutoUpdater.Services
             }
         }
 
+        public async Task<bool> SupportsPullProgressAsync()
+        {
+            await GetDockerComposeCommandAsync();
+            return SupportsJsonProgress;
+        }
+
         /// <summary>
         /// True when the detected compose binary understands <c>--progress json</c>.
         /// </summary>
@@ -408,6 +414,15 @@ namespace ModelingEvolution.AutoUpdater.Services
                 lastReported = current;
                 lastReportAt = stopwatch.Elapsed;
                 progress.Report(current);
+            }
+
+            if (sizes != null)
+            {
+                // The resolved total is known before compose prints anything: show it at once.
+                lock (parser)
+                {
+                    Report(force: true);
+                }
             }
 
             var result = await _sshService.ExecuteCommandAsync(command, timeout, workingDirectory, line =>

@@ -2,6 +2,8 @@ using Microsoft.Extensions.Logging;
 using System;
 using System.Collections.Generic;
 using System.Collections.Immutable;
+using System.Diagnostics;
+using System.Globalization;
 using System.Linq;
 using System.Security.Cryptography;
 using System.Text;
@@ -33,6 +35,11 @@ namespace ModelingEvolution.AutoUpdater.Services
     /// under which the classic daemon reports <c>Already exists</c> (it looks layers up by chain, not by digest alone) and
     /// the containerd store skips the blob. The local images' layer lists come from the registry manifest of their repo
     /// digest. Everything the check cannot prove present is counted as to fetch, so the total can be too large, never too small.
+    /// <para>
+    /// Bounded (design.md "Budget and breaker"): the whole resolution gets <see cref="Budget"/>; a command still running when it
+    /// runs out is abandoned. The first failed or timed-out registry read (<c>docker manifest inspect</c>) stops all further
+    /// registry reads, so a slow, rate-limiting or unreachable registry costs one command timeout at most, not one per image.
+    /// </para>
     /// </remarks>
     public sealed partial class DockerPullSizeResolver : IPullSizeResolver
     {
@@ -46,9 +53,26 @@ namespace ModelingEvolution.AutoUpdater.Services
 
         internal static readonly TimeSpan CommandTimeout = TimeSpan.FromSeconds(60);
 
+        /// <summary>
+        /// Default <see cref="Budget"/>.
+        /// </summary>
+        internal static readonly TimeSpan DefaultBudget = TimeSpan.FromSeconds(90);
+
+        private const string ManifestCommandPrefix = "sudo docker manifest inspect ";
+
         private readonly ISshService _ssh;
         private readonly ILogger<DockerPullSizeResolver> _logger;
 
+        /// <summary>
+        /// Upper bound on one whole resolution, all commands included. What is not read by then stays not sized.
+        /// </summary>
+        internal TimeSpan Budget { get; init; } = DefaultBudget;
+
+        /// <summary>
+        /// Creates a resolver that runs its docker commands through <paramref name="ssh"/>.
+        /// </summary>
+        /// <param name="ssh">Command channel to the device; the same one the pull uses.</param>
+        /// <param name="logger">Receives one Information summary per resolution and a Warning when registry reads are cut short.</param>
         public DockerPullSizeResolver(ISshService ssh, ILogger<DockerPullSizeResolver> logger)
         {
             _ssh = ssh ?? throw new ArgumentNullException(nameof(ssh));
@@ -65,7 +89,7 @@ namespace ModelingEvolution.AutoUpdater.Services
         /// Plain (not <c>--verbose</c>) inspect: one registry request. <c>--verbose</c> fetches the manifest of every platform in
         /// an index (17 requests for alpine), which trips registry rate limits; Docker Hub counts manifest GETs as pulls.
         /// </summary>
-        internal static string ManifestCommand(string reference) => $"sudo docker manifest inspect {reference}";
+        internal static string ManifestCommand(string reference) => ManifestCommandPrefix + reference;
 
         public async Task<PullSizeTable> ResolveAsync(string[] composeFiles, string workingDirectory)
         {
@@ -81,13 +105,15 @@ namespace ModelingEvolution.AutoUpdater.Services
         }
 
         /// <summary>
-        /// One resolution: command outputs are cached, so a platform manifest shared by a target and a local image is read once.
+        /// One resolution: the budget clock, the registry breaker, and cached command outputs (a platform manifest shared by a
+        /// target and a local image is read once).
         /// </summary>
         private sealed class Run
         {
             private readonly DockerPullSizeResolver _owner;
             private readonly string _workingDirectory;
             private readonly Dictionary<string, string?> _outputs = new(StringComparer.Ordinal);
+            private readonly Stopwatch _clock = Stopwatch.StartNew();
 
             public Run(DockerPullSizeResolver owner, string workingDirectory)
             {
@@ -95,30 +121,99 @@ namespace ModelingEvolution.AutoUpdater.Services
                 _workingDirectory = workingDirectory;
             }
 
-            public Task<PullSizeTable> ResolveAsync(string[] composeFiles) => _owner.ResolveCoreAsync(composeFiles, _workingDirectory, this);
+            public int Commands { get; private set; }
+            public int SkippedRegistryReads { get; private set; }
+            public bool RegistryTripped { get; private set; }
+            public bool BudgetExhausted { get; private set; }
+            public TimeSpan Elapsed => _clock.Elapsed;
+
+            public Task<PullSizeTable> ResolveAsync(string[] composeFiles) => _owner.ResolveCoreAsync(composeFiles, this);
 
             public async Task<string?> OutputAsync(string command)
             {
-                if (!_outputs.TryGetValue(command, out var output))
+                if (_outputs.TryGetValue(command, out var cached))
                 {
-                    output = await _owner.RunAsync(command, _workingDirectory);
+                    return cached;
+                }
+
+                var registry = command.StartsWith(ManifestCommandPrefix, StringComparison.Ordinal);
+                if (BudgetExhausted || (registry && RegistryTripped))
+                {
+                    if (registry)
+                    {
+                        SkippedRegistryReads++;
+                    }
+                    return null;
+                }
+
+                var remaining = _owner.Budget - _clock.Elapsed;
+                if (remaining <= TimeSpan.Zero)
+                {
+                    Exhaust(command);
+                    return registry ? Skip() : null;
+                }
+
+                Commands++;
+                var (output, failure) = await _owner.RunAsync(command, _workingDirectory, remaining);
+                if (failure == Failure.BudgetExhausted)
+                {
+                    Exhaust(command);
+                }
+                else if (failure != Failure.None && registry && !RegistryTripped)
+                {
+                    RegistryTripped = true;
+                    _owner._logger.LogWarning(
+                        "Registry read failed after {Elapsed} ms ({Command}); remaining image sizes are not read and show as not sized",
+                        (long)_clock.Elapsed.TotalMilliseconds, command);
+                }
+
+                // A result is cached only when it came back, so an abandoned command is not remembered as a real answer.
+                if (failure != Failure.BudgetExhausted)
+                {
                     _outputs[command] = output;
                 }
                 return output;
             }
+
+            private string? Skip()
+            {
+                SkippedRegistryReads++;
+                return null;
+            }
+
+            private void Exhaust(string command)
+            {
+                if (BudgetExhausted)
+                {
+                    return;
+                }
+                BudgetExhausted = true;
+                _owner._logger.LogWarning(
+                    "Sizing the update ran out of its {Budget} s budget at {Command}; what is not read shows as not sized",
+                    _owner.Budget.TotalSeconds, command);
+            }
         }
 
-        private async Task<PullSizeTable> ResolveCoreAsync(string[] composeFiles, string workingDirectory, Run run)
+        private enum Failure
+        {
+            None,
+            Failed,
+            BudgetExhausted,
+        }
+
+        private async Task<PullSizeTable> ResolveCoreAsync(string[] composeFiles, Run run)
         {
             var config = await run.OutputAsync(ConfigCommand(composeFiles));
             if (config == null)
             {
+                LogSummary(run, PullSizeTable.Empty);
                 return PullSizeTable.Empty;
             }
 
             var services = ParseComposeServices(config);
             if (services.Count == 0)
             {
+                LogSummary(run, PullSizeTable.Empty);
                 return PullSizeTable.Empty;
             }
 
@@ -191,9 +286,16 @@ namespace ModelingEvolution.AutoUpdater.Services
                 present.Remove(id);
             }
 
-            var table = new PullSizeTable(toFetch.ToImmutable(), present.ToImmutable(), images.ToImmutable());
-            _logger.LogInformation("Update download size resolved: {Table}", table);
+            var table = new PullSizeTable(toFetch.ToImmutable(), present.ToImmutable(), images.ToImmutable(), BuildOnlyServices(config));
+            LogSummary(run, table);
             return table;
+        }
+
+        private void LogSummary(Run run, PullSizeTable table)
+        {
+            _logger.LogInformation(
+                "Update download size resolved in {Elapsed} ms with {Commands} command(s), {Skipped} registry read(s) skipped: {Table}",
+                (long)run.Elapsed.TotalMilliseconds, run.Commands, run.SkippedRegistryReads, table);
         }
 
         /// <summary>
@@ -268,12 +370,12 @@ namespace ModelingEvolution.AutoUpdater.Services
                 return chains;
             }
 
-            var local = ParseLocalImages(listing);
+            var local = ParseLocalImages(listing, _logger);
             foreach (var (repository, platform) in repositories)
             {
                 var digests = local
                     .Where(l => l.Repository == repository)
-                    .OrderByDescending(l => l.CreatedAt, StringComparer.Ordinal)
+                    .OrderByDescending(l => l.CreatedAt)
                     .Select(l => l.RepoDigestReference)
                     .Distinct(StringComparer.Ordinal)
                     .ToList();
@@ -303,24 +405,47 @@ namespace ModelingEvolution.AutoUpdater.Services
             return chains;
         }
 
-        private async Task<string?> RunAsync(string command, string workingDirectory)
+        /// <summary>
+        /// Runs one command, abandoning it when <paramref name="remaining"/> budget runs out. Failures are logged at Debug only:
+        /// the SSH service already logs a Warning for every failed command.
+        /// </summary>
+        private async Task<(string? Output, Failure Failure)> RunAsync(string command, string workingDirectory, TimeSpan remaining)
         {
+            var timeout = remaining < CommandTimeout ? remaining : CommandTimeout;
+            Task<SshCommandResult> execution;
             try
             {
-                var result = await _ssh.ExecuteCommandAsync(command, CommandTimeout, workingDirectory);
-                if (result.IsSuccess)
-                {
-                    return result.Output;
-                }
-
-                _logger.LogWarning("Sizing command failed (exit {ExitCode}): {Command}: {Reason}",
-                    result.ExitCode, command, DockerComposeService.DescribeFailure(result));
-                return null;
+                execution = _ssh.ExecuteCommandAsync(command, timeout, workingDirectory);
             }
             catch (Exception ex)
             {
-                _logger.LogWarning(ex, "Sizing command failed: {Command}", command);
-                return null;
+                _logger.LogDebug(ex, "Sizing command failed: {Command}", command);
+                return (null, Failure.Failed);
+            }
+
+            var budget = Task.Delay(remaining);
+            if (await Task.WhenAny(execution, budget) != execution)
+            {
+                _ = execution.ContinueWith(t => _ = t.Exception, TaskContinuationOptions.OnlyOnFaulted);
+                return (null, Failure.BudgetExhausted);
+            }
+
+            try
+            {
+                var result = await execution;
+                if (result.IsSuccess)
+                {
+                    return (result.Output, Failure.None);
+                }
+
+                _logger.LogDebug("Sizing command failed (exit {ExitCode}): {Command}: {Reason}",
+                    result.ExitCode, command, DockerComposeService.DescribeFailure(result));
+                return (null, Failure.Failed);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogDebug(ex, "Sizing command failed: {Command}", command);
+                return (null, Failure.Failed);
             }
         }
 
@@ -328,7 +453,7 @@ namespace ModelingEvolution.AutoUpdater.Services
 
         internal sealed record ManifestLayer(string Digest, long Size);
 
-        internal sealed record LocalImage(string Repository, string RepoDigestReference, string CreatedAt);
+        internal sealed record LocalImage(string Repository, string RepoDigestReference, DateTimeOffset CreatedAt);
 
         /// <summary>
         /// Services of <c>docker compose config --format json</c> that have an image; build-only services are skipped.
@@ -360,6 +485,22 @@ namespace ModelingEvolution.AutoUpdater.Services
             }
 
             return result;
+        }
+
+        /// <summary>
+        /// Services of <c>docker compose config --format json</c> without an image: compose reports them as <c>Skipped</c>.
+        /// </summary>
+        internal static ImmutableArray<string> BuildOnlyServices(string json)
+        {
+            using var document = JsonDocument.Parse(json);
+            if (!document.RootElement.TryGetProperty("services", out var services) || services.ValueKind != JsonValueKind.Object)
+            {
+                return ImmutableArray<string>.Empty;
+            }
+            return services.EnumerateObject()
+                .Where(service => !TryGetString(service.Value, "image", out var image) || string.IsNullOrWhiteSpace(image))
+                .Select(service => service.Name)
+                .ToImmutableArray();
         }
 
         /// <summary>
@@ -430,7 +571,7 @@ namespace ModelingEvolution.AutoUpdater.Services
         /// <summary>
         /// Rows of <c>docker image ls --no-trunc --digests --format '{{json .}}'</c> that carry a repo digest.
         /// </summary>
-        internal static IReadOnlyList<LocalImage> ParseLocalImages(string output)
+        internal static IReadOnlyList<LocalImage> ParseLocalImages(string output, ILogger? logger = null)
         {
             var result = new List<LocalImage>();
             foreach (var line in output.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
@@ -453,15 +594,34 @@ namespace ModelingEvolution.AutoUpdater.Services
 
                     TryGetString(row, "CreatedAt", out var createdAt);
                     var normalizedRepository = ImageReference.Repository(ImageReference.Normalize(repository + "@" + digest));
-                    result.Add(new LocalImage(normalizedRepository, $"{repository}@{digest}", createdAt ?? string.Empty));
+                    result.Add(new LocalImage(normalizedRepository, $"{repository}@{digest}", ParseCreatedAt(createdAt)));
                 }
-                catch (JsonException)
+                catch (JsonException ex)
                 {
-                    // Not a row.
+                    logger?.LogDebug(ex, "Ignoring a docker image ls line that is not a JSON row: {Line}", line);
                 }
             }
             return result;
         }
+
+        /// <summary>
+        /// <c>CreatedAt</c> of <c>docker image ls</c>, e.g. <c>2025-04-16 14:50:31 +0000 UTC</c>; <see cref="DateTimeOffset.MinValue"/> when unreadable.
+        /// </summary>
+        internal static DateTimeOffset ParseCreatedAt(string? value)
+        {
+            var match = value == null ? null : CreatedAtPattern().Match(value);
+            if (match is not { Success: true })
+            {
+                return DateTimeOffset.MinValue;
+            }
+            var text = $"{match.Groups[1].Value} {match.Groups[2].Value}:{match.Groups[3].Value}";
+            return DateTimeOffset.TryParseExact(text, "yyyy-MM-dd HH:mm:ss zzz", CultureInfo.InvariantCulture, DateTimeStyles.None, out var parsed)
+                ? parsed
+                : DateTimeOffset.MinValue;
+        }
+
+        [GeneratedRegex(@"^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}) ([+-]\d{2})(\d{2})")]
+        private static partial Regex CreatedAtPattern();
 
         /// <summary>
         /// Identity of a layer together with every layer below it, like the daemon's chain id.

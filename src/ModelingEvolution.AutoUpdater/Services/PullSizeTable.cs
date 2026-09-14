@@ -27,21 +27,38 @@ namespace ModelingEvolution.AutoUpdater.Services
     /// </remarks>
     public sealed class PullSizeTable
     {
+        /// <summary>
+        /// Nothing known: no layer sized, no image expected. The parser then learns every size from the pull output.
+        /// </summary>
         public static readonly PullSizeTable Empty = new(
             ImmutableDictionary<string, long>.Empty,
             ImmutableHashSet<string>.Empty,
             ImmutableArray<PullImageSize>.Empty);
 
+        /// <summary>
+        /// Creates a size table.
+        /// </summary>
+        /// <param name="layersToFetch">Compressed size of each layer the pull is expected to download, by short id; shared layers once.</param>
+        /// <param name="layersPresent">Short ids of layers already local.</param>
+        /// <param name="images">Every service image of the compose set, sized or not.</param>
+        /// <param name="buildOnlyServices">Services without an image; compose reports each as <c>Skipped</c>.</param>
         public PullSizeTable(
             ImmutableDictionary<string, long> layersToFetch,
             ImmutableHashSet<string> layersPresent,
-            ImmutableArray<PullImageSize> images)
+            ImmutableArray<PullImageSize> images,
+            ImmutableArray<string> buildOnlyServices = default)
         {
             LayersToFetch = layersToFetch ?? throw new ArgumentNullException(nameof(layersToFetch));
             LayersPresent = layersPresent ?? throw new ArgumentNullException(nameof(layersPresent));
             Images = images.IsDefault ? ImmutableArray<PullImageSize>.Empty : images;
+            BuildOnlyServices = buildOnlyServices.IsDefault ? ImmutableArray<string>.Empty : buildOnlyServices;
             BytesTotal = layersToFetch.Values.Sum();
         }
+
+        /// <summary>
+        /// Services without an image (build-only). Compose reports them by service name, so they are expected progress ids.
+        /// </summary>
+        public ImmutableArray<string> BuildOnlyServices { get; }
 
         /// <summary>
         /// Compressed size of every layer the pull is expected to download, by short id.
@@ -69,6 +86,11 @@ namespace ModelingEvolution.AutoUpdater.Services
         public int UnsizedImages => Images.Count(i => !i.IsSized);
 
         /// <summary>
+        /// Prefix of compose 5.x image progress ids.
+        /// </summary>
+        public const string ImageIdPrefix = "Image ";
+
+        /// <summary>
         /// Finds the image compose refers to by a progress <c>id</c>: a service name (compose 2.x) or
         /// <c>"Image &lt;reference&gt;"</c> (compose 5.x).
         /// </summary>
@@ -82,11 +104,14 @@ namespace ModelingEvolution.AutoUpdater.Services
                 }
             }
 
-            const string imagePrefix = "Image ";
-            var reference = composeId.StartsWith(imagePrefix, StringComparison.Ordinal)
-                ? composeId.Substring(imagePrefix.Length)
-                : composeId;
-            var normalized = ImageReference.Normalize(reference);
+            // Only compose 5.x's "Image <reference>" ids name an image. A bare id is a service name: a build-only service
+            // called "redis" must not be taken for the image "redis" another service uses.
+            if (!composeId.StartsWith(ImageIdPrefix, StringComparison.Ordinal))
+            {
+                return null;
+            }
+
+            var normalized = ImageReference.Normalize(composeId.Substring(ImageIdPrefix.Length));
             foreach (var image in Images)
             {
                 if (string.Equals(image.Reference, normalized, StringComparison.Ordinal))

@@ -3,6 +3,7 @@ using ModelingEvolution.AutoUpdater.Services;
 using NSubstitute;
 using NSubstitute.ExceptionExtensions;
 using System;
+using System.Collections.Immutable;
 using System.Linq;
 using System.Threading.Tasks;
 using Xunit;
@@ -80,16 +81,18 @@ namespace ModelingEvolution.AutoUpdater.Tests.Services
         }
 
         [Fact]
-        public async Task ResolveAsync_LocalImageManifestUnreadable_CountsItsLayersAsToFetch()
+        public async Task ResolveAsync_LocalImageManifestUnreadable_CountsItsLayersAsToFetchAndStopsRegistryReads()
         {
             // The honest direction: what cannot be proven local is counted, so the total can only be too large.
+            // The failure also trips the breaker, so busybox's local digest is not read either.
             var device = new Device().LocalImages(Text("overlay2-compose2.40/image-ls-partial.jsonl"));
             device.Fail(DockerPullSizeResolver.ManifestCommand(AlpineLocal), Text("manifests/manifest-error-notfound.txt"));
 
             var table = await device.ResolveAsync();
 
-            table.LayersToFetch.Should().ContainKey(AlpineBaseLayer);
-            table.BytesTotal.Should().Be(AlpineBaseSize + NginxOwnSize);
+            table.LayersToFetch.Should().ContainKey(AlpineBaseLayer).And.ContainKey(BusyboxLayer);
+            table.BytesTotal.Should().Be(ColdTotal);
+            await device.Ssh.DidNotReceive().ExecuteCommandAsync(DockerPullSizeResolver.ManifestCommand(BusyboxLocal), Arg.Any<TimeSpan>(), Arg.Any<string?>());
         }
 
         [Fact]
@@ -148,8 +151,120 @@ namespace ModelingEvolution.AutoUpdater.Tests.Services
 
             var table = await device.ResolveAsync();
 
+            table.FindImage("a")!.IsSized.Should().BeTrue("read before the failure");
             table.FindImage("b")!.IsSized.Should().BeFalse();
-            table.FindImage("n")!.IsSized.Should().BeTrue();
+            table.FindImage("n")!.IsSized.Should().BeFalse("the breaker skips registry reads after the first failure");
+        }
+
+        [Fact]
+        public async Task ResolveAsync_RegistryRejectsEveryRead_StopsAfterTheFirstManifestCommand()
+        {
+            var device = new Device().RegistryDown();
+
+            var table = await device.ResolveAsync();
+
+            device.ManifestCalls.Should().Be(1);
+            table.Images.Should().HaveCount(3).And.OnlyContain(i => !i.IsSized);
+        }
+
+        [Fact]
+        public async Task ResolveAsync_RegistryRejectsEveryReadWithLocalImages_StillStopsAfterTheFirstManifestCommand()
+        {
+            var device = new Device().RegistryDown().LocalImages(Text("containerd-compose2.40/image-ls-warm.jsonl"));
+
+            await device.ResolveAsync();
+
+            device.ManifestCalls.Should().Be(1);
+        }
+
+        [Fact]
+        public async Task ResolveAsync_CommandHangsPastTheBudget_ReturnsWithinTheBudgetAndRunsNothingMore()
+        {
+            var device = new Device { Budget = TimeSpan.FromMilliseconds(300) }.Hang(DockerPullSizeResolver.ManifestCommand(Alpine));
+            var clock = System.Diagnostics.Stopwatch.StartNew();
+
+            var table = await device.ResolveAsync();
+
+            clock.Elapsed.Should().BeLessThan(TimeSpan.FromSeconds(10));
+            table.Images.Should().HaveCount(3).And.OnlyContain(i => !i.IsSized);
+            device.ManifestCalls.Should().Be(1);
+            await device.Ssh.DidNotReceive().ExecuteCommandAsync(DockerPullSizeResolver.ImageListCommand, Arg.Any<TimeSpan>(), Arg.Any<string?>());
+        }
+
+        [Fact]
+        public async Task ResolveAsync_CommandTimeout_IsCappedByTheRemainingBudget()
+        {
+            var device = new Device { Budget = TimeSpan.FromSeconds(5) };
+
+            await device.ResolveAsync();
+
+            await device.Ssh.DidNotReceive().ExecuteCommandAsync(Arg.Any<string>(), Arg.Is<TimeSpan>(t => t > TimeSpan.FromSeconds(5)), Arg.Any<string?>());
+        }
+
+        [Fact]
+        public async Task ResolveAsync_ManyLocalImagesOfOneRepository_ReadsOnlyTheNewestThree()
+        {
+            // Five local alpine repo digests (the recorded row, digest and CreatedAt varied). The newest by instant, not by text:
+            // "2026-09-05 01:00:00 +1400" sorts first as text but is 2026-09-04 11:00 UTC, the oldest of the September 4th rows.
+            var rows = new[]
+            {
+                ("1111111111111111111111111111111111111111111111111111111111111111", "2026-09-01 12:00:00 +0000 UTC"),
+                ("2222222222222222222222222222222222222222222222222222222222222222", "2026-09-04 11:30:00 +0000 UTC"),
+                ("3333333333333333333333333333333333333333333333333333333333333333", "2026-09-05 01:00:00 +1400 +14"),
+                ("4444444444444444444444444444444444444444444444444444444444444444", "2026-09-04 12:00:00 +0000 UTC"),
+                ("5555555555555555555555555555555555555555555555555555555555555555", "2026-09-04 22:00:00 +0000 UTC"),
+            };
+            var recorded = Lines("containerd-compose2.40/image-ls-warm.jsonl").Single(l => l.Contains("/alpine\""));
+            var listing = string.Join("\n", rows.Select(r => recorded
+                .Replace("a8560b36e8b8210634f77d9f7f9efd7ffa463e380b75e2e74aff4511df3ef88c", r.Item1)
+                .Replace("2025-02-14 03:28:36 +0000 UTC", r.Item2)));
+            var device = new Device().LocalImages(listing);
+            foreach (var (digest, _) in rows)
+            {
+                device.Answer(DockerPullSizeResolver.ManifestCommand($"{Registry}/alpine@sha256:{digest}"), Text("manifests/index-alpine-by-local-digest.json"));
+            }
+
+            await device.ResolveAsync();
+
+            string LocalRead(string digest) => DockerPullSizeResolver.ManifestCommand($"{Registry}/alpine@sha256:{digest}");
+            foreach (var newest in new[] { rows[1].Item1, rows[3].Item1, rows[4].Item1 })
+            {
+                await device.Ssh.Received(1).ExecuteCommandAsync(LocalRead(newest), Arg.Any<TimeSpan>(), Arg.Any<string?>());
+            }
+            await device.Ssh.DidNotReceive().ExecuteCommandAsync(LocalRead(rows[0].Item1), Arg.Any<TimeSpan>(), Arg.Any<string?>());
+            await device.Ssh.DidNotReceive().ExecuteCommandAsync(LocalRead(rows[2].Item1), Arg.Any<TimeSpan>(), Arg.Any<string?>());
+            DockerPullSizeResolver.MaxLocalDigestsPerRepository.Should().Be(3);
+        }
+
+        [Theory]
+        [InlineData("2025-04-16 14:50:31 +0000 UTC", "2025-04-16T14:50:31+00:00")]
+        [InlineData("2026-09-05 01:00:00 +0200 CEST", "2026-09-04T23:00:00+00:00")]
+        [InlineData("not a date", "0001-01-01T00:00:00+00:00")]
+        [InlineData(null, "0001-01-01T00:00:00+00:00")]
+        public void ParseCreatedAt_DockerImageLsFormat_IsAnInstant(string? value, string expected)
+        {
+            DockerPullSizeResolver.ParseCreatedAt(value).Should().Be(DateTimeOffset.Parse(expected, System.Globalization.CultureInfo.InvariantCulture));
+        }
+
+        [Fact]
+        public async Task ResolveAsync_RecordedConfig_ListsTheBuildOnlyService()
+        {
+            var table = await ColdTableAsync();
+
+            table.BuildOnlyServices.Should().Equal("built");
+        }
+
+        [Fact]
+        public void FindImage_BareIdEqualToAnImageName_IsAServiceNotThatImage()
+        {
+            // A build-only service called "redis" next to service "cache" using image "redis".
+            var redis = new PullImageSize("docker.io/library/redis:latest", ImmutableArray.Create("cache"), true, ImmutableArray.Create("aaaaaaaaaaaa"));
+            var table = new PullSizeTable(ImmutableDictionary<string, long>.Empty.Add("aaaaaaaaaaaa", 1000), ImmutableHashSet<string>.Empty,
+                ImmutableArray.Create(redis), ImmutableArray.Create("redis"));
+
+            table.FindImage("redis").Should().BeNull();
+            table.FindImage("cache").Should().BeSameAs(redis);
+            table.FindImage("Image redis").Should().BeSameAs(redis);
         }
 
         [Fact]

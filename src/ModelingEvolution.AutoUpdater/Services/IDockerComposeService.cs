@@ -63,6 +63,12 @@ namespace ModelingEvolution.AutoUpdater.Services
         Task PullAsync(string[] composeFiles, string workingDirectory, TimeSpan timeout, IProgress<PullProgress>? progress = null, PullSizeTable? sizes = null);
 
         /// <summary>
+        /// True when <see cref="PullAsync"/> with a progress receiver will stream progress (Docker Compose v2.27+ understands
+        /// <c>--progress json</c>). Detects the compose command on first use.
+        /// </summary>
+        Task<bool> SupportsPullProgressAsync();
+
+        /// <summary>
         /// Gets volume mappings for the specified container
         /// </summary>
         /// <param name="containerId">The container ID to get volume mappings for</param>

@@ -72,7 +72,7 @@ namespace ModelingEvolution.AutoUpdater.Tests.Services
             // Seen end to end on saturn: "built" is Skipped first, so without the table's expected images the first snapshot
             // was 1/1 images, 100 %, "All images pulled", before a single byte had moved.
             var parser = new DockerPullProgressParser(await ColdTableAsync());
-            parser.Current.ImagesTotal.Should().Be(3);
+            parser.Current.ImagesTotal.Should().Be(5, "services a, a2, b, n and the build-only built are expected from the start");
             parser.Current.IsComplete.Should().BeFalse();
 
             var snapshots = FeedAll(parser, Lines(transcript));
@@ -95,6 +95,116 @@ namespace ModelingEvolution.AutoUpdater.Tests.Services
             FeedAll(parser, lines.Take(skipped + 1));
 
             parser.Current.BytesDownloaded.Should().Be(0);
+        }
+
+        public static IEnumerable<object[]> TranscriptsWithTheirTable() => new[]
+        {
+            new object[] { "containerd-compose2.40/pull-cold.jsonl", "cold" },
+            new object[] { "overlay2-compose2.40/pull-cold.jsonl", "cold" },
+            new object[] { "overlay2-compose5.5/pull-cold.jsonl", "cold" },
+            new object[] { "containerd-compose2.40/pull-partial.jsonl", "partial" },
+            new object[] { "overlay2-compose2.40/pull-partial.jsonl", "partial" },
+            new object[] { "containerd-compose2.40/pull-warm.jsonl", "warm" },
+            new object[] { "overlay2-compose5.5/pull-warm.jsonl", "warm" },
+        };
+
+        private static Task<PullSizeTable> TableAsync(string state) => state switch
+        {
+            "cold" => ColdTableAsync(),
+            "partial" => PartialTableAsync(),
+            _ => WarmTableAsync(),
+        };
+
+        [Theory]
+        [MemberData(nameof(TranscriptsWithTheirTable))]
+        public async Task Feed_TranscriptWithTable_ImageFractionNeverStepsBack(string transcript, string state)
+        {
+            // Probe from review: compose 2.40 with a per-reference count went 2/4 (35.0 %) → 2/5 (34.0 %) on the overall bar.
+            var parser = new DockerPullProgressParser(await TableAsync(state));
+            var fractions = new List<float> { parser.Current.ImagesFraction };
+
+            fractions.AddRange(FeedAll(parser, Lines(transcript)).Select(s => s.ImagesFraction));
+
+            fractions.Should().BeInAscendingOrder();
+            parser.Current.IsComplete.Should().BeTrue();
+        }
+
+        [Fact]
+        public async Task Feed_RecordedFailedImageWithTable_ItsLayersAreNotCreditedAndNothingReadsAsDone()
+        {
+            // compose 5.5, alpine and busybox local, nginx fails "toomanyrequests: Rate exceeded" before downloading.
+            var parser = new DockerPullProgressParser(await PartialTableAsync());
+
+            FeedAll(parser, Lines("overlay2-compose5.5/pull-ratelimited.jsonl"));
+
+            parser.Current.IsComplete.Should().BeTrue("compose is finished with every image");
+            parser.Current.ImagesFailed.Should().Be(1);
+            parser.Current.BytesTotal.Should().Be(NginxOwnSize);
+            parser.Current.BytesDownloaded.Should().Be(0);
+            parser.Current.BytesPercent.Should().Be(0f);
+            UpdateHost.FormatPullPhase(parser.Current).Should().Be("1 image failed, downloaded 0.0 bytes of 16.5 MB");
+        }
+
+        [Fact]
+        public void Feed_NoTableLayerAnnouncedThenAlreadyExists_LeavesNoPhantomLayer()
+        {
+            // compose 2.40 line shapes (overlay2-compose2.40/pull-partial.jsonl); the classic daemon can announce a local layer
+            // with "Pulling fs layer" before "Already exists" (plain `docker pull docker:29-dind`: 4f4fb700ef54).
+            var parser = new DockerPullProgressParser();
+            var lines = new[]
+            {
+                """{"id":"n","text":"Pulling"}""",
+                """{"id":"f18232174bc9","parent_id":"n","text":"Pulling fs layer"}""",
+                """{"id":"39c2ddfd6010","parent_id":"n","text":"Pulling fs layer"}""",
+                """{"id":"f18232174bc9","parent_id":"n","text":"Already exists","percent":100}""",
+                """{"id":"39c2ddfd6010","parent_id":"n","text":"Downloading","status":"[===\u003e  ]  1.049MB/15.52MB","current":1048576,"total":15522356,"percent":6}""",
+            };
+
+            FeedAll(parser, lines);
+
+            parser.Current.LayersNotSized.Should().Be(0);
+            parser.Current.LayersTotal.Should().Be(1);
+            parser.Current.BytesPercent.Should().BeApproximately(100f * 1048576 / 15522356, 0.001f);
+        }
+
+        [Fact]
+        public void Feed_RecordedPartialPullWithoutTable_AnnouncedLocalLayerDoesNotChangeTheLayerCount()
+        {
+            var original = Lines("overlay2-compose2.40/pull-partial.jsonl").ToList();
+            var announced = original.ToList();
+            var alreadyExists = announced.FindIndex(l => l.Contains(AlpineBaseLayer) && l.Contains("Already exists"));
+            announced.Insert(alreadyExists, $$"""{"id":"{{AlpineBaseLayer}}","parent_id":"n","text":"Pulling fs layer"}""");
+            var plain = new DockerPullProgressParser();
+            var withAnnouncement = new DockerPullProgressParser();
+
+            FeedAll(plain, original);
+            FeedAll(withAnnouncement, announced);
+
+            withAnnouncement.Current.LayersTotal.Should().Be(plain.Current.LayersTotal);
+            withAnnouncement.Current.LayersNotSized.Should().Be(plain.Current.LayersNotSized);
+        }
+
+        [Fact]
+        public async Task Feed_BuildOnlyServiceNamedLikeAnImage_DoesNotCreditThatImage()
+        {
+            // Compose config: service "cache" uses image "redis", build-only service "redis". The Skipped line is compose 2.40's
+            // recorded shape for a build-only service.
+            const string config = """{"services":{"cache":{"image":"redis"},"redis":{"build":{"context":"."}}}}""";
+            const string index = """{"schemaVersion":2,"mediaType":"application/vnd.oci.image.index.v1+json","manifests":[{"mediaType":"application/vnd.oci.image.manifest.v1+json","size":1,"digest":"sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","platform":{"architecture":"amd64","os":"linux"}}]}""";
+            const string manifest = """{"schemaVersion":2,"layers":[{"digest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","size":1000}]}""";
+            var device = new Device()
+                .Answer(DockerPullSizeResolver.ConfigCommand(ComposeFiles), config)
+                .Answer(DockerPullSizeResolver.ManifestCommand("docker.io/library/redis:latest"), index)
+                .Answer(DockerPullSizeResolver.ManifestCommand("docker.io/library/redis@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"), manifest);
+            var parser = new DockerPullProgressParser(await device.ResolveAsync());
+            parser.Current.BytesTotal.Should().Be(1000);
+
+            parser.Feed("""{"id":"redis","text":"Skipped - No image to be pulled"}""");
+            parser.Feed("""{"id":"cache","text":"Pulling"}""");
+
+            parser.Current.BytesDownloaded.Should().Be(0);
+            parser.Current.BytesPercent.Should().Be(0f);
+            parser.Current.IsComplete.Should().BeFalse();
         }
 
         [Theory]

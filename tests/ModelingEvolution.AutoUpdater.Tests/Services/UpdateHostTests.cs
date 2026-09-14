@@ -677,6 +677,7 @@ namespace ModelingEvolution.AutoUpdater.Tests.Services
             _backupService.BackupScriptExistsAsync(Arg.Any<string>()).Returns(false);
             _healthCheckService.CheckServicesHealthAsync(Arg.Any<string[]>(), Arg.Any<string>())
                               .Returns(HealthCheckResult.Healthy(new List<string> { "api" }));
+            _dockerService.SupportsPullProgressAsync().Returns(true);
             return CreateTestConfiguration();
         }
 
@@ -702,6 +703,21 @@ namespace ModelingEvolution.AutoUpdater.Tests.Services
         }
 
         [Fact]
+        public async Task UpdateAsync_ComposeWithoutJsonProgress_DoesNotRunTheResolver()
+        {
+            var config = ArrangeUpdateWithoutScripts();
+            _dockerService.SupportsPullProgressAsync().Returns(false);
+            var resolver = Substitute.For<IPullSizeResolver>();
+
+            var result = await CreateHost(resolver).UpdateAsync(config);
+
+            result.Success.Should().BeTrue();
+            await resolver.DidNotReceive().ResolveAsync(Arg.Any<string[]>(), Arg.Any<string>());
+            await _dockerService.Received(1).PullAsync(Arg.Any<string[]>(), Arg.Any<string>(), Arg.Any<TimeSpan>(), Arg.Any<IProgress<PullProgress>?>(), null);
+            _progressService.DidNotReceive().LogPhaseProgress(Arg.Any<string>(), Arg.Any<float>(), Arg.Any<float?>(), Arg.Is<string>(m => m.StartsWith("Reading image sizes")));
+        }
+
+        [Fact]
         public async Task UpdateAsync_SizeResolverThrows_PullsWithoutTableAndSucceeds()
         {
             var config = ArrangeUpdateWithoutScripts();
@@ -724,7 +740,8 @@ namespace ModelingEvolution.AutoUpdater.Tests.Services
                          .Returns(call =>
                          {
                              var progress = call.Arg<IProgress<PullProgress>?>()!;
-                             progress.Report(new PullProgress(2, 0, 432013312, 1288490188, 33.5f, LayersKnown: 5, LayersTotal: 8));
+                             // What the parser reports with layers not sized: a lower-bound total and no percentage.
+                             progress.Report(new PullProgress(2, 0, 432013312, 1288490188, null, LayersKnown: 5, LayersTotal: 8));
                              progress.Report(new PullProgress(2, 2, 1288490188, 1288490188, 100f, LayersKnown: 8, LayersTotal: 8));
                              return Task.CompletedTask;
                          });
@@ -734,8 +751,8 @@ namespace ModelingEvolution.AutoUpdater.Tests.Services
             result.Success.Should().BeTrue();
             Received.InOrder(() =>
             {
-                _progressService.LogPhaseProgress("Pulling Docker images", 30f, null, "Reading image sizes");
-                _progressService.LogPhaseProgress("Pulling Docker images (0/2)", 30f, 33.5f, "downloaded 412.0 MB of 1.2 GB so far, 3 layers not sized");
+                _progressService.LogPhaseProgress("Pulling Docker images", 30f, null, "Reading image sizes (skipped if the registry is slow)");
+                _progressService.LogPhaseProgress("Pulling Docker images (0/2)", 30f, null, "downloaded 412.0 MB of 1.2 GB so far, 3 layers not sized");
                 _progressService.LogPhaseProgress("Pulling Docker images (2/2)", 40f, 100f, "All images pulled");
             });
         }
@@ -750,9 +767,20 @@ namespace ModelingEvolution.AutoUpdater.Tests.Services
         [InlineData(2, 1, 5848649L, 5848649L, 2, 2, 9, "downloaded 5.6 MB of 5.6 MB so far, 7 layers not sized")]
         [InlineData(2, 2, 23167033L, 23167033L, 0, 9, 9, "All images pulled")]
         [InlineData(2, 2, 5848649L, 5848649L, 0, 2, 9, "All images pulled")]
+        [InlineData(2, 1, 5848649L, 5848649L, 0, 8, 9, "downloaded 5.6 MB of 5.6 MB so far, 1 layer not sized")]
         public void FormatPullPhase_EachBranch_ProducesTheCaption(int images, int pulled, long downloaded, long total, int extracting, int known, int layers, string expected)
         {
             var progress = new PullProgress(images, pulled, downloaded, total, null, extracting, known, layers);
+
+            UpdateHost.FormatPullPhase(progress).Should().Be(expected);
+        }
+
+        [Theory]
+        [InlineData(3, 1, "1 image failed, downloaded 5.6 MB of 22.1 MB")]
+        [InlineData(3, 2, "2 images failed, downloaded 5.6 MB of 22.1 MB")]
+        public void FormatPullPhase_CompleteWithFailedImages_NeverSaysAllImagesPulled(int images, int failed, string expected)
+        {
+            var progress = new PullProgress(images, images, 5848649L, 23167033L, 25.2f, 0, 9, 9, failed);
 
             UpdateHost.FormatPullPhase(progress).Should().Be(expected);
         }
