@@ -61,13 +61,17 @@ namespace ModelingEvolution.AutoUpdater.Services
             return $"sudo docker compose {composeFileArgs} config --format json";
         }
 
-        internal static string ManifestCommand(string reference) => $"sudo docker manifest inspect --verbose {reference}";
+        /// <summary>
+        /// Plain (not <c>--verbose</c>) inspect: one registry request. <c>--verbose</c> fetches the manifest of every platform in
+        /// an index (17 requests for alpine), which trips registry rate limits; Docker Hub counts manifest GETs as pulls.
+        /// </summary>
+        internal static string ManifestCommand(string reference) => $"sudo docker manifest inspect {reference}";
 
         public async Task<PullSizeTable> ResolveAsync(string[] composeFiles, string workingDirectory)
         {
             try
             {
-                return await ResolveCoreAsync(composeFiles, workingDirectory);
+                return await new Run(this, workingDirectory).ResolveAsync(composeFiles);
             }
             catch (Exception ex)
             {
@@ -76,9 +80,37 @@ namespace ModelingEvolution.AutoUpdater.Services
             }
         }
 
-        private async Task<PullSizeTable> ResolveCoreAsync(string[] composeFiles, string workingDirectory)
+        /// <summary>
+        /// One resolution: command outputs are cached, so a platform manifest shared by a target and a local image is read once.
+        /// </summary>
+        private sealed class Run
         {
-            var config = await RunAsync(ConfigCommand(composeFiles), workingDirectory);
+            private readonly DockerPullSizeResolver _owner;
+            private readonly string _workingDirectory;
+            private readonly Dictionary<string, string?> _outputs = new(StringComparer.Ordinal);
+
+            public Run(DockerPullSizeResolver owner, string workingDirectory)
+            {
+                _owner = owner;
+                _workingDirectory = workingDirectory;
+            }
+
+            public Task<PullSizeTable> ResolveAsync(string[] composeFiles) => _owner.ResolveCoreAsync(composeFiles, _workingDirectory, this);
+
+            public async Task<string?> OutputAsync(string command)
+            {
+                if (!_outputs.TryGetValue(command, out var output))
+                {
+                    output = await _owner.RunAsync(command, _workingDirectory);
+                    _outputs[command] = output;
+                }
+                return output;
+            }
+        }
+
+        private async Task<PullSizeTable> ResolveCoreAsync(string[] composeFiles, string workingDirectory, Run run)
+        {
+            var config = await run.OutputAsync(ConfigCommand(composeFiles));
             if (config == null)
             {
                 return PullSizeTable.Empty;
@@ -90,7 +122,7 @@ namespace ModelingEvolution.AutoUpdater.Services
                 return PullSizeTable.Empty;
             }
 
-            var devicePlatform = await RunAsync(VersionCommand, workingDirectory);
+            var devicePlatform = await run.OutputAsync(VersionCommand);
             var device = devicePlatform != null ? Platform.Parse(devicePlatform.Trim()) : null;
             if (device == null)
             {
@@ -113,7 +145,7 @@ namespace ModelingEvolution.AutoUpdater.Services
                 }
                 else
                 {
-                    layers = await ReadLayersAsync(group.Key.Reference, platform, workingDirectory);
+                    layers = await ReadLayersAsync(group.Key.Reference, platform, run);
                 }
                 imageLayers.Add((group.Key.Reference, group.Select(s => s.Service).ToImmutableArray(), platform, layers));
             }
@@ -121,7 +153,7 @@ namespace ModelingEvolution.AutoUpdater.Services
             var localChains = await ReadLocalChainsAsync(imageLayers.Where(i => i.Layers != null && i.Platform != null)
                 .Select(i => (ImageReference.Repository(i.Reference), i.Platform!))
                 .Distinct()
-                .ToList(), workingDirectory);
+                .ToList(), run);
 
             var toFetch = ImmutableDictionary.CreateBuilder<string, long>(StringComparer.Ordinal);
             var present = ImmutableHashSet.CreateBuilder<string>(StringComparer.Ordinal);
@@ -164,7 +196,11 @@ namespace ModelingEvolution.AutoUpdater.Services
             return table;
         }
 
-        private async Task<IReadOnlyList<ManifestLayer>?> ReadLayersAsync(string reference, Platform platform, string workingDirectory)
+        /// <summary>
+        /// Layers of <paramref name="reference"/> for <paramref name="platform"/>: the index (or single manifest), then the
+        /// platform manifest by digest. Null when either cannot be read or no index entry matches unambiguously.
+        /// </summary>
+        private async Task<IReadOnlyList<ManifestLayer>?> ReadLayersAsync(string reference, Platform platform, Run run)
         {
             if (!SafeReference().IsMatch(reference))
             {
@@ -172,18 +208,39 @@ namespace ModelingEvolution.AutoUpdater.Services
                 return null;
             }
 
-            var output = await RunAsync(ManifestCommand(reference), workingDirectory);
-            if (output == null)
-            {
-                return null;
-            }
-
             try
             {
-                var layers = SelectPlatformLayers(output, platform);
+                var output = await run.OutputAsync(ManifestCommand(reference));
+                if (output == null)
+                {
+                    return null;
+                }
+
+                var manifest = ParseManifest(output);
+                if (manifest.Layers != null)
+                {
+                    // A single manifest is what the pull fetches, whatever platform it was built for.
+                    return manifest.Layers;
+                }
+
+                var digest = SelectPlatformDigest(manifest.Platforms, platform);
+                if (digest == null)
+                {
+                    _logger.LogWarning("Image {Image}: no single manifest for platform {Platform}, not sized", reference, platform);
+                    return null;
+                }
+
+                var platformReference = $"{ImageReference.Repository(ImageReference.Normalize(reference))}@{digest}";
+                var platformOutput = await run.OutputAsync(ManifestCommand(platformReference));
+                if (platformOutput == null)
+                {
+                    return null;
+                }
+
+                var layers = ParseManifest(platformOutput).Layers;
                 if (layers == null)
                 {
-                    _logger.LogWarning("Image {Image}: no manifest for platform {Platform}, not sized", reference, platform);
+                    _logger.LogWarning("Image {Image}: platform manifest {Digest} has no layer list, not sized", reference, digest);
                 }
                 return layers;
             }
@@ -197,7 +254,7 @@ namespace ModelingEvolution.AutoUpdater.Services
         /// <summary>
         /// Chains (bottom-up layer digest sequences) of local images of the given repositories.
         /// </summary>
-        private async Task<HashSet<string>> ReadLocalChainsAsync(IReadOnlyList<(string Repository, Platform Platform)> repositories, string workingDirectory)
+        private async Task<HashSet<string>> ReadLocalChainsAsync(IReadOnlyList<(string Repository, Platform Platform)> repositories, Run run)
         {
             var chains = new HashSet<string>(StringComparer.Ordinal);
             if (repositories.Count == 0)
@@ -205,7 +262,7 @@ namespace ModelingEvolution.AutoUpdater.Services
                 return chains;
             }
 
-            var listing = await RunAsync(ImageListCommand, workingDirectory);
+            var listing = await run.OutputAsync(ImageListCommand);
             if (listing == null)
             {
                 return chains;
@@ -228,7 +285,7 @@ namespace ModelingEvolution.AutoUpdater.Services
 
                 foreach (var reference in digests.Take(MaxLocalDigestsPerRepository))
                 {
-                    var layers = await ReadLayersAsync(reference, platform, workingDirectory);
+                    var layers = await ReadLayersAsync(reference, platform, run);
                     if (layers == null)
                     {
                         continue;
@@ -306,70 +363,41 @@ namespace ModelingEvolution.AutoUpdater.Services
         }
 
         /// <summary>
-        /// Layers of the manifest matching <paramref name="platform"/> in <c>docker manifest inspect --verbose</c> output:
-        /// an array for a multi-platform index, an object for a single manifest. Null when no entry matches unambiguously.
+        /// Output of <c>docker manifest inspect</c>: an index / manifest list (<see cref="Platforms"/>) or an image manifest (<see cref="Layers"/>).
         /// </summary>
-        internal static IReadOnlyList<ManifestLayer>? SelectPlatformLayers(string json, Platform platform)
+        internal sealed record ParsedManifest(IReadOnlyList<(string Digest, Platform? Platform)> Platforms, IReadOnlyList<ManifestLayer>? Layers);
+
+        internal static ParsedManifest ParseManifest(string json)
         {
             using var document = JsonDocument.Parse(json);
             var root = document.RootElement;
-            var entries = root.ValueKind == JsonValueKind.Array
-                ? root.EnumerateArray().ToList()
-                : new List<JsonElement> { root };
+            var platforms = new List<(string, Platform?)>();
 
-            var candidates = new List<(JsonElement Entry, Platform? Platform)>();
-            foreach (var entry in entries)
+            if (root.ValueKind == JsonValueKind.Object && root.TryGetProperty("manifests", out var manifests) && manifests.ValueKind == JsonValueKind.Array)
             {
-                Platform? entryPlatform = null;
-                if (entry.TryGetProperty("Descriptor", out var descriptor)
-                    && descriptor.TryGetProperty("platform", out var p)
-                    && p.ValueKind == JsonValueKind.Object)
+                foreach (var entry in manifests.EnumerateArray())
                 {
-                    TryGetString(p, "os", out var os);
-                    TryGetString(p, "architecture", out var arch);
-                    TryGetString(p, "variant", out var variant);
-                    entryPlatform = new Platform(os ?? string.Empty, arch ?? string.Empty, variant);
+                    if (!TryGetString(entry, "digest", out var digest) || digest == null)
+                    {
+                        continue;
+                    }
+                    Platform? entryPlatform = null;
+                    if (entry.TryGetProperty("platform", out var p) && p.ValueKind == JsonValueKind.Object)
+                    {
+                        TryGetString(p, "os", out var os);
+                        TryGetString(p, "architecture", out var arch);
+                        TryGetString(p, "variant", out var variant);
+                        entryPlatform = new Platform(os ?? string.Empty, arch ?? string.Empty, variant);
+                    }
+                    platforms.Add((digest, entryPlatform));
                 }
-                candidates.Add((entry, entryPlatform));
+                return new ParsedManifest(platforms, null);
             }
 
-            JsonElement? chosen = null;
-            if (root.ValueKind != JsonValueKind.Array && candidates.Count == 1)
+            if (root.ValueKind != JsonValueKind.Object || !root.TryGetProperty("layers", out var layersElement) || layersElement.ValueKind != JsonValueKind.Array)
             {
-                // A single manifest is what the pull fetches whatever it claims; a wrong platform fails the pull anyway.
-                var only = candidates[0];
-                if (only.Platform == null || only.Platform.Matches(platform))
-                {
-                    chosen = only.Entry;
-                }
-            }
-            else
-            {
-                var matching = candidates.Where(c => c.Platform != null && c.Platform.Matches(platform)).ToList();
-                if (matching.Count > 1)
-                {
-                    matching = matching.Where(c => c.Platform!.VariantEquals(platform)).ToList();
-                }
-                if (matching.Count == 1)
-                {
-                    chosen = matching[0].Entry;
-                }
-            }
-
-            if (chosen is not { } manifestEntry)
-            {
-                return null;
-            }
-
-            JsonElement manifest;
-            if (!manifestEntry.TryGetProperty("OCIManifest", out manifest) && !manifestEntry.TryGetProperty("SchemaV2Manifest", out manifest))
-            {
-                return null;
-            }
-
-            if (!manifest.TryGetProperty("layers", out var layersElement) || layersElement.ValueKind != JsonValueKind.Array)
-            {
-                return null;
+                // Schema 1 ("fsLayers") and anything else unknown: no sizes.
+                return new ParsedManifest(platforms, null);
             }
 
             var layers = new List<ManifestLayer>();
@@ -378,11 +406,25 @@ namespace ModelingEvolution.AutoUpdater.Services
                 if (!TryGetString(layer, "digest", out var digest) || digest == null
                     || !layer.TryGetProperty("size", out var size) || !size.TryGetInt64(out var bytes))
                 {
-                    return null;
+                    return new ParsedManifest(platforms, null);
                 }
                 layers.Add(new ManifestLayer(digest, bytes));
             }
-            return layers;
+            return new ParsedManifest(platforms, layers);
+        }
+
+        /// <summary>
+        /// Digest of the index entry for <paramref name="platform"/>; null when none or several match (e.g. linux/arm v6 and v7
+        /// for a device that reports no variant). Attestation entries (<c>unknown/unknown</c>) never match.
+        /// </summary>
+        internal static string? SelectPlatformDigest(IReadOnlyList<(string Digest, Platform? Platform)> entries, Platform platform)
+        {
+            var matching = entries.Where(e => e.Platform != null && e.Platform.Matches(platform)).ToList();
+            if (matching.Count > 1)
+            {
+                matching = matching.Where(e => e.Platform!.VariantEquals(platform)).ToList();
+            }
+            return matching.Count == 1 ? matching[0].Digest : null;
         }
 
         /// <summary>

@@ -21,6 +21,10 @@ namespace ModelingEvolution.AutoUpdater.Tests.Services
         public const string AlpineLocal = Registry + "/alpine@sha256:a8560b36e8b8210634f77d9f7f9efd7ffa463e380b75e2e74aff4511df3ef88c";
         public const string BusyboxLocal = Registry + "/busybox@sha256:73aaf090f3d85aa34ee199857f03fa3a95c8ede2ffd4cc2cdb5b94e566b11662";
         public const string NginxLocal = Registry + "/nginx@sha256:65645c7bb6a0661892a8b03b89d0743208a18dd2f3f17a54ef4b76fb8e2f2a10";
+        // linux/amd64 entries of the recorded indexes.
+        public const string AlpineAmd64 = Registry + "/alpine@sha256:1c4eef651f65e2f7daee7ee785882ac164b02b78fb74503052a26dc061c90474";
+        public const string BusyboxAmd64 = Registry + "/busybox@sha256:b7f3d86d6e84fc17718c48bcde1450807faa2d56704205c697b4bd5df7b9e29f";
+        public const string NginxAmd64 = Registry + "/nginx@sha256:62223d644fa234c3a1cc785ee14242ec47a77364226f1c811d2f669f96dc2ac8";
 
         public static readonly string[] ComposeFiles = { "compose.yml" };
         public const string WorkingDirectory = "/fx";
@@ -81,12 +85,15 @@ namespace ModelingEvolution.AutoUpdater.Tests.Services
 
                 Answer(DockerPullSizeResolver.ConfigCommand(ComposeFiles), Text("compose-config.json"));
                 Answer(DockerPullSizeResolver.VersionCommand, Text("docker-version.txt"));
-                Answer(DockerPullSizeResolver.ManifestCommand(Alpine), Text("manifests/manifest-alpine_3.21.3.json"));
-                Answer(DockerPullSizeResolver.ManifestCommand(Busybox), Text("manifests/manifest-busybox_1.36.json"));
-                Answer(DockerPullSizeResolver.ManifestCommand(Nginx), Text("manifests/manifest-nginx_1.27-alpine.json"));
-                Answer(DockerPullSizeResolver.ManifestCommand(AlpineLocal), Text("manifests/manifest-alpine-by-local-digest.json"));
-                Answer(DockerPullSizeResolver.ManifestCommand(BusyboxLocal), Text("manifests/manifest-busybox-by-local-digest.json"));
-                Answer(DockerPullSizeResolver.ManifestCommand(NginxLocal), Text("manifests/manifest-nginx-by-local-digest.json"));
+                Answer(DockerPullSizeResolver.ManifestCommand(Alpine), Text("manifests/index-alpine_3.21.3.json"));
+                Answer(DockerPullSizeResolver.ManifestCommand(Busybox), Text("manifests/index-busybox_1.36.json"));
+                Answer(DockerPullSizeResolver.ManifestCommand(Nginx), Text("manifests/index-nginx_1.27-alpine.json"));
+                Answer(DockerPullSizeResolver.ManifestCommand(AlpineLocal), Text("manifests/index-alpine-by-local-digest.json"));
+                Answer(DockerPullSizeResolver.ManifestCommand(BusyboxLocal), Text("manifests/index-busybox-by-local-digest.json"));
+                Answer(DockerPullSizeResolver.ManifestCommand(NginxLocal), Text("manifests/index-nginx-by-local-digest.json"));
+                Answer(DockerPullSizeResolver.ManifestCommand(AlpineAmd64), Text("manifests/manifest-alpine-amd64.json"));
+                Answer(DockerPullSizeResolver.ManifestCommand(BusyboxAmd64), Text("manifests/manifest-busybox-amd64.json"));
+                Answer(DockerPullSizeResolver.ManifestCommand(NginxAmd64), Text("manifests/manifest-nginx-amd64.json"));
                 LocalImages(string.Empty);
             }
 

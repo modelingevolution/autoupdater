@@ -161,50 +161,77 @@ namespace ModelingEvolution.AutoUpdater.Tests.Services
 
             await device.Ssh.Received(1).ExecuteCommandAsync("sudo docker compose -f \"compose.yml\" config --format json", Arg.Any<TimeSpan>(), WorkingDirectory);
             await device.Ssh.Received(1).ExecuteCommandAsync("sudo docker version --format '{{.Server.Os}}/{{.Server.Arch}}'", Arg.Any<TimeSpan>(), WorkingDirectory);
-            await device.Ssh.Received(1).ExecuteCommandAsync($"sudo docker manifest inspect --verbose {Nginx}", Arg.Any<TimeSpan>(), WorkingDirectory);
+            await device.Ssh.Received(1).ExecuteCommandAsync($"sudo docker manifest inspect {Nginx}", Arg.Any<TimeSpan>(), WorkingDirectory);
         }
 
         [Theory]
-        [InlineData("linux/amd64", "sha256:f18232174bc91741fdf3da96d85011092101a032a93a388b79e99e69c2d5c870", 3642247)]
-        [InlineData("linux/arm64", "sha256:6e771e15690e2fabf2332d3a3b744495411d6e0b00b2aea64419b58b0066cf81", 3993029)]
-        [InlineData("linux/arm64/v8", "sha256:6e771e15690e2fabf2332d3a3b744495411d6e0b00b2aea64419b58b0066cf81", 3993029)]
-        [InlineData("linux/arm/v7", "sha256:85f3b18f9f5a8655db86c6dfb02bb01011ffef63d10a173843c5c65c3e9137b7", 3098123)]
-        public void SelectPlatformLayers_MultiPlatformIndex_PicksTheDevicePlatformManifest(string platform, string digest, long size)
+        [InlineData("linux/amd64", "sha256:1c4eef651f65e2f7daee7ee785882ac164b02b78fb74503052a26dc061c90474")]
+        [InlineData("linux/arm64", "sha256:757d680068d77be46fd1ea20fb21db16f150468c5e7079a08a2e4705aec096ac")]
+        [InlineData("linux/arm64/v8", "sha256:757d680068d77be46fd1ea20fb21db16f150468c5e7079a08a2e4705aec096ac")]
+        [InlineData("linux/arm/v7", "sha256:9c2d245b3c01c4d7da0d3319d278e7aa4dd899076721abd205b595b2d3b2383b")]
+        public void SelectPlatformDigest_RecordedIndex_PicksTheDevicePlatformEntry(string platform, string digest)
         {
-            var layers = DockerPullSizeResolver.SelectPlatformLayers(
-                Text("manifests/manifest-alpine_3.21.3.json"), DockerPullSizeResolver.Platform.Parse(platform)!);
+            var index = DockerPullSizeResolver.ParseManifest(Text("manifests/index-alpine_3.21.3.json"));
 
-            layers.Should().ContainSingle().Which.Should().Be(new DockerPullSizeResolver.ManifestLayer(digest, size));
+            index.Layers.Should().BeNull();
+            DockerPullSizeResolver.SelectPlatformDigest(index.Platforms, DockerPullSizeResolver.Platform.Parse(platform)!).Should().Be(digest);
+        }
+
+        [Theory]
+        [InlineData("linux/arm")]      // v6 and v7 both match: guessing could size the wrong one
+        [InlineData("linux/mips64le")]
+        public void SelectPlatformDigest_AmbiguousOrAbsentPlatform_IsNull(string platform)
+        {
+            var index = DockerPullSizeResolver.ParseManifest(Text("manifests/index-alpine_3.21.3.json"));
+
+            DockerPullSizeResolver.SelectPlatformDigest(index.Platforms, DockerPullSizeResolver.Platform.Parse(platform)!).Should().BeNull();
         }
 
         [Fact]
-        public void SelectPlatformLayers_ArmWithoutVariant_IsAmbiguousSoNotSized()
+        public void ParseManifest_RecordedPlatformManifest_ReturnsLayersBottomFirst()
         {
-            // The index has linux/arm v6 and v7; guessing could size the wrong one.
-            var layers = DockerPullSizeResolver.SelectPlatformLayers(
-                Text("manifests/manifest-alpine_3.21.3.json"), DockerPullSizeResolver.Platform.Parse("linux/arm")!);
+            var manifest = DockerPullSizeResolver.ParseManifest(Text("manifests/manifest-nginx-amd64.json"));
 
-            layers.Should().BeNull();
+            manifest.Layers.Should().HaveCount(1 + NginxOwnLayers);
+            PullSizeTable.ShortId(manifest.Layers![0].Digest).Should().Be(AlpineBaseLayer);
+            manifest.Layers.Sum(l => l.Size).Should().Be(AlpineBaseSize + NginxOwnSize);
         }
 
         [Fact]
-        public void SelectPlatformLayers_SingleManifestObject_ReturnsItsLayers()
+        public async Task ResolveAsync_ImageWithoutIndex_UsesTheSingleManifestDirectly()
         {
-            var layers = DockerPullSizeResolver.SelectPlatformLayers(
-                Text("manifests/manifest-alpine-amd64-single.json"), DockerPullSizeResolver.Platform.Parse("linux/amd64")!);
+            // A single-platform image: `docker manifest inspect <ref>` returns the image manifest itself.
+            var device = new Device().Answer(DockerPullSizeResolver.ManifestCommand(Busybox), Text("manifests/manifest-busybox-amd64.json"));
 
-            layers.Should().ContainSingle().Which.Size.Should().Be(AlpineBaseSize);
+            var table = await device.ResolveAsync();
+
+            table.FindImage("b")!.LayersToFetch.Should().Equal(BusyboxLayer);
+            await device.Ssh.DidNotReceive().ExecuteCommandAsync(DockerPullSizeResolver.ManifestCommand(BusyboxAmd64), Arg.Any<TimeSpan>(), Arg.Any<string?>());
         }
 
         [Fact]
-        public void SelectPlatformLayers_IndexLayers_AreInManifestOrderBottomFirst()
+        public async Task ResolveAsync_PlatformManifestUnreadable_DegradesThatImage()
         {
-            var layers = DockerPullSizeResolver.SelectPlatformLayers(
-                Text("manifests/manifest-nginx_1.27-alpine.json"), DockerPullSizeResolver.Platform.Parse("linux/amd64")!)!;
+            var device = new Device().Fail(DockerPullSizeResolver.ManifestCommand(NginxAmd64), "toomanyrequests: Rate exceeded");
 
-            layers.Should().HaveCount(1 + NginxOwnLayers);
-            PullSizeTable.ShortId(layers[0].Digest).Should().Be(AlpineBaseLayer);
-            layers.Sum(l => l.Size).Should().Be(AlpineBaseSize + NginxOwnSize);
+            var table = await device.ResolveAsync();
+
+            table.FindImage("n")!.IsSized.Should().BeFalse();
+            table.BytesTotal.Should().Be(AlpineBaseSize + BusyboxSize);
+        }
+
+        [Fact]
+        public async Task ResolveAsync_LocalImagesSharingTheTargetPlatformManifest_ReadItOnce()
+        {
+            // Two registry requests per image, never --verbose (one request per platform in the index): rate limits bite.
+            var device = new Device().LocalImages(Text("containerd-compose2.40/image-ls-warm.jsonl"));
+
+            await device.ResolveAsync();
+
+            await device.Ssh.Received(1).ExecuteCommandAsync(DockerPullSizeResolver.ManifestCommand(NginxAmd64), Arg.Any<TimeSpan>(), Arg.Any<string?>());
+            await device.Ssh.DidNotReceive().ExecuteCommandAsync(Arg.Is<string>(c => c.Contains("--verbose")), Arg.Any<TimeSpan>(), Arg.Any<string?>());
+            device.Ssh.ReceivedCalls().Count(c => c.GetArguments()[0] is string command && command.StartsWith("sudo docker manifest inspect"))
+                .Should().Be(3 /* indexes by tag */ + 3 /* indexes by local digest */ + 3 /* platform manifests */);
         }
 
         [Fact]

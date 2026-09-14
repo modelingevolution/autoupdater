@@ -11,9 +11,9 @@ bottom layer `f18232174bc9` is the alpine 3.21.3 layer) and the build-only `buil
 |---|---|
 | `compose-config.json` | `docker compose -f compose.yml config --format json` |
 | `docker-version.txt` | `docker version --format '{{.Server.Os}}/{{.Server.Arch}}'` |
-| `manifests/manifest-<image>.json` | `docker manifest inspect --verbose public.ecr.aws/docker/library/<image>` (multi-platform index) |
-| `manifests/manifest-alpine-amd64-single.json` | same, by the linux/amd64 manifest digest (single manifest object) |
-| `manifests/manifest-<image>-by-local-digest.json` | same, by the repo digest `docker image ls --digests` shows for the local image |
+| `manifests/index-<image>.json` | `docker manifest inspect public.ecr.aws/docker/library/<image>` (multi-platform index) |
+| `manifests/index-<image>-by-local-digest.json` | same, by the repo digest `docker image ls --digests` shows for the local image |
+| `manifests/manifest-<image>-amd64.json` | same, by the index's linux/amd64 entry digest (image manifest with layers) |
 | `manifests/manifest-error-notfound.txt` | output of the command for a tag that does not exist (exit 1) |
 | `*/image-ls-*.jsonl` | `docker image ls --no-trunc --digests --format '{{json .}}'`, filtered to the fixture repositories |
 | `*/pull-*.jsonl` | `docker compose --progress json -f compose.yml pull > file 2>&1` |
