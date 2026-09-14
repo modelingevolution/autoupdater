@@ -181,11 +181,10 @@ namespace ModelingEvolution.AutoUpdater.Tests.Services
         public async Task ResolveAsync_CommandHangsPastTheBudget_ReturnsWithinTheBudgetAndRunsNothingMore()
         {
             var device = new Device { Budget = TimeSpan.FromMilliseconds(300) }.Hang(DockerPullSizeResolver.ManifestCommand(Alpine));
-            var clock = System.Diagnostics.Stopwatch.StartNew();
 
-            var table = await device.ResolveAsync();
+            // Bounded here so that a resolver ignoring its budget fails this test instead of hanging the run.
+            var table = await device.ResolveAsync().WaitAsync(TimeSpan.FromSeconds(10));
 
-            clock.Elapsed.Should().BeLessThan(TimeSpan.FromSeconds(10));
             table.Images.Should().HaveCount(3).And.OnlyContain(i => !i.IsSized);
             device.ManifestCalls.Should().Be(1);
             await device.Ssh.DidNotReceive().ExecuteCommandAsync(DockerPullSizeResolver.ImageListCommand, Arg.Any<TimeSpan>(), Arg.Any<string?>());
