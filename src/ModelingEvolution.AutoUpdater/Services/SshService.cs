@@ -205,7 +205,7 @@ namespace ModelingEvolution.AutoUpdater.Services
                     ExitCode = sshCommand.ExitStatus ?? -1,
                     Output = output != null ? SnapshotOutput(output) : sshCommand.Result,
                     Error = sshCommand.ExitStatus is null && sshCommand.ExitSignal is { } signal
-                        ? $"{sshCommand.Error}Command terminated by signal {signal}"
+                        ? DescribeSignal(sshCommand.Error, signal)
                         : sshCommand.Error
                 };
 
@@ -253,6 +253,13 @@ namespace ModelingEvolution.AutoUpdater.Services
 
             _ = execution.ContinueWith(static t => _ = t.Exception, CancellationToken.None,
                 TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
+        }
+
+        /// <summary>Appends the signal to whatever the command wrote on stderr, keeping the two readable as separate statements.</summary>
+        private static string DescribeSignal(string? error, string signal)
+        {
+            var terminated = $"Command terminated by signal {signal}";
+            return string.IsNullOrWhiteSpace(error) ? terminated : $"{error.TrimEnd()}; {terminated}";
         }
 
         private static string SnapshotOutput(StringBuilder output)

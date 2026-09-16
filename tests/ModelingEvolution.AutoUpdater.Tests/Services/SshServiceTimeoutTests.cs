@@ -222,7 +222,45 @@ namespace ModelingEvolution.AutoUpdater.Tests.Services
 
             result.IsSuccess.Should().BeFalse();
             result.ExitCode.Should().Be(-1);
-            result.Error.Should().Contain("terminated by signal KILL");
+            result.Error.Should().Be("Command terminated by signal KILL");
+        }
+
+        [Fact]
+        public async Task ExecuteCommandAsync_CommandKilledBySignalAfterWritingToStderr_KeepsBothSeparated()
+        {
+            _factory.Behaviour = FakeBehaviour.KilledBySignal;
+            _factory.Error = "error during connect: context deadline exceeded\n";
+
+            var result = await _sut.ExecuteCommandAsync("docker compose up", TimeSpan.FromSeconds(5));
+
+            result.IsSuccess.Should().BeFalse();
+            result.Error.Should().Be("error during connect: context deadline exceeded; Command terminated by signal KILL");
+        }
+
+        [Fact]
+        public void Dispose_OnASingleThreadedContext_StreamedCommandWithNoDrainGrace_DoesNotStarveTheFinalPumpWait()
+        {
+            // With no drain grace, Task.Delay(Zero) is already complete, so the drain's WhenAny does not suspend and the final
+            // "await pump" is reached on the context thread - the one place where that await can capture a context.
+            _factory.Behaviour = FakeBehaviour.CompletesButOutputStaysOpen;
+            _factory.OutputBeforeHang = "pulling layer 1\n";
+            _sut.OutputDrainTimeout = TimeSpan.Zero;
+            var lines = new ConcurrentQueue<string>();
+            TimeSpan disposeTook = default;
+            Task<SshCommandResult>? execution = null;
+
+            SingleThreadSynchronizationContext.Run(async () =>
+            {
+                execution = _sut.ExecuteCommandAsync("docker compose pull", TimeSpan.FromMinutes(10), null, lines.Enqueue);
+                await _factory.Started.Task;
+                var sw = Stopwatch.StartNew();
+                _sut.Dispose();
+                disposeTook = sw.Elapsed;
+            });
+
+            disposeTook.Should().BeLessThan(TimeSpan.FromSeconds(2), "the final pump wait must not be queued behind the blocked context");
+            _journal.Should().Equal("handle disposed: docker compose pull", "clients disposed");
+            execution!.Result.IsSuccess.Should().BeTrue();
         }
 
         [Fact]
@@ -259,6 +297,7 @@ namespace ModelingEvolution.AutoUpdater.Tests.Services
         {
             public FakeBehaviour Behaviour { get; set; }
             public string OutputBeforeHang { get; set; } = string.Empty;
+            public string Error { get; set; } = string.Empty;
             public TaskCompletionSource Started { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
             public TimeSpan ExecuteDelay { get; set; }
             public int Created;
@@ -357,7 +396,7 @@ namespace ModelingEvolution.AutoUpdater.Tests.Services
 
             public Stream OutputStream => _output;
             public string Result => factory.Behaviour is FakeBehaviour.CompletesImmediately or FakeBehaviour.CompletesWhenCancelled or FakeBehaviour.CompletedByTest ? "hello\n" : string.Empty;
-            public string Error => string.Empty;
+            public string Error => factory.Error;
             public int? ExitStatus { get; private set; }
             public string? ExitSignal { get; private set; }
 
