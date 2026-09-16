@@ -177,6 +177,32 @@ namespace ModelingEvolution.AutoUpdater.Tests.Services
         }
 
         [Fact]
+        public void Dispose_OnASingleThreadedContext_StreamedCommandStillDraining_DoesNotStarveTheOutputPump()
+        {
+            // The streamed overload: the command has returned but its output stream has not ended, so the call is inside the pump
+            // drain when Dispose blocks the context thread. Both the drain waits and the pump's own reads must run off the context.
+            _factory.Behaviour = FakeBehaviour.CompletesButOutputStaysOpen;
+            _factory.OutputBeforeHang = "pulling layer 1\n";
+            var lines = new ConcurrentQueue<string>();
+            TimeSpan disposeTook = default;
+            Task<SshCommandResult>? execution = null;
+
+            SingleThreadSynchronizationContext.Run(async () =>
+            {
+                execution = _sut.ExecuteCommandAsync("docker compose pull", TimeSpan.FromMinutes(10), null, lines.Enqueue);
+                await _factory.Started.Task;
+                var sw = Stopwatch.StartNew();
+                _sut.Dispose();
+                disposeTook = sw.Elapsed;
+            });
+
+            disposeTook.Should().BeLessThan(TimeSpan.FromSeconds(2), "the drain and the output pump must not be queued behind the blocked context");
+            _journal.Should().Equal("handle disposed: docker compose pull", "clients disposed");
+            execution!.Result.Output.Should().Contain("pulling layer 1");
+            lines.Should().Equal("pulling layer 1");
+        }
+
+        [Fact]
         public async Task ExecuteCommandAsync_CommandCompletesAsTheTimeoutFires_ReturnsTheCommandsResult()
         {
             _factory.Behaviour = FakeBehaviour.CompletesWhenCancelled;
@@ -227,7 +253,7 @@ namespace ModelingEvolution.AutoUpdater.Tests.Services
             _factory.Created.Should().Be(0);
         }
 
-        internal enum FakeBehaviour { CompletesImmediately, RunsUntilCancelled, IgnoresCancellation, CompletesWhenCancelled, KilledBySignal, CancelAcknowledgedOnSessionThread, CompletedByTest }
+        internal enum FakeBehaviour { CompletesImmediately, RunsUntilCancelled, IgnoresCancellation, CompletesWhenCancelled, KilledBySignal, CancelAcknowledgedOnSessionThread, CompletedByTest, CompletesButOutputStaysOpen }
 
         internal sealed class FakeCommandFactory(ConcurrentQueue<string> journal) : ISshCommandFactory
         {
@@ -307,6 +333,11 @@ namespace ModelingEvolution.AutoUpdater.Tests.Services
                         break;
                     case FakeBehaviour.CompletedByTest:
                         break;
+                    case FakeBehaviour.CompletesButOutputStaysOpen:
+                        // The command is done, but the channel has not closed: the output stream only ends when the service closes it.
+                        ExitStatus = 0;
+                        _completion.SetResult();
+                        break;
                     case FakeBehaviour.KilledBySignal:
                         ExitSignal = "KILL";
                         _output.End();
@@ -351,7 +382,9 @@ namespace ModelingEvolution.AutoUpdater.Tests.Services
                     return n;
                 }
 
-                await _ended.Task.WaitAsync(cancellationToken);
+                // Like a real transport stream: completes off whatever context the caller is on, so this fake cannot hide a
+                // missing ConfigureAwait(false) in the service.
+                await _ended.Task.WaitAsync(cancellationToken).ConfigureAwait(false);
                 return 0;
             }
 
