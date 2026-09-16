@@ -217,8 +217,12 @@ public class SshCommandTimeoutIntegrationTests : IClassFixture<SshdFixture>
     }
 
     /// <summary>
-    /// The product path of the incident: the connection manager is disposed while a command of a live service is still running.
-    /// On SSH.NET 2024.2.0 that killed the process through product code.
+    /// Pins what happens when the connection manager is disposed while a command of a live service is still running: the command
+    /// ends by its own timeout, the remote process is gone, and the host stays alive.
+    /// This test is green on SSH.NET 2024.2.0 too, by construction: after the ownership fix the manager disposes nothing here, so
+    /// the client stays connected and nothing fires against a disposed client. After that fix the only product path that disposes a
+    /// client under a running command is SshService's own bounded-drain abandon; the library version itself is guarded by
+    /// <see cref="SshNet_ClientDisposedThenTokenCancelsRunningCommand_ProcessStaysAlive"/>.
     /// </summary>
     [Fact]
     public async Task SshConnectionManager_DisposedWhileAServiceCommandIsRunning_CommandEndsAndProcessStaysAlive()
@@ -237,7 +241,7 @@ public class SshCommandTimeoutIntegrationTests : IClassFixture<SshdFixture>
         Assert.Equal("Command timed out after 3 seconds", result.Error);
         Assert.Equal(string.Empty, await _sshd.WaitForNoProcessAsync("sleep 35", TimeSpan.FromSeconds(3)));
 
-        // Past the timeout with margin: on 2024.2.0 the timer fired here against the client the manager had disposed.
+        // Past the timeout with margin: the window in which a timer used to fire against an already-disposed client.
         await Task.Delay(TimeSpan.FromSeconds(5));
         _output.WriteLine($"[{sw.Elapsed.TotalSeconds:0.00}s] test host alive (pid {Environment.ProcessId})");
     }
