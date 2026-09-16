@@ -4,6 +4,7 @@ using System;
 using System.IO;
 using System.Collections.Generic;
 using System.Linq;
+using System.Diagnostics;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
@@ -151,6 +152,10 @@ namespace ModelingEvolution.AutoUpdater.Services
 
             using var cts = CancellationTokenSource.CreateLinkedTokenSource(_lifetime.Token);
             cts.CancelAfter(timeout);
+            // Which of the two cancelled the command is read from the clock, not from the tokens: cancellation callbacks run in
+            // reverse registration order, so when this method observes the cancellation the source's flags can already have moved on
+            // (a command cancelled by its timeout, then disposed, must still report "timed out").
+            var startedAt = Stopwatch.GetTimestamp();
             ISshCommandHandle? sshCommand = null;
 
             try
@@ -218,7 +223,8 @@ namespace ModelingEvolution.AutoUpdater.Services
             }
             catch (OperationCanceledException) when (cts.IsCancellationRequested)
             {
-                var reason = _lifetime.IsCancellationRequested
+                // Dispose cancelled it only if the service is being disposed AND the timeout had not elapsed yet.
+                var reason = _lifetime.IsCancellationRequested && Stopwatch.GetElapsedTime(startedAt) < timeout
                     ? "was cancelled because the SSH service was disposed while it was running"
                     : $"timed out after {timeout.TotalSeconds:0.###} seconds";
                 _logger.LogError("{Kind} {Reason}: {Command}", kind, reason, command);

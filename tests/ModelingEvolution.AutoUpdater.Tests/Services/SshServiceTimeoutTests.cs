@@ -100,11 +100,14 @@ namespace ModelingEvolution.AutoUpdater.Tests.Services
             result.Error.Should().Be("Command was cancelled because the SSH service was disposed while it was running");
         }
 
+        // A Blazor circuit is a single-threaded synchronization context, and Dispose blocks that thread while it waits for the
+        // commands it cancelled. SSH.NET completes a command on its session thread, so every continuation the drain needs must not
+        // be queued behind the blocked context thread.
+
         [Fact]
-        public void Dispose_OnASingleThreadedSynchronizationContext_DoesNotStarveTheCommandItWaitsFor()
+        public void Dispose_OnASingleThreadedContext_CancelAcknowledgedOnSessionThread_DoesNotStarveTheDrain()
         {
-            // A Blazor circuit is a single-threaded context: Dispose blocks it while waiting for the command's continuations.
-            _factory.Behaviour = FakeBehaviour.RunsUntilCancelled;
+            _factory.Behaviour = FakeBehaviour.CancelAcknowledgedOnSessionThread;
             TimeSpan disposeTook = default;
             Task<SshCommandResult>? execution = null;
 
@@ -120,6 +123,57 @@ namespace ModelingEvolution.AutoUpdater.Tests.Services
             disposeTook.Should().BeLessThan(TimeSpan.FromSeconds(2), "the drain must not wait for continuations queued behind the blocked context");
             _journal.Should().Equal("cancel: sleep 30", "handle disposed: sleep 30", "clients disposed");
             execution!.IsCompleted.Should().BeTrue();
+        }
+
+        [Fact]
+        public void Dispose_OnASingleThreadedContext_TimeoutAlreadyElapsedWhenAwaited_DoesNotStarveTheDrain()
+        {
+            // The token is cancelled before the command is awaited, so the cancellation path starts synchronously on the context
+            // thread and the waits for the session thread's acknowledgement run from there.
+            _factory.Behaviour = FakeBehaviour.CancelAcknowledgedOnSessionThread;
+            _factory.ExecuteDelay = TimeSpan.FromMilliseconds(100);
+            TimeSpan disposeTook = default;
+            Task<SshCommandResult>? execution = null;
+
+            SingleThreadSynchronizationContext.Run(async () =>
+            {
+                execution = _sut.ExecuteCommandAsync("sleep 30", TimeSpan.FromMilliseconds(1));
+                await _factory.Started.Task;
+                var sw = Stopwatch.StartNew();
+                _sut.Dispose();
+                disposeTook = sw.Elapsed;
+            });
+
+            disposeTook.Should().BeLessThan(TimeSpan.FromSeconds(2), "the drain must not wait for continuations queued behind the blocked context");
+            _journal.Should().Equal("cancel: sleep 30", "handle disposed: sleep 30", "clients disposed");
+            execution!.Result.Error.Should().Be("Command timed out after 0.001 seconds");
+        }
+
+        [Fact]
+        public void Dispose_OnASingleThreadedContext_CommandCompletedOnSessionThreadJustBefore_DoesNotStarveTheDrain()
+        {
+            _factory.Behaviour = FakeBehaviour.CompletedByTest;
+            TimeSpan disposeTook = default;
+            Task<SshCommandResult>? execution = null;
+
+            SingleThreadSynchronizationContext.Run(async () =>
+            {
+                execution = _sut.ExecuteCommandAsync("echo hello", TimeSpan.FromMinutes(10));
+                await _factory.Started.Task;
+
+                // The command finishes on the session thread; give its continuation time to be scheduled (inline on the pool, or
+                // posted to this context) before this thread blocks in Dispose without pumping.
+                Task.Run(() => _factory.CompleteLast()).Wait();
+                Thread.Sleep(200);
+
+                var sw = Stopwatch.StartNew();
+                _sut.Dispose();
+                disposeTook = sw.Elapsed;
+            });
+
+            disposeTook.Should().BeLessThan(TimeSpan.FromSeconds(2), "the drain must not wait for continuations queued behind the blocked context");
+            _journal.Should().Equal("handle disposed: echo hello", "clients disposed");
+            execution!.Result.IsSuccess.Should().BeTrue();
         }
 
         [Fact]
@@ -173,20 +227,27 @@ namespace ModelingEvolution.AutoUpdater.Tests.Services
             _factory.Created.Should().Be(0);
         }
 
-        internal enum FakeBehaviour { CompletesImmediately, RunsUntilCancelled, IgnoresCancellation, CompletesWhenCancelled, KilledBySignal }
+        internal enum FakeBehaviour { CompletesImmediately, RunsUntilCancelled, IgnoresCancellation, CompletesWhenCancelled, KilledBySignal, CancelAcknowledgedOnSessionThread, CompletedByTest }
 
         internal sealed class FakeCommandFactory(ConcurrentQueue<string> journal) : ISshCommandFactory
         {
             public FakeBehaviour Behaviour { get; set; }
             public string OutputBeforeHang { get; set; } = string.Empty;
             public TaskCompletionSource Started { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+            public TimeSpan ExecuteDelay { get; set; }
             public int Created;
 
             public ISshCommandHandle Create(string commandText)
             {
                 Interlocked.Increment(ref Created);
-                return new FakeCommand(commandText, this, journal);
+                var command = new FakeCommand(commandText, this, journal);
+                Last = command;
+                return command;
             }
+
+            private FakeCommand? Last;
+
+            public void CompleteLast() => Last!.CompleteSuccessfully();
         }
 
         /// <summary>Models SSH.NET: cancelling the token signals the remote process, and the task ends cancelled.</summary>
@@ -197,6 +258,11 @@ namespace ModelingEvolution.AutoUpdater.Tests.Services
 
             public Task ExecuteAsync(CancellationToken cancellationToken)
             {
+                if (factory.ExecuteDelay > TimeSpan.Zero)
+                {
+                    Thread.Sleep(factory.ExecuteDelay); // e.g. the channel open round trip, during which a short timeout elapses
+                }
+
                 factory.Started.TrySetResult();
                 switch (factory.Behaviour)
                 {
@@ -226,6 +292,21 @@ namespace ModelingEvolution.AutoUpdater.Tests.Services
                             _completion.TrySetResult();
                         });
                         break;
+                    case FakeBehaviour.CancelAcknowledgedOnSessionThread:
+                        cancellationToken.Register(() =>
+                        {
+                            journal.Enqueue($"cancel: {text}");
+                            // The server's reply arrives later, on SSH.NET's session thread.
+                            _ = Task.Run(async () =>
+                            {
+                                await Task.Delay(50);
+                                _output.End();
+                                _completion.TrySetCanceled(cancellationToken);
+                            });
+                        });
+                        break;
+                    case FakeBehaviour.CompletedByTest:
+                        break;
                     case FakeBehaviour.KilledBySignal:
                         ExitSignal = "KILL";
                         _output.End();
@@ -236,8 +317,15 @@ namespace ModelingEvolution.AutoUpdater.Tests.Services
                 return _completion.Task;
             }
 
+            public void CompleteSuccessfully()
+            {
+                ExitStatus = 0;
+                _output.End();
+                _completion.TrySetResult();
+            }
+
             public Stream OutputStream => _output;
-            public string Result => factory.Behaviour is FakeBehaviour.CompletesImmediately or FakeBehaviour.CompletesWhenCancelled ? "hello\n" : string.Empty;
+            public string Result => factory.Behaviour is FakeBehaviour.CompletesImmediately or FakeBehaviour.CompletesWhenCancelled or FakeBehaviour.CompletedByTest ? "hello\n" : string.Empty;
             public string Error => string.Empty;
             public int? ExitStatus { get; private set; }
             public string? ExitSignal { get; private set; }
