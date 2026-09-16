@@ -26,6 +26,14 @@ public class Program
 
     public static async Task Main(string[] args)
     {
+        // bug-019: an exception on a thread nobody awaits (e.g. a library timer) must end the process, so the container restarts,
+        // instead of leaving it alive and unresponsive. Installed first, before AddAutoUpdaterAsync connects any SSH client;
+        // it logs through a bootstrap console logger until the host's logging exists.
+        using var bootstrapLoggerFactory = LoggerFactory.Create(b => b.AddSimpleConsole());
+        using var safetyNet = ProcessSafetyNet.Install(
+            bootstrapLoggerFactory.CreateLogger<Program>(),
+            flush: bootstrapLoggerFactory.Dispose);
+
         var builder = WebApplication.CreateBuilder(args);
         
         // Apply custom configuration
@@ -51,11 +59,15 @@ public class Program
         // Display configuration values at startup
         var logger = app.Services.GetRequiredService<ILogger<Program>>();
 
-        // bug-019: an exception on a thread nobody awaits (e.g. a library timer) must end the process, so the container restarts,
-        // instead of leaving it alive and unresponsive.
-        using var safetyNet = ProcessSafetyNet.Install(
-            logger,
-            flush: () => app.Services.GetRequiredService<ILoggerFactory>().Dispose());
+        // Move the safety net onto the host's logging. Flush = dispose the providers: the DI ILoggerFactory does not dispose
+        // providers it was given, so disposing it would not drain the console logger's queue.
+        safetyNet.UseLogger(logger, flush: () =>
+        {
+            foreach (var provider in app.Services.GetServices<ILoggerProvider>())
+            {
+                provider.Dispose();
+            }
+        });
 
         app.Configuration.DisplayConfigurationValues(logger);
 

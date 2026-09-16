@@ -101,6 +101,51 @@ namespace ModelingEvolution.AutoUpdater.Tests.Services
         }
 
         [Fact]
+        public void Dispose_OnASingleThreadedSynchronizationContext_DoesNotStarveTheCommandItWaitsFor()
+        {
+            // A Blazor circuit is a single-threaded context: Dispose blocks it while waiting for the command's continuations.
+            _factory.Behaviour = FakeBehaviour.RunsUntilCancelled;
+            TimeSpan disposeTook = default;
+            Task<SshCommandResult>? execution = null;
+
+            SingleThreadSynchronizationContext.Run(async () =>
+            {
+                execution = _sut.ExecuteCommandAsync("sleep 30", TimeSpan.FromMinutes(10));
+                await _factory.Started.Task;
+                var sw = Stopwatch.StartNew();
+                _sut.Dispose();
+                disposeTook = sw.Elapsed;
+            });
+
+            disposeTook.Should().BeLessThan(TimeSpan.FromSeconds(2), "the drain must not wait for continuations queued behind the blocked context");
+            _journal.Should().Equal("cancel: sleep 30", "handle disposed: sleep 30", "clients disposed");
+            execution!.IsCompleted.Should().BeTrue();
+        }
+
+        [Fact]
+        public async Task ExecuteCommandAsync_CommandCompletesAsTheTimeoutFires_ReturnsTheCommandsResult()
+        {
+            _factory.Behaviour = FakeBehaviour.CompletesWhenCancelled;
+
+            var result = await _sut.ExecuteCommandAsync("echo hello", TimeSpan.FromMilliseconds(200)).WaitAsync(TimeSpan.FromSeconds(10));
+
+            result.IsSuccess.Should().BeTrue();
+            result.Output.Should().Be("hello\n");
+        }
+
+        [Fact]
+        public async Task ExecuteCommandAsync_CommandKilledBySignal_IsAFailure()
+        {
+            _factory.Behaviour = FakeBehaviour.KilledBySignal;
+
+            var result = await _sut.ExecuteCommandAsync("docker compose up", TimeSpan.FromSeconds(5));
+
+            result.IsSuccess.Should().BeFalse();
+            result.ExitCode.Should().Be(-1);
+            result.Error.Should().Contain("terminated by signal KILL");
+        }
+
+        [Fact]
         public async Task Dispose_CommandIgnoresCancellation_ReleasesClientsAfterBoundedWait()
         {
             _factory.Behaviour = FakeBehaviour.IgnoresCancellation;
@@ -128,7 +173,7 @@ namespace ModelingEvolution.AutoUpdater.Tests.Services
             _factory.Created.Should().Be(0);
         }
 
-        internal enum FakeBehaviour { CompletesImmediately, RunsUntilCancelled, IgnoresCancellation }
+        internal enum FakeBehaviour { CompletesImmediately, RunsUntilCancelled, IgnoresCancellation, CompletesWhenCancelled, KilledBySignal }
 
         internal sealed class FakeCommandFactory(ConcurrentQueue<string> journal) : ISshCommandFactory
         {
@@ -171,15 +216,31 @@ namespace ModelingEvolution.AutoUpdater.Tests.Services
                     case FakeBehaviour.IgnoresCancellation:
                         cancellationToken.Register(() => journal.Enqueue($"cancel: {text}"));
                         break;
+                    case FakeBehaviour.CompletesWhenCancelled:
+                        // Registered before SshService's WaitAsync registration, so it runs first: the command has completed
+                        // successfully by the time WaitAsync reports the cancellation.
+                        cancellationToken.Register(() =>
+                        {
+                            ExitStatus = 0;
+                            _output.End();
+                            _completion.TrySetResult();
+                        });
+                        break;
+                    case FakeBehaviour.KilledBySignal:
+                        ExitSignal = "KILL";
+                        _output.End();
+                        _completion.SetResult();
+                        break;
                 }
 
                 return _completion.Task;
             }
 
             public Stream OutputStream => _output;
-            public string Result => factory.Behaviour == FakeBehaviour.CompletesImmediately ? "hello\n" : string.Empty;
+            public string Result => factory.Behaviour is FakeBehaviour.CompletesImmediately or FakeBehaviour.CompletesWhenCancelled ? "hello\n" : string.Empty;
             public string Error => string.Empty;
             public int? ExitStatus { get; private set; }
+            public string? ExitSignal { get; private set; }
 
             public void Dispose() => journal.Enqueue($"handle disposed: {text}");
         }
@@ -226,6 +287,38 @@ namespace ModelingEvolution.AutoUpdater.Tests.Services
             public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
             public override void SetLength(long value) => throw new NotSupportedException();
             public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+        }
+    }
+
+    /// <summary>One thread runs every continuation, like a Blazor circuit's renderer context.</summary>
+    internal sealed class SingleThreadSynchronizationContext : SynchronizationContext
+    {
+        private readonly System.Collections.Concurrent.BlockingCollection<(SendOrPostCallback Callback, object? State)> _queue = new();
+
+        public override void Post(SendOrPostCallback d, object? state) => _queue.Add((d, state));
+
+        public override void Send(SendOrPostCallback d, object? state) => throw new NotSupportedException();
+
+        public static void Run(Func<Task> body)
+        {
+            var previous = Current;
+            var context = new SingleThreadSynchronizationContext();
+            SetSynchronizationContext(context);
+            try
+            {
+                var task = body();
+                task.ContinueWith(_ => context._queue.CompleteAdding(), TaskScheduler.Default);
+                foreach (var (callback, state) in context._queue.GetConsumingEnumerable())
+                {
+                    callback(state);
+                }
+
+                task.GetAwaiter().GetResult();
+            }
+            finally
+            {
+                SetSynchronizationContext(previous);
+            }
         }
     }
 }

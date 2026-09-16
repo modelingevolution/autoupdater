@@ -22,11 +22,15 @@ namespace ModelingEvolution.AutoUpdater.Services
 
         string Error { get; }
 
+        /// <summary>Exit status sent by the server; <see langword="null"/> when the command ended without one (e.g. killed by a signal).</summary>
         int? ExitStatus { get; }
+
+        /// <summary>Name of the signal that terminated the command, when the server reported one.</summary>
+        string? ExitSignal { get; }
     }
 
     /// <summary>
-    /// Creates commands on a connection and owns the connections' lifetime.
+    /// Creates commands on an SSH connection. Does not own the connection: <see cref="SshService"/> releases it.
     /// </summary>
     internal interface ISshCommandFactory
     {
@@ -55,6 +59,8 @@ namespace ModelingEvolution.AutoUpdater.Services
         public string Error => _command.Error;
 
         public int? ExitStatus => _command.ExitStatus;
+
+        public string? ExitSignal => _command.ExitSignal;
 
         public void Dispose() => _command.Dispose();
     }

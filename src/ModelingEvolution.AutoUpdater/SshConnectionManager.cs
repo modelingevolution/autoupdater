@@ -14,7 +14,10 @@ public class SshConnectionManager : ISshConnectionManager, IDisposable
 {
     private readonly SshConfiguration _config;
     private readonly ILogger _logger;
-    private SshClient? _client;
+    // Clients this manager created and still owns. A client handed to an SshService is removed: the service owns it from then on,
+    // and disposing it here would tear the connection down under the service's running commands (bug-019).
+    private readonly HashSet<SshClient> _ownedClients = new();
+    private readonly object _gate = new();
     private bool _disposed;
 
     public SshConnectionManager(SshConfiguration config, ILogger logger)
@@ -74,25 +77,35 @@ public class SshConnectionManager : ISshConnectionManager, IDisposable
 
         var connectionInfo = GetConnectionInfo();
 
-        _client = new SshClient(connectionInfo);
+        var client = new SshClient(connectionInfo);
         
         // Configure client settings
-        _client.KeepAliveInterval = _config.KeepAliveInterval;
-        _client.ConnectionInfo.Timeout = _config.Timeout;
+        client.KeepAliveInterval = _config.KeepAliveInterval;
+        client.ConnectionInfo.Timeout = _config.Timeout;
 
         try
         {
-            await ConnectWithRetryAsync(_client);
+            await ConnectWithRetryAsync(client);
             _logger.LogInformation("Successfully connected to SSH host {Host}:{Port}", _config.Host, _config.Port);
-            return _client;
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to connect to SSH host {Host}:{Port}", _config.Host, _config.Port);
-            _client?.Dispose();
-            _client = null;
+            client.Dispose();
             throw;
         }
+
+        lock (_gate)
+        {
+            if (!_disposed)
+            {
+                _ownedClients.Add(client);
+                return client;
+            }
+        }
+
+        client.Dispose();
+        throw new ObjectDisposedException(nameof(SshConnectionManager));
     }
 
     /// <summary>
@@ -101,12 +114,25 @@ public class SshConnectionManager : ISshConnectionManager, IDisposable
     public async Task<ISshService> CreateSshServiceAsync()
     {
         var sshClient = await CreateConnectionAsync();
-        var scpClient = await CreateScpConnectionAsync();
-        var sftpCLient = await CreateSftpConnectionAsync();
-        var logger = _logger as ILogger<SshService> ?? 
-                    new LoggerFactory().CreateLogger<SshService>();
-        
-        return new SshService(sshClient, scpClient, sftpCLient, logger);
+        ScpClient? scpClient = null;
+        try
+        {
+            scpClient = await CreateScpConnectionAsync();
+            var sftpClient = await CreateSftpConnectionAsync();
+            var logger = _logger as ILogger<SshService> ??
+                        new LoggerFactory().CreateLogger<SshService>();
+
+            var service = new SshService(sshClient, scpClient, sftpClient, logger);
+            ReleaseOwnership(sshClient); // the service owns the client now
+            return service;
+        }
+        catch
+        {
+            scpClient?.Dispose();
+            ReleaseOwnership(sshClient);
+            sshClient.Dispose();
+            throw;
+        }
     }
 
     /// <summary>
@@ -116,8 +142,16 @@ public class SshConnectionManager : ISshConnectionManager, IDisposable
     {
         try
         {
-            using var testClient = await CreateConnectionAsync();
-            return testClient.IsConnected;
+            var testClient = await CreateConnectionAsync();
+            try
+            {
+                return testClient.IsConnected;
+            }
+            finally
+            {
+                ReleaseOwnership(testClient);
+                testClient.Dispose();
+            }
         }
         catch (Exception ex)
         {
@@ -319,12 +353,31 @@ public class SshConnectionManager : ISshConnectionManager, IDisposable
 
     
 
+    private void ReleaseOwnership(SshClient client)
+    {
+        lock (_gate)
+        {
+            _ownedClients.Remove(client);
+        }
+    }
+
+    /// <summary>
+    /// Disposes the clients this manager still owns - never one handed to an <see cref="SshService"/>.
+    /// </summary>
     public void Dispose()
     {
-        if (!_disposed)
+        SshClient[] owned;
+        lock (_gate)
         {
-            _client?.Dispose();
+            if (_disposed) return;
             _disposed = true;
+            owned = _ownedClients.ToArray();
+            _ownedClients.Clear();
+        }
+
+        foreach (var client in owned)
+        {
+            client.Dispose();
         }
     }
 }

@@ -39,6 +39,9 @@ public sealed class SshdFixture : IAsyncLifetime
     {
         await _container.StartAsync();
 
+        // The deploy user on a device has passwordless sudo; WriteFileAsync relies on it for files the user cannot write.
+        await ExecAsync("sh", "-c", $"echo '{User} ALL=(ALL) NOPASSWD: ALL' > /etc/sudoers.d/bug019 && chmod 440 /etc/sudoers.d/bug019");
+
         // The port opens before sshd has its keys and user; retry until a login works.
         var deadline = Stopwatch.StartNew();
         while (true)
@@ -57,6 +60,40 @@ public sealed class SshdFixture : IAsyncLifetime
     }
 
     public async Task DisposeAsync() => await _container.DisposeAsync();
+
+    /// <summary>Runs a command in the sshd container as root.</summary>
+    public async Task<string> ExecAsync(params string[] command)
+    {
+        var result = await _container.ExecAsync(command);
+        if (result.ExitCode != 0 && command[0] != "pgrep")
+        {
+            throw new InvalidOperationException($"'{string.Join(' ', command)}' exited {result.ExitCode}: {result.Stderr}");
+        }
+
+        return result.Stdout;
+    }
+
+    /// <summary>Remote processes whose command line contains <paramref name="pattern"/>, polled until none or the deadline.</summary>
+    public async Task<string> WaitForNoProcessAsync(string pattern, TimeSpan deadline)
+    {
+        var sw = Stopwatch.StartNew();
+        string found;
+        do
+        {
+            found = (await ExecAsync("pgrep", "-af", pattern)).Trim();
+            if (found.Length == 0) return found;
+            await Task.Delay(200);
+        }
+        while (sw.Elapsed < deadline);
+
+        return found;
+    }
+
+    public SshService CreateService(ILoggerFactory loggerFactory) => new(
+        Connected(new SshClient(Host, Port, User, Password)),
+        Connected(new ScpClient(Host, Port, User, Password)),
+        Connected(new SftpClient(Host, Port, User, Password)),
+        loggerFactory.CreateLogger<SshService>());
 
     public T Connected<T>(T client) where T : BaseClient
     {
@@ -92,7 +129,7 @@ public class SshCommandTimeoutIntegrationTests : IClassFixture<SshdFixture>
             _loggerFactory.CreateLogger<SshService>());
         var sw = Stopwatch.StartNew();
 
-        var execution = service.ExecuteCommandAsync("sleep 30", TimeSpan.FromSeconds(5));
+        var execution = service.ExecuteCommandAsync("sleep 32", TimeSpan.FromSeconds(5));
         await Task.Delay(TimeSpan.FromSeconds(1));
         service.Dispose();
 
@@ -100,6 +137,9 @@ public class SshCommandTimeoutIntegrationTests : IClassFixture<SshdFixture>
         _output.WriteLine($"[{sw.Elapsed.TotalSeconds:0.00}s] result: exit={result.ExitCode} error='{result.Error}'");
         Assert.False(result.IsSuccess);
         Assert.Contains("cancelled", result.Error);
+        var remote = await _sshd.WaitForNoProcessAsync("sleep 32", TimeSpan.FromSeconds(3));
+        _output.WriteLine($"[{sw.Elapsed.TotalSeconds:0.00}s] remote 'sleep 32' after dispose: '{remote}'");
+        Assert.Equal(string.Empty, remote);
 
         // Past the 5 s timeout with margin: in SSH.NET 2024.2.0 the timer fired here on the disposed client and aborted the process.
         await Task.Delay(TimeSpan.FromSeconds(7));
@@ -116,12 +156,15 @@ public class SshCommandTimeoutIntegrationTests : IClassFixture<SshdFixture>
             _loggerFactory.CreateLogger<SshService>());
         var sw = Stopwatch.StartNew();
 
-        var result = await service.ExecuteCommandAsync("sleep 30", TimeSpan.FromSeconds(3)).WaitAsync(TimeSpan.FromSeconds(15));
+        var result = await service.ExecuteCommandAsync("sleep 31", TimeSpan.FromSeconds(3)).WaitAsync(TimeSpan.FromSeconds(15));
 
         _output.WriteLine($"[{sw.Elapsed.TotalSeconds:0.00}s] result: exit={result.ExitCode} error='{result.Error}'");
         Assert.False(result.IsSuccess);
         Assert.Equal("Command timed out after 3 seconds", result.Error);
         Assert.InRange(sw.Elapsed, TimeSpan.FromSeconds(2.5), TimeSpan.FromSeconds(10));
+        var remote = await _sshd.WaitForNoProcessAsync("sleep 31", TimeSpan.FromSeconds(3));
+        _output.WriteLine($"[{sw.Elapsed.TotalSeconds:0.00}s] remote 'sleep 31' after timeout: '{remote}'");
+        Assert.Equal(string.Empty, remote);
 
         var after = await service.ExecuteCommandAsync("echo alive", TimeSpan.FromSeconds(5));
         Assert.True(after.IsSuccess, after.Error);
@@ -136,7 +179,7 @@ public class SshCommandTimeoutIntegrationTests : IClassFixture<SshdFixture>
     public async Task SshNet_ClientDisposedThenTokenCancelsRunningCommand_ProcessStaysAlive()
     {
         var client = _sshd.Connected(new SshClient(_sshd.Host, _sshd.Port, SshdFixture.User, SshdFixture.Password));
-        var command = client.CreateCommand("sleep 30");
+        var command = client.CreateCommand("sleep 33");
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(3));
         var execution = command.ExecuteAsync(cts.Token);
         var sw = Stopwatch.StartNew();
@@ -151,5 +194,117 @@ public class SshCommandTimeoutIntegrationTests : IClassFixture<SshdFixture>
 
         await Task.Delay(TimeSpan.FromSeconds(3));
         _output.WriteLine($"[{sw.Elapsed.TotalSeconds:0.00}s] test host alive (pid {Environment.ProcessId})");
+    }
+
+    /// <summary>
+    /// A timed-out command run in a working directory is a shell (<c>cd … &amp;&amp; cmd</c>): records whether the signal reaches the child.
+    /// </summary>
+    [Fact]
+    public async Task SshService_TimeoutInWorkingDirectory_RemoteChildProcessIsStopped()
+    {
+        using var service = _sshd.CreateService(_loggerFactory);
+
+        var result = await service.ExecuteCommandAsync("sleep 34", TimeSpan.FromSeconds(2), "/tmp").WaitAsync(TimeSpan.FromSeconds(15));
+
+        Assert.Equal("Command timed out after 2 seconds", result.Error);
+        var remote = await _sshd.WaitForNoProcessAsync("sleep 34", TimeSpan.FromSeconds(3));
+        _output.WriteLine($"remote 'sleep 34' after timeout (cd /tmp && sleep 34): '{remote}'");
+        Assert.Equal(string.Empty, remote);
+    }
+
+    [Fact]
+    public async Task SshConnectionManager_Dispose_DoesNotDisposeAClientHandedToAnSshService()
+    {
+        var manager = new SshConnectionManager(
+            new SshConfiguration
+            {
+                Host = _sshd.Host,
+                Port = _sshd.Port,
+                User = SshdFixture.User,
+                Password = SshdFixture.Password,
+                AuthMethod = SshAuthMethod.Password
+            },
+            _loggerFactory.CreateLogger<SshConnectionManager>());
+        using var service = await manager.CreateSshServiceAsync();
+
+        manager.Dispose();
+        var result = await service.ExecuteCommandAsync("echo still-connected", TimeSpan.FromSeconds(5));
+
+        Assert.True(result.IsSuccess, result.Error);
+        Assert.Equal("still-connected", result.Output.Trim());
+    }
+}
+
+/// <summary>
+/// File operations of <see cref="SshService"/> over SCP / SFTP / sudo against a real sshd, on the SSH.NET version the package ships.
+/// These write deployment state on every device.
+/// </summary>
+public class SshServiceFileOperationsIntegrationTests : IClassFixture<SshdFixture>
+{
+    private readonly SshdFixture _sshd;
+    private readonly ILoggerFactory _loggerFactory;
+
+    public SshServiceFileOperationsIntegrationTests(SshdFixture sshd, ITestOutputHelper output)
+    {
+        _sshd = sshd;
+        _loggerFactory = LoggerFactory.Create(b => b.AddProvider(new XUnitLoggerProvider(output)).SetMinimumLevel(LogLevel.Debug));
+    }
+
+    [Fact]
+    public async Task WriteFileAsync_WritableDirectory_WritesDirectlyAndReadsBack()
+    {
+        using var service = _sshd.CreateService(_loggerFactory);
+        var dir = $"/config/bug019-{Guid.NewGuid():N}";
+        await service.CreateDirectoryAsync(dir);
+        var path = $"{dir}/deployment.state.json";
+        var content = "{\"version\":\"1.0.82\",\"note\":\"zażółć\"}\n";
+
+        await service.WriteFileAsync(path, content);
+
+        Assert.Equal(content, await service.ReadFileAsync(path));
+        Assert.True(await service.FileExistsAsync(path));
+        Assert.True(await service.DirectoryExistsAsync(dir));
+        Assert.Equal($"{SshdFixture.User}\n", await _sshd.ExecAsync("stat", "-c", "%U", path));
+    }
+
+    [Fact]
+    public async Task WriteFileAsync_RootOwnedFileInRootOwnedDirectory_GoesThroughSudoMoveAndKeepsOwnerAndMode()
+    {
+        using var service = _sshd.CreateService(_loggerFactory);
+        var dir = $"/opt/bug019-{Guid.NewGuid():N}";
+        var path = $"{dir}/docker-compose.override.yml";
+        await _sshd.ExecAsync("sh", "-c", $"mkdir -p {dir} && echo old > {path} && chown -R root:root {dir} && chmod 755 {dir} && chmod 640 {path}");
+
+        await service.WriteFileAsync(path, "services: {}\n");
+
+        Assert.Equal("services: {}\n", await _sshd.ExecAsync("cat", path));
+        Assert.Equal("640:root:root\n", await _sshd.ExecAsync("stat", "-c", "%a:%U:%G", path));
+        Assert.Equal(string.Empty, (await _sshd.ExecAsync("sh", "-c", $"ls /tmp | grep docker-compose.override.yml || true")).Trim());
+    }
+
+    [Fact]
+    public async Task FileExistsAsync_MissingFile_IsFalse_AndMakeExecutableIsSeen()
+    {
+        using var service = _sshd.CreateService(_loggerFactory);
+        var path = $"/config/bug019-{Guid.NewGuid():N}.sh";
+
+        Assert.False(await service.FileExistsAsync(path));
+        await service.WriteFileAsync(path, "#!/bin/sh\necho hi\n");
+        Assert.False(await service.IsExecutableAsync(path));
+        await service.MakeExecutableAsync(path);
+
+        Assert.True(await service.IsExecutableAsync(path));
+    }
+
+    [Fact]
+    public async Task GetFiles_SftpListing_ReturnsRegularFilesMatchingThePattern()
+    {
+        using var service = _sshd.CreateService(_loggerFactory);
+        var dir = $"/config/bug019-{Guid.NewGuid():N}";
+        await _sshd.ExecAsync("sh", "-c", $"mkdir -p {dir}/sub.yml && touch {dir}/up-1.0.1.sh {dir}/up-1.0.2.sh {dir}/readme.md && chown -R 1000:1000 {dir}");
+
+        var files = service.GetFiles(dir, "up-*.sh");
+
+        Assert.Equal(new[] { $"{dir}/up-1.0.1.sh", $"{dir}/up-1.0.2.sh" }, files.OrderBy(f => f, StringComparer.Ordinal));
     }
 }

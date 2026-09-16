@@ -11,8 +11,24 @@ using System.Threading.Tasks;
 namespace ModelingEvolution.AutoUpdater.Services
 {
     /// <summary>
-    /// SSH service implementation using SshClient and ScpClient directly
+    /// SSH service implementation using SshClient, ScpClient and SftpClient directly.
     /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Command timeouts are a <see cref="CancellationToken"/> owned by this service (never <c>SshCommand.CommandTimeout</c>, bug-019).
+    /// If a command completes successfully while its cancellation is being observed (within <see cref="CancelGrace"/>, i.e. it
+    /// finished rather than being stopped), its completed result wins over "timed out".
+    /// </para>
+    /// <para>
+    /// <see cref="Dispose"/> cancels the commands still running and waits for them before it releases the connections. The wait is
+    /// bounded by <see cref="DisposeDrainTimeout"/>: a command that has not finished by then (it ignores cancellation, or the server
+    /// does not answer) is abandoned and the connections ARE disposed under it - a deliberate trade-off so Dispose cannot hang.
+    /// Dispose blocks its calling thread: cancelling sends a signal per running command and waits up to 500 ms for the server's
+    /// reply (SSH.NET <c>CancelAsync</c>), and closing a channel can wait up to the connection's <c>ChannelCloseTimeout</c>.
+    /// The command path uses <c>ConfigureAwait(false)</c> throughout, so a Dispose that blocks a single-threaded
+    /// synchronization context (a Blazor circuit) does not starve the continuations it is waiting for.
+    /// </para>
+    /// </remarks>
     public class SshService : ISshService, IDisposable
     {
         private readonly ISshCommandFactory _commands;
@@ -110,7 +126,7 @@ namespace ModelingEvolution.AutoUpdater.Services
 
             try
             {
-                return await RunAsync(command, timeout, workingDirectory, onOutputLine);
+                return await RunAsync(command, timeout, workingDirectory, onOutputLine).ConfigureAwait(false);
             }
             finally
             {
@@ -150,12 +166,17 @@ namespace ModelingEvolution.AutoUpdater.Services
                 try
                 {
                     // WaitAsync: the call returns at the timeout even if the command does not honour the token.
-                    await execution.WaitAsync(cts.Token);
+                    await execution.WaitAsync(cts.Token).ConfigureAwait(false);
                 }
                 catch (OperationCanceledException) when (cts.IsCancellationRequested)
                 {
-                    await SettleAsync(execution, command);
-                    throw;
+                    await SettleAsync(execution, command).ConfigureAwait(false);
+                    if (!execution.IsCompletedSuccessfully)
+                    {
+                        throw;
+                    }
+
+                    // The command completed (not cancelled) while the timeout/dispose was firing: its own result wins.
                 }
                 finally
                 {
@@ -163,21 +184,24 @@ namespace ModelingEvolution.AutoUpdater.Services
                     {
                         // The stream ends when the channel closes. If that does not happen in time, close it ourselves
                         // so the pump cannot outlive this call, then wait for the pump - it never throws.
-                        if (await Task.WhenAny(pump, Task.Delay(OutputDrainTimeout)) != pump)
+                        if (await Task.WhenAny(pump, Task.Delay(OutputDrainTimeout)).ConfigureAwait(false) != pump)
                         {
                             _logger.LogWarning("Output of SSH command did not reach end-of-stream within {Drain}; closing it: {Command}", OutputDrainTimeout, command);
                             sshCommand.OutputStream.Dispose();
                         }
-                        await pump;
+                        await pump.ConfigureAwait(false);
                     }
                 }
 
                 var commandResult = new SshCommandResult
                 {
                     Command = command,
-                    ExitCode = sshCommand.ExitStatus ?? 0,
+                    // No exit status means the command did not exit normally (e.g. killed by a signal): that is not success.
+                    ExitCode = sshCommand.ExitStatus ?? -1,
                     Output = output != null ? SnapshotOutput(output) : sshCommand.Result,
-                    Error = sshCommand.Error
+                    Error = sshCommand.ExitStatus is null && sshCommand.ExitSignal is { } signal
+                        ? $"{sshCommand.Error}Command terminated by signal {signal}"
+                        : sshCommand.Error
                 };
 
                 if (commandResult.IsSuccess)
@@ -216,7 +240,7 @@ namespace ModelingEvolution.AutoUpdater.Services
         /// </summary>
         private async Task SettleAsync(Task execution, string command)
         {
-            if (await Task.WhenAny(execution, Task.Delay(CancelGrace)) != execution)
+            if (await Task.WhenAny(execution, Task.Delay(CancelGrace)).ConfigureAwait(false) != execution)
             {
                 _logger.LogWarning("SSH command did not stop within {Grace} after cancellation: {Command}", CancelGrace, command);
             }
@@ -238,7 +262,7 @@ namespace ModelingEvolution.AutoUpdater.Services
             try
             {
                 using var reader = new StreamReader(stream, Encoding.UTF8, detectEncodingFromByteOrderMarks: false, bufferSize: 4096, leaveOpen: true);
-                while (await reader.ReadLineAsync() is { } line)
+                while (await reader.ReadLineAsync().ConfigureAwait(false) is { } line)
                 {
                     lock (output)
                     {
