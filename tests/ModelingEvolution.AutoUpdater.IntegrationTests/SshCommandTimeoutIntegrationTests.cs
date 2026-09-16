@@ -22,6 +22,10 @@ public sealed class SshdFixture : IAsyncLifetime
     private readonly IContainer _container = new ContainerBuilder()
         .WithImage("lscr.io/linuxserver/openssh-server:latest")
         .WithName($"autoupdater-bug019-sshd-{Guid.NewGuid():N}")
+        // Ryuk removes these if the test host dies (which is exactly what a bad SSH.NET version does here). With
+        // TESTCONTAINERS_RYUK_DISABLED=true, clean up by label:
+        //   docker rm -f $(docker ps -aq --filter label=com.modelingevolution.test=bug-019)
+        .WithLabel("com.modelingevolution.test", "bug-019")
         .WithEnvironment("PUID", "1000")
         .WithEnvironment("PGID", "1000")
         .WithEnvironment("PASSWORD_ACCESS", "true")
@@ -212,10 +216,46 @@ public class SshCommandTimeoutIntegrationTests : IClassFixture<SshdFixture>
         Assert.Equal(string.Empty, remote);
     }
 
+    /// <summary>
+    /// The product path of the incident: the connection manager is disposed while a command of a live service is still running.
+    /// On SSH.NET 2024.2.0 that killed the process through product code.
+    /// </summary>
+    [Fact]
+    public async Task SshConnectionManager_DisposedWhileAServiceCommandIsRunning_CommandEndsAndProcessStaysAlive()
+    {
+        var manager = CreateManager();
+        using var service = await manager.CreateSshServiceAsync();
+        var sw = Stopwatch.StartNew();
+
+        var execution = service.ExecuteCommandAsync("sleep 35", TimeSpan.FromSeconds(3));
+        await Task.Delay(TimeSpan.FromSeconds(1));
+        manager.Dispose();
+
+        var result = await execution.WaitAsync(TimeSpan.FromSeconds(15));
+        _output.WriteLine($"[{sw.Elapsed.TotalSeconds:0.00}s] result: exit={result.ExitCode} error='{result.Error}'");
+        Assert.False(result.IsSuccess);
+        Assert.Equal("Command timed out after 3 seconds", result.Error);
+        Assert.Equal(string.Empty, await _sshd.WaitForNoProcessAsync("sleep 35", TimeSpan.FromSeconds(3)));
+
+        // Past the timeout with margin: on 2024.2.0 the timer fired here against the client the manager had disposed.
+        await Task.Delay(TimeSpan.FromSeconds(5));
+        _output.WriteLine($"[{sw.Elapsed.TotalSeconds:0.00}s] test host alive (pid {Environment.ProcessId})");
+    }
+
     [Fact]
     public async Task SshConnectionManager_Dispose_DoesNotDisposeAClientHandedToAnSshService()
     {
-        var manager = new SshConnectionManager(
+        var manager = CreateManager();
+        using var service = await manager.CreateSshServiceAsync();
+
+        manager.Dispose();
+        var result = await service.ExecuteCommandAsync("echo still-connected", TimeSpan.FromSeconds(5));
+
+        Assert.True(result.IsSuccess, result.Error);
+        Assert.Equal("still-connected", result.Output.Trim());
+    }
+
+    private SshConnectionManager CreateManager() => new(
             new SshConfiguration
             {
                 Host = _sshd.Host,
@@ -225,14 +265,6 @@ public class SshCommandTimeoutIntegrationTests : IClassFixture<SshdFixture>
                 AuthMethod = SshAuthMethod.Password
             },
             _loggerFactory.CreateLogger<SshConnectionManager>());
-        using var service = await manager.CreateSshServiceAsync();
-
-        manager.Dispose();
-        var result = await service.ExecuteCommandAsync("echo still-connected", TimeSpan.FromSeconds(5));
-
-        Assert.True(result.IsSuccess, result.Error);
-        Assert.Equal("still-connected", result.Output.Trim());
-    }
 }
 
 /// <summary>

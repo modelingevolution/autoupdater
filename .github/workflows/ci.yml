@@ -1,4 +1,4 @@
-name: Unit Tests (CI)
+name: Tests (CI)
 
 on:
   push:
@@ -30,6 +30,16 @@ jobs:
           --configuration Release \
           --logger "console;verbosity=normal"
         
+    # bug-019: the unit suite is green on any SSH.NET version (it runs against fakes). The version guard is this integration class,
+    # which starts a throwaway sshd via Testcontainers - Docker is available on GitHub-hosted ubuntu runners. The rest of the
+    # IntegrationTests project needs the full AutoUpdater stack and stays out of CI.
+    - name: Run bug-019 SSH integration tests (real sshd)
+      run: |
+        dotnet test tests/ModelingEvolution.AutoUpdater.IntegrationTests/ \
+          --configuration Release \
+          --filter "FullyQualifiedName~SshCommandTimeoutIntegrationTests|FullyQualifiedName~SshServiceFileOperationsIntegrationTests" \
+          --logger "console;verbosity=normal"
+
     - name: Upload Allure results
       uses: actions/upload-artifact@v4
       if: always()
