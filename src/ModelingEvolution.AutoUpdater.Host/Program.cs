@@ -50,6 +50,13 @@ public class Program
 
         // Display configuration values at startup
         var logger = app.Services.GetRequiredService<ILogger<Program>>();
+
+        // bug-019: an exception on a thread nobody awaits (e.g. a library timer) must end the process, so the container restarts,
+        // instead of leaving it alive and unresponsive.
+        using var safetyNet = ProcessSafetyNet.Install(
+            logger,
+            flush: () => app.Services.GetRequiredService<ILoggerFactory>().Dispose());
+
         app.Configuration.DisplayConfigurationValues(logger);
 
         // Configure pipeline and endpoints

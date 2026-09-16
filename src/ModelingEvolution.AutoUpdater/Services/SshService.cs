@@ -2,7 +2,8 @@ using Microsoft.Extensions.Logging;
 using Renci.SshNet;
 using System;
 using System.IO;
-using System.Net.Mail;
+using System.Collections.Generic;
+using System.Linq;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
@@ -14,65 +15,49 @@ namespace ModelingEvolution.AutoUpdater.Services
     /// </summary>
     public class SshService : ISshService, IDisposable
     {
-        private readonly SshClient _sshClient;
-        private readonly ScpClient _scpClient;
-        
-        private readonly SftpClient _sftpClient;
+        private readonly ISshCommandFactory _commands;
+        private readonly ScpClient? _scpClientOrNull;
+        private readonly SftpClient? _sftpClientOrNull;
+        private readonly Action _disposeClients;
         private readonly ILogger<SshService> _logger;
+
+        // Cancelled by Dispose: every running command is linked to it (bug-019).
+        private readonly CancellationTokenSource _lifetime = new();
+        private readonly object _gate = new();
+        private readonly HashSet<Task> _inFlight = new();
         private bool _disposed;
 
         public SshService(SshClient sshClient, ScpClient scpClient, SftpClient sftpClient, ILogger<SshService> logger)
+            : this(
+                new SshNetCommandFactory(sshClient ?? throw new ArgumentNullException(nameof(sshClient))),
+                scpClient ?? throw new ArgumentNullException(nameof(scpClient)),
+                sftpClient ?? throw new ArgumentNullException(nameof(sftpClient)),
+                () =>
+                {
+                    sshClient.Dispose();
+                    scpClient.Dispose();
+                    sftpClient.Dispose();
+                },
+                logger)
         {
-            _sshClient = sshClient ?? throw new ArgumentNullException(nameof(sshClient));
-            _scpClient = scpClient ?? throw new ArgumentNullException(nameof(scpClient));
-            _sftpClient = sftpClient ?? throw new ArgumentNullException(nameof(sftpClient));
+        }
+
+        /// <summary>
+        /// Test seam: commands come from <paramref name="commands"/>, <paramref name="disposeClients"/> releases the connections.
+        /// File operations need the SCP/SFTP clients and throw when they are not given.
+        /// </summary>
+        internal SshService(ISshCommandFactory commands, ScpClient? scpClient, SftpClient? sftpClient, Action disposeClients, ILogger<SshService> logger)
+        {
+            _commands = commands ?? throw new ArgumentNullException(nameof(commands));
+            _scpClientOrNull = scpClient;
+            _sftpClientOrNull = sftpClient;
+            _disposeClients = disposeClients ?? throw new ArgumentNullException(nameof(disposeClients));
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         }
 
-        public async Task<SshCommandResult> ExecuteCommandAsync(string command, string? workingDirectory = null)
-        {
-            return await ExecuteCommandAsync(command, TimeSpan.FromMinutes(10), workingDirectory);
-        }
+        private ScpClient Scp => _scpClientOrNull ?? throw new InvalidOperationException("SCP client is not available");
 
-        public async Task<SshCommandResult> ExecuteCommandAsync(string command, TimeSpan timeout, string? workingDirectory = null)
-        {
-            try
-            {
-                var fullCommand = workingDirectory != null ? $"cd {workingDirectory} && {command}" : command;
-                
-                _logger.LogDebug("Executing SSH command with timeout {Timeout}: {Command}", timeout, command);
-                
-                using var sshCommand = _sshClient.CreateCommand(fullCommand);
-                sshCommand.CommandTimeout = timeout;
-                
-                await sshCommand.ExecuteAsync();
-                
-                var commandResult = new SshCommandResult
-                {
-                    Command = command,
-                    ExitCode = sshCommand.ExitStatus ?? 0,
-                    Output = sshCommand.Result,
-                    Error = sshCommand.Error
-                };
-
-                if (sshCommand.ExitStatus == 0)
-                {
-                    _logger.LogDebug("SSH command completed successfully: {Command}", command);
-                }
-                else
-                {
-                    _logger.LogWarning("SSH command failed with exit code {ExitCode}: {Command}. Error: {Error}", 
-                        sshCommand.ExitStatus, command, sshCommand.Error);
-                }
-
-                return commandResult;
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Failed to execute SSH command: {Command}", command);
-                return SshCommandResult.Failed(command, -1, string.Empty, ex.Message);
-            }
-        }
+        private SftpClient Sftp => _sftpClientOrNull ?? throw new InvalidOperationException("SFTP client is not available");
 
         /// <summary>
         /// How long to wait for the output pump to see end-of-stream after the command itself has returned,
@@ -80,70 +65,164 @@ namespace ModelingEvolution.AutoUpdater.Services
         /// </summary>
         internal TimeSpan OutputDrainTimeout { get; set; } = TimeSpan.FromSeconds(5);
 
-        public async Task<SshCommandResult> ExecuteCommandAsync(string command, TimeSpan timeout, string? workingDirectory, Action<string> onOutputLine)
+        /// <summary>
+        /// After a timeout or dispose cancelled a command, how long the command gets to finish before its handle is released.
+        /// </summary>
+        internal TimeSpan CancelGrace { get; set; } = TimeSpan.FromSeconds(2);
+
+        /// <summary>
+        /// How long <see cref="Dispose"/> waits for cancelled commands to finish before it releases the connections.
+        /// </summary>
+        internal TimeSpan DisposeDrainTimeout { get; set; } = TimeSpan.FromSeconds(10);
+
+        public Task<SshCommandResult> ExecuteCommandAsync(string command, string? workingDirectory = null)
+        {
+            return ExecuteCommandAsync(command, TimeSpan.FromMinutes(10), workingDirectory);
+        }
+
+        public Task<SshCommandResult> ExecuteCommandAsync(string command, TimeSpan timeout, string? workingDirectory = null)
+        {
+            return RunTrackedAsync(command, timeout, workingDirectory, onOutputLine: null);
+        }
+
+        public Task<SshCommandResult> ExecuteCommandAsync(string command, TimeSpan timeout, string? workingDirectory, Action<string> onOutputLine)
         {
             ArgumentNullException.ThrowIfNull(onOutputLine);
+            return RunTrackedAsync(command, timeout, workingDirectory, onOutputLine);
+        }
 
-            var fullCommand = workingDirectory != null ? $"cd {workingDirectory} && {command}" : command;
-            var output = new StringBuilder();
+        /// <summary>
+        /// Registers the command as in flight so <see cref="Dispose"/> cancels it and waits for it before releasing the connections.
+        /// </summary>
+        private async Task<SshCommandResult> RunTrackedAsync(string command, TimeSpan timeout, string? workingDirectory, Action<string>? onOutputLine)
+        {
+            var done = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            lock (_gate)
+            {
+                if (_disposed)
+                {
+                    _logger.LogError("SSH command rejected, the SSH service is disposed: {Command}", command);
+                    return SshCommandResult.Failed(command, -1, string.Empty, "SSH service is disposed");
+                }
+
+                _inFlight.Add(done.Task);
+            }
 
             try
             {
-                _logger.LogDebug("Executing streamed SSH command with timeout {Timeout}: {Command}", timeout, command);
+                return await RunAsync(command, timeout, workingDirectory, onOutputLine);
+            }
+            finally
+            {
+                lock (_gate)
+                {
+                    _inFlight.Remove(done.Task);
+                }
 
-                using var sshCommand = _sshClient.CreateCommand(fullCommand);
-                sshCommand.CommandTimeout = timeout;
+                done.TrySetResult();
+            }
+        }
 
-                using var cts = new CancellationTokenSource(timeout);
+        /// <summary>
+        /// Runs one command. The timeout is a token (<see cref="CancellationTokenSource.CancelAfter(TimeSpan)"/>) linked to this
+        /// service's lifetime; <c>SshCommand.CommandTimeout</c> is never used (bug-019).
+        /// </summary>
+        private async Task<SshCommandResult> RunAsync(string command, TimeSpan timeout, string? workingDirectory, Action<string>? onOutputLine)
+        {
+            var fullCommand = workingDirectory != null ? $"cd {workingDirectory} && {command}" : command;
+            var output = onOutputLine != null ? new StringBuilder() : null;
+            var kind = onOutputLine != null ? "Streamed SSH command" : "SSH command";
+
+            using var cts = CancellationTokenSource.CreateLinkedTokenSource(_lifetime.Token);
+            cts.CancelAfter(timeout);
+            ISshCommandHandle? sshCommand = null;
+
+            try
+            {
+                _logger.LogDebug("Executing {Kind} with timeout {Timeout}: {Command}", kind, timeout, command);
+
+                sshCommand = _commands.Create(fullCommand);
                 var execution = sshCommand.ExecuteAsync(cts.Token);
-                var pump = PumpOutputAsync(sshCommand.OutputStream, output, onOutputLine, command);
+                var pump = onOutputLine != null
+                    ? PumpOutputAsync(sshCommand.OutputStream, output!, onOutputLine, command)
+                    : null;
 
                 try
                 {
-                    await execution;
+                    // WaitAsync: the call returns at the timeout even if the command does not honour the token.
+                    await execution.WaitAsync(cts.Token);
+                }
+                catch (OperationCanceledException) when (cts.IsCancellationRequested)
+                {
+                    await SettleAsync(execution, command);
+                    throw;
                 }
                 finally
                 {
-                    // The stream ends when the channel closes. If that does not happen in time, close it ourselves
-                    // so the pump cannot outlive this call, then wait for the pump - it never throws.
-                    if (await Task.WhenAny(pump, Task.Delay(OutputDrainTimeout)) != pump)
+                    if (pump != null)
                     {
-                        _logger.LogWarning("Output of SSH command did not reach end-of-stream within {Drain}; closing it: {Command}", OutputDrainTimeout, command);
-                        sshCommand.OutputStream.Dispose();
+                        // The stream ends when the channel closes. If that does not happen in time, close it ourselves
+                        // so the pump cannot outlive this call, then wait for the pump - it never throws.
+                        if (await Task.WhenAny(pump, Task.Delay(OutputDrainTimeout)) != pump)
+                        {
+                            _logger.LogWarning("Output of SSH command did not reach end-of-stream within {Drain}; closing it: {Command}", OutputDrainTimeout, command);
+                            sshCommand.OutputStream.Dispose();
+                        }
+                        await pump;
                     }
-                    await pump;
                 }
 
                 var commandResult = new SshCommandResult
                 {
                     Command = command,
                     ExitCode = sshCommand.ExitStatus ?? 0,
-                    Output = SnapshotOutput(output),
+                    Output = output != null ? SnapshotOutput(output) : sshCommand.Result,
                     Error = sshCommand.Error
                 };
 
                 if (commandResult.IsSuccess)
                 {
-                    _logger.LogDebug("Streamed SSH command completed successfully: {Command}", command);
+                    _logger.LogDebug("{Kind} completed successfully: {Command}", kind, command);
                 }
                 else
                 {
-                    _logger.LogWarning("Streamed SSH command failed with exit code {ExitCode}: {Command}. Error: {Error}",
-                        commandResult.ExitCode, command, commandResult.Error);
+                    _logger.LogWarning("{Kind} failed with exit code {ExitCode}: {Command}. Error: {Error}",
+                        kind, commandResult.ExitCode, command, commandResult.Error);
                 }
 
                 return commandResult;
             }
-            catch (OperationCanceledException)
+            catch (OperationCanceledException) when (cts.IsCancellationRequested)
             {
-                _logger.LogError("Streamed SSH command timed out after {Timeout}: {Command}", timeout, command);
-                return SshCommandResult.Failed(command, -1, SnapshotOutput(output), $"Command timed out after {timeout}");
+                var reason = _lifetime.IsCancellationRequested
+                    ? "was cancelled because the SSH service was disposed while it was running"
+                    : $"timed out after {timeout.TotalSeconds:0.###} seconds";
+                _logger.LogError("{Kind} {Reason}: {Command}", kind, reason, command);
+                return SshCommandResult.Failed(command, -1, output != null ? SnapshotOutput(output) : string.Empty, $"Command {reason}");
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Failed to execute streamed SSH command: {Command}", command);
-                return SshCommandResult.Failed(command, -1, SnapshotOutput(output), ex.Message);
+                _logger.LogError(ex, "Failed to execute {Kind}: {Command}", kind, command);
+                return SshCommandResult.Failed(command, -1, output != null ? SnapshotOutput(output) : string.Empty, ex.Message);
             }
+            finally
+            {
+                sshCommand?.Dispose();
+            }
+        }
+
+        /// <summary>
+        /// Gives a cancelled command <see cref="CancelGrace"/> to finish, and observes its outcome so it cannot surface later.
+        /// </summary>
+        private async Task SettleAsync(Task execution, string command)
+        {
+            if (await Task.WhenAny(execution, Task.Delay(CancelGrace)) != execution)
+            {
+                _logger.LogWarning("SSH command did not stop within {Grace} after cancellation: {Command}", CancelGrace, command);
+            }
+
+            _ = execution.ContinueWith(static t => _ = t.Exception, CancellationToken.None,
+                TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
         }
 
         private static string SnapshotOutput(StringBuilder output)
@@ -193,7 +272,7 @@ namespace ModelingEvolution.AutoUpdater.Services
                 _logger.LogDebug("Reading file via SCP: {FilePath}", filePath);
                 
                 using var memoryStream = new MemoryStream();
-                await Task.Run(() => _scpClient.Download(filePath, memoryStream));
+                await Task.Run(() => Scp.Download(filePath, memoryStream));
                 
                 memoryStream.Position = 0;
                 using var reader = new StreamReader(memoryStream);
@@ -228,7 +307,7 @@ namespace ModelingEvolution.AutoUpdater.Services
                 if (canWriteDirectly)
                 {
                     // Direct write using SCP
-                    await Task.Run(() => _scpClient.Upload(memoryStream, filePath));
+                    await Task.Run(() => Scp.Upload(memoryStream, filePath));
                     _logger.LogDebug("Successfully wrote file directly: {FilePath}", filePath);
                 }
                 else
@@ -239,12 +318,12 @@ namespace ModelingEvolution.AutoUpdater.Services
                     try
                     {
                         // Upload to temp location
-                        await Task.Run(() => _scpClient.Upload(memoryStream, tempFilePath));
+                        await Task.Run(() => Scp.Upload(memoryStream, tempFilePath));
                         
                         // Get original file permissions and ownership if file exists
                         string? originalPermissions = null;
                         string? originalOwnership = null;
-                        if (await _sftpClient.ExistsAsync(filePath))
+                        if (await Sftp.ExistsAsync(filePath))
                         {
                             var statResult = await ExecuteCommandAsync($"stat -c '%a:%U:%G' {filePath}");
                             if (statResult.IsSuccess)
@@ -303,7 +382,7 @@ namespace ModelingEvolution.AutoUpdater.Services
                 }
                 
                 // If file exists, check if it's writable
-                if (_sftpClient.Exists(filePath))
+                if (Sftp.Exists(filePath))
                 {
                     var result = await ExecuteCommandAsync($"test -w {filePath}");
                     return result.IsSuccess;
@@ -373,7 +452,7 @@ namespace ModelingEvolution.AutoUpdater.Services
                 if (string.IsNullOrWhiteSpace(pattern))
                     throw new ArgumentException("Pattern cannot be null or empty.", nameof(pattern));
 
-                var files = _sftpClient.ListDirectory(path)
+                var files = Sftp.ListDirectory(path)
                     .Where(file => file.IsRegularFile && file.Name.Like(pattern))
                     .Select(file => file.FullName)
                     .ToArray();
@@ -406,14 +485,40 @@ namespace ModelingEvolution.AutoUpdater.Services
             }
         }
 
+        /// <summary>
+        /// Cancels every command still running, waits (bounded by <see cref="DisposeDrainTimeout"/>) for them to finish, and only
+        /// then releases the connections - a connection is never torn down under a running command (bug-019).
+        /// </summary>
         public void Dispose()
         {
-            if (_disposed) return;
-            
-            _sshClient?.Dispose();
-            _scpClient?.Dispose();
-            _sftpClient?.Dispose();
-            _disposed = true;
+            Task[] pending;
+            lock (_gate)
+            {
+                if (_disposed) return;
+                _disposed = true;
+                pending = _inFlight.ToArray();
+            }
+
+            if (pending.Length > 0)
+            {
+                _logger.LogWarning("SSH service disposed with {Count} command(s) still running; cancelling them", pending.Length);
+            }
+
+            try
+            {
+                _lifetime.Cancel();
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Cancelling running SSH commands failed");
+            }
+
+            if (pending.Length > 0 && !Task.WhenAll(pending).Wait(DisposeDrainTimeout))
+            {
+                _logger.LogWarning("SSH commands still running {Drain} after cancellation; releasing the connections anyway", DisposeDrainTimeout);
+            }
+
+            _disposeClients();
         }
     }
 }
