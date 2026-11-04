@@ -126,7 +126,7 @@ public class UpdateHost : IHostedService
             _sshConfig.SshEnableCompression = _config?.SshEnableCompression() ?? true;
 
             // Initialize host address from configuration with fallback
-            _hostAddress = _config?.SshHost() ?? _config?.GetValue<string>("HostAddress") ?? "172.17.0.1";
+            _hostAddress = _config?.DockerHostAddress() ?? Extensions.ConfigurationExtensions.DefaultDockerHost;
 
 
 
@@ -169,7 +169,7 @@ public class UpdateHost : IHostedService
     {
         return Task.CompletedTask;
     }
-    private string _hostAddress = "172.17.0.1";
+    private string _hostAddress = Extensions.ConfigurationExtensions.DefaultDockerHost;
 
 
     /// <summary>

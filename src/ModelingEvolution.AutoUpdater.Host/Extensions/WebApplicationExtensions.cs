@@ -1,4 +1,5 @@
 using ModelingEvolution.AutoUpdater.Host.Api.AutoUpdater;
+using ModelingEvolution.AutoUpdater.Host.Api.Apps;
 using ModelingEvolution.AutoUpdater.Host.Api.Backup;
 
 namespace ModelingEvolution.AutoUpdater.Host.Extensions;
@@ -23,6 +24,7 @@ public static class WebApplicationExtensions
     {
         app.MapAutoUpdaterEndpoints();
         app.MapBackupEndpoints();
+        app.MapAppsEndpoints();
 
         app.MapRazorComponents<Components.App>()
             .AddInteractiveServerRenderMode();

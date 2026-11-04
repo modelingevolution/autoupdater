@@ -1,0 +1,42 @@
+name: rocketwelder-apps
+
+# Deploy package for the RocketWelder apps image (players for Windows, Linux and Android).
+# AutoUpdater pulls the pinned image and runs it; this file never builds.
+# `up -d`:  docker compose -f docker-compose.yml -f docker-compose.x64.yml up -d    # x86_64
+#           docker compose -f docker-compose.yml -f docker-compose.arm64.yml up -d  # ARM64
+
+services:
+  rocketwelder-apps:
+    image: docker.modelingevolution.com/rocketwelder/rocketwelder-apps:0.0.0
+    container_name: rocketwelder-apps
+    restart: unless-stopped
+
+    # Serves static files as an unprivileged user; only the verification state is written, to /tmp.
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+
+    # Not on the LAN: browsers download through the AutoUpdater (/apps/files/<name>), which reaches this port the way it
+    # reaches the host over SSH, at the Docker bridge's gateway address (its SshHost / HostAddress, 172.17.0.1 unless the
+    # station's docker0 has another address; then set APPS_BIND_ADDRESS to it). Binding there keeps the port off every
+    # other interface. 127.0.0.1 would not do: the AutoUpdater runs in a container and cannot reach the host's loopback.
+    ports:
+      - "${APPS_BIND_ADDRESS:-172.17.0.1}:${APPS_PORT:-8095}:8080"
+
+    # start_period: the container hashes every file before it starts serving.
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:8080/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
+
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "1m"
+        max-file: "3"

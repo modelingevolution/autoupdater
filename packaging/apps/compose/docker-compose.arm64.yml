@@ -1,0 +1,6 @@
+# ARM64 override, selected by AutoUpdater on `uname -m` = aarch64. Pulls the multi-arch image; never builds.
+
+services:
+  rocketwelder-apps:
+    image: docker.modelingevolution.com/rocketwelder/rocketwelder-apps:0.0.0
+    platform: linux/arm64
