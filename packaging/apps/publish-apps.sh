@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
-# Publishes the RocketWelder apps image from a laptop: one command, no CI.
+# Publishes the RocketWelder Player builds to stations, from a laptop: one command, no CI. This is the upload path for the
+# Windows installer (a WiX .msi), which is built on the owner's laptop, and for the Android preview APK and the Linux .deb.
 #
 #   docker login docker.modelingevolution.com        # once; this script never takes a credential
 #   ./publish-apps.sh --release 1.2.0 \
-#       --windows dist/RocketWelderClient-Setup.exe --windows-version 2.1.0 \
-#       --android dist/native-player-kiosk-2.1.0-arm64-v8a.apk --android-version 2.1.0 \
+#       --windows dist/RocketWelderPlayer-2.1.0.msi --windows-version 2.1.0 \
+#       --android dist/RocketWelderPlayer-2.1.0-arm64-v8a.apk --android-version 2.1.0 \
 #       --linux   dist/native-player_2.1.0_arm64.deb --linux-version 2.1.0
 #
 # It writes manifest.json (version, size, SHA-256) and SHA256SUMS, builds a multi-arch image with one
@@ -33,7 +34,7 @@ PLATFORM_NAMES=(windows linux android)
 die() { echo "ERROR: $*" >&2; exit 1; }
 
 usage() {
-    sed -n '2,13p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+    sed -n '2,14p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
     cat <<EOF
 
 Options:

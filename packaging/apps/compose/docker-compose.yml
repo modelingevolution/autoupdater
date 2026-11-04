@@ -20,9 +20,12 @@ services:
     cap_drop:
       - ALL
 
-    # On the LAN: a browser downloads straight from here. The AutoUpdater's Apps page reads the manifest here too.
+    # Not on the LAN: browsers download through the AutoUpdater (/apps/files/<name>), which reaches this port the way it
+    # reaches the host over SSH, at the Docker bridge's gateway address (its SshHost / HostAddress, 172.17.0.1 unless the
+    # station's docker0 has another address; then set APPS_BIND_ADDRESS to it). Binding there keeps the port off every
+    # other interface. 127.0.0.1 would not do: the AutoUpdater runs in a container and cannot reach the host's loopback.
     ports:
-      - "${APPS_PORT:-8095}:8080"
+      - "${APPS_BIND_ADDRESS:-172.17.0.1}:${APPS_PORT:-8095}:8080"
 
     # start_period: the container hashes every file before it starts serving.
     healthcheck:

@@ -286,11 +286,33 @@ public class AppsOptionsTests
     }
 
     [Theory]
-    [InlineData("http://station.local:8080/apps", "http://station.local:8095/files/a.apk")]
-    [InlineData("https://10.1.2.3/", "http://10.1.2.3:8095/files/a.apk")]
-    public void DownloadUrl_UsesTheHostThePersonReachedThePageOn(string page, string expected)
+    [InlineData("http://station.local:8080/apps", "http://station.local:8080/apps/files/RocketWelderPlayer-2.1.0.msi")]
+    [InlineData("https://station.local/", "https://station.local/apps/files/RocketWelderPlayer-2.1.0.msi")]
+    public void DownloadPath_IsOnThePagesOwnOrigin(string page, string expected)
     {
-        AppsOptions.From(Config()).DownloadUrl(new Uri(page), "a.apk").Should().Be(expected);
+        // Relative, so the browser keeps the scheme, host and port it opened the page on (Blazor's base href is "/").
+        var path = AppsOptions.DownloadPath("RocketWelderPlayer-2.1.0.msi");
+
+        path.Should().NotStartWith("/").And.NotContain("://");
+        new Uri(new Uri(new Uri(page).GetLeftPart(UriPartial.Authority) + "/"), path).AbsoluteUri.Should().Be(expected);
+    }
+
+    [Fact]
+    public void FileUrl_IsUnderTheContainersFilesPath()
+    {
+        AppsOptions.From(Config()).FileUrl("a.apk").Should().Be(new Uri("http://172.17.0.1:8095/files/a.apk"));
+    }
+
+    [Theory]
+    [InlineData("RocketWelderPlayer-2.1.0.msi", true)]
+    [InlineData("a.exe\n", false)]
+    [InlineData("..", false)]
+    [InlineData("a%2Fb", false)]
+    [InlineData("", false)]
+    [InlineData(null, false)]
+    public void IsSafeFileName_OnlyAPlainName(string? name, bool safe)
+    {
+        AppsManifest.IsSafeFileName(name).Should().Be(safe);
     }
 }
 
@@ -381,6 +403,27 @@ public class AppGuidesTests
 
         windows.Note.Should().Contain("SmartScreen");
         windows.Steps.Should().Contain(s => s.Text.Contains("More info") && s.Text.Contains("Run anyway"));
+    }
+
+    [Fact]
+    public void Names_AreRocketWelderPlayer_KioskOnlyForTheLinuxDevices()
+    {
+        AppGuides.All.Should().OnlyContain(g => g.DisplayName.StartsWith("RocketWelder Player"));
+        AppGuides.All.Single(g => g.Platform == AppGuides.Linux).DisplayName.Should().Be("RocketWelder Player (kiosk devices)");
+
+        var otherText = string.Join(" ", AppGuides.All.Where(g => g.Platform != AppGuides.Linux)
+            .SelectMany(g => new[] { g.DisplayName, g.Requirements, g.Warning, g.Note }.Concat(g.Steps.Select(s => s.Text))));
+        otherText.Should().NotContainEquivalentOf("kiosk").And.NotContainEquivalentOf("RocketWelder Client");
+    }
+
+    [Fact]
+    public void Windows_IsAnMsi_AndItsInstallStepsStayUnverifiedUntilARealRun()
+    {
+        var windows = AppGuides.All.Single(g => g.Platform == AppGuides.Windows);
+
+        windows.Steps[0].Text.Should().Contain("RocketWelderPlayer-<version>.msi").And.Contain("double-click");
+        windows.Steps.Should().Contain(s => s.Text.Contains("current user") && s.Text.Contains("without administrator rights"));
+        windows.Steps.Where(s => !s.Text.Contains("Neuron address")).Should().OnlyContain(s => s.Unverified);
     }
 
     [Fact]

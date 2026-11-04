@@ -8,7 +8,6 @@
 @inject AppsCatalogClient CatalogClient
 @inject PackageStateReadModel ReadModel
 @inject IProgressService Progress
-@inject NavigationManager Navigation
 @inject ILogger<Apps> Logger
 
 <PageTitle>Apps</PageTitle>
@@ -92,7 +91,7 @@ else
                 <MudStack Row="true" Class="mt-3">
                     <MudButton Variant="Variant.Filled" Color="Color.Primary" Size="Size.Large"
                                StartIcon="@Icons.Material.Filled.Download"
-                               Href="@CatalogClient.Options.DownloadUrl(new Uri(Navigation.BaseUri), row.File!.FileName)"
+                               Href="@AppsOptions.DownloadPath(row.File!.FileName)"
                                data-testid="app-download">Download</MudButton>
                 </MudStack>
             }

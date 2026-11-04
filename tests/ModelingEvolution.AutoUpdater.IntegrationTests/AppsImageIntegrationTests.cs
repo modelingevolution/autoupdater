@@ -20,8 +20,8 @@ namespace ModelingEvolution.AutoUpdater.IntegrationTests;
 public sealed class AppsImageFixture : IAsyncLifetime
 {
     private const int ContainerPort = 8080;
-    public const string WindowsFile = "RocketWelderClient-Setup.exe";
-    public const string AndroidFile = "native-player-kiosk-1.0.0-arm64-v8a.apk";
+    public const string WindowsFile = "RocketWelderPlayer-1.0.0.msi";
+    public const string AndroidFile = "RocketWelderPlayer-1.0.0-arm64-v8a.apk";
     public const string LinuxFile = "native-player_1.0.0_arm64.deb";
 
     private readonly string _workDir = Directory.CreateTempSubdirectory("apps-image-").FullName;
@@ -149,6 +149,15 @@ public sealed class AppsImageFixture : IAsyncLifetime
     }
 }
 
+/// <summary>Runs only on Linux, where Docker Engine can publish a port on the bridge gateway address.</summary>
+public sealed class LinuxDockerEngineFactAttribute : FactAttribute
+{
+    public LinuxDockerEngineFactAttribute()
+    {
+        if (!OperatingSystem.IsLinux()) Skip = "Needs Docker Engine on Linux (Docker Desktop cannot bind a port to 172.17.0.1); runs in CI.";
+    }
+}
+
 public sealed class AppsImageIntegrationTests(AppsImageFixture image) : IClassFixture<AppsImageFixture>
 {
     private static string Hash(byte[] bytes) => Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant();
@@ -192,7 +201,7 @@ public sealed class AppsImageIntegrationTests(AppsImageFixture image) : IClassFi
     }
 
     [Theory]
-    [InlineData(AppsImageFixture.WindowsFile, "application/octet-stream")]
+    [InlineData(AppsImageFixture.WindowsFile, "application/x-msi")]
     [InlineData(AppsImageFixture.AndroidFile, "application/vnd.android.package-archive")]
     [InlineData(AppsImageFixture.LinuxFile, "application/vnd.debian.binary-package")]
     public async Task Download_IsAnAttachmentUnderItsOwnName(string file, string contentType)
@@ -408,8 +417,8 @@ public sealed class AppsImageIntegrationTests(AppsImageFixture image) : IClassFi
     [Fact]
     public async Task BlockedFile_PercentEncoded_Is503()
     {
-        // %6E is "n".
-        var response = await RawRequest(image.TamperedPort, "GET", $"/files/%6E{AppsImageFixture.AndroidFile[1..]}");
+        // %52 is "R", the first letter of the Android file's name.
+        var response = await RawRequest(image.TamperedPort, "GET", $"/files/%52{AppsImageFixture.AndroidFile[1..]}");
 
         StatusOf(response).Should().Be(503);
     }
@@ -660,6 +669,48 @@ public sealed class AppsImageIntegrationTests(AppsImageFixture image) : IClassFi
         exitCode.Should().Be(0, output);
         config.Should().Be("user = \"robot$rocketwelder+pull:a\\\"b\\\\c\"\n");
         output.Should().NotContain("a\"b\\c");
+    }
+
+    /// <summary>
+    /// The compose package as a station runs it: the port is bound to the Docker bridge's gateway, reachable from a container
+    /// on another bridge network (where the AutoUpdater runs) and from nowhere else. Needs Docker Engine on Linux: Docker
+    /// Desktop cannot bind a host port to that address.
+    /// </summary>
+    [LinuxDockerEngineFact]
+    public async Task ComposePort_IsOnTheBridgeGateway_ReachableFromAContainer_NotFromTheLan()
+    {
+        var project = $"apps-bind-{Guid.NewGuid():N}"[..20];
+        var port = 18000 + Random.Shared.Next(1000);
+        var dir = Directory.CreateTempSubdirectory("apps-compose-");
+        var compose = Path.Combine(AppsImageFixture.PackagingDirectory, "compose", "docker-compose.yml");
+        await File.WriteAllTextAsync(Path.Combine(dir.FullName, "override.yml"),
+            $"services:\n  rocketwelder-apps:\n    image: {image.Tag}\n    container_name: {project}\n");
+        Command Compose(params string[] args) => Cli.Wrap("docker")
+            .WithArguments(new[] { "compose", "-p", project, "-f", compose, "-f", Path.Combine(dir.FullName, "override.yml") }.Concat(args))
+            .WithEnvironmentVariables(e => e.Set("APPS_PORT", port.ToString()));
+        try
+        {
+            await Compose("up", "-d", "--wait").ExecuteBufferedAsync();
+            var published = await Cli.Wrap("docker").WithArguments(["port", project, "8080"]).ExecuteBufferedAsync();
+            await Cli.Wrap("docker").WithArguments(["network", "create", project]).ExecuteBufferedAsync();
+            var fromContainer = await Cli.Wrap("docker")
+                .WithArguments(["run", "--rm", "--network", project, "--entrypoint", "wget", image.Tag, "-qO-", "-T", "5", $"http://172.17.0.1:{port}/health"])
+                .WithValidation(CommandResultValidation.None).ExecuteBufferedAsync();
+            var lanAddress = (await Cli.Wrap("hostname").WithArguments(["-I"]).ExecuteBufferedAsync()).StandardOutput
+                .Split(' ', StringSplitOptions.RemoveEmptyEntries).First(a => !a.StartsWith("172.17."));
+            using var lan = new HttpClient { Timeout = TimeSpan.FromSeconds(5) };
+            var fromLan = async () => await lan.GetAsync($"http://{lanAddress}:{port}/health");
+
+            published.StandardOutput.Trim().Should().Be($"172.17.0.1:{port}");
+            fromContainer.StandardOutput.Should().Be("ok\n", fromContainer.StandardError);
+            await fromLan.Should().ThrowAsync<HttpRequestException>();
+        }
+        finally
+        {
+            await Compose("down", "-v").WithValidation(CommandResultValidation.None).ExecuteBufferedAsync();
+            await Cli.Wrap("docker").WithArguments(["network", "rm", project]).WithValidation(CommandResultValidation.None).ExecuteBufferedAsync();
+            dir.Delete(recursive: true);
+        }
     }
 
     [Fact]

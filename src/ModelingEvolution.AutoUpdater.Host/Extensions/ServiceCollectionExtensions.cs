@@ -26,6 +26,7 @@ public static class ServiceCollectionExtensions
 
         // The Apps page's reader of the apps container. Nothing else depends on it.
         services.AddSingleton<ModelingEvolution.AutoUpdater.Apps.AppsCatalogClient>();
+        services.AddSingleton<Api.Apps.AppsFileProxy>();
 
         // Register SSH VPN service using extension methods
         services.AddSingleton<ISshVpnService>(provider =>

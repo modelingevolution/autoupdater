@@ -26,7 +26,8 @@ public sealed record AppsCatalog(bool Reachable, string? Release, ImmutableArray
 /// </summary>
 public static partial class AppsManifest
 {
-    [GeneratedRegex(@"^[A-Za-z0-9][A-Za-z0-9._+~-]{0,127}$")]
+    // \z, not $: $ also matches before a final line break, so "a.exe\n" would pass.
+    [GeneratedRegex(@"^[A-Za-z0-9][A-Za-z0-9._+~-]{0,127}\z")]
     private static partial Regex FileNamePattern();
 
     [GeneratedRegex(@"^[0-9A-Za-z][0-9A-Za-z.+~_-]{0,63}$")]
@@ -34,6 +35,9 @@ public static partial class AppsManifest
 
     [GeneratedRegex(@"^[0-9a-f]{64}$")]
     private static partial Regex Sha256Pattern();
+
+    /// <summary>One plain file name: the rule publish-apps.sh, nginx and the AutoUpdater's file proxy all apply.</summary>
+    public static bool IsSafeFileName(string? name) => name != null && FileNamePattern().IsMatch(name);
 
     public static AppsCatalog Parse(string? manifestJson, string? verificationJson)
     {
