@@ -258,9 +258,14 @@ cat "$STAGE/manifest.json"
 [ "$DRY_RUN" = false ] || exit 0
 
 cd "$STAGE"
-if ! docker buildx inspect "$BUILDER" > /dev/null 2>&1; then
-    docker buildx create --name "$BUILDER" --driver docker-container > /dev/null
-fi
+# Another run may be creating or starting the same builder at this moment: whichever create wins, all of them use it.
+builder_ready=false
+for _ in 1 2 3 4 5; do
+    if docker buildx inspect --bootstrap "$BUILDER" > /dev/null 2>&1; then builder_ready=true; break; fi
+    docker buildx create --name "$BUILDER" --driver docker-container > /dev/null 2>&1 || sleep 2
+done
+[ "$builder_ready" = true ] || docker buildx inspect --bootstrap "$BUILDER" > /dev/null \
+    || die "could not start the buildx builder $BUILDER (above)"
 # A COPY --link layer also holds its parent directories, stamped with the build time. With rewrite-timestamp every mtime
 # later than SOURCE_DATE_EPOCH is clamped to it, so a file's layer depends only on the file: when one app changes, the
 # layers of the others stay the same and stations do not download them again. The files' own mtimes (from their hash,
