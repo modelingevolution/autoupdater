@@ -83,12 +83,20 @@ public sealed record AppsSettings(AppsOptions? Options, string? Error)
 public sealed class AppsCatalogClient
 {
     private const int MaxManifestBytes = 64 * 1024;
+    private const int InitialBufferBytes = 16 * 1024;
+
+    /// <summary>
+    /// Connections to the image for manifest, guide and icon reads, for all pages and endpoints together; more requests wait
+    /// for one. With the file proxy's cap this keeps the AutoUpdater far below nginx's 256 connections.
+    /// </summary>
+    public const int MaxConnections = 8;
+
     private static readonly TimeSpan Timeout = TimeSpan.FromSeconds(3);
 
     private readonly HttpClient _http;
     private readonly AppsOptions _options;
 
-    public AppsCatalogClient(AppsOptions options) : this(CreateHttpClient(), options)
+    public AppsCatalogClient(AppsOptions options) : this(CreateHttpClient(MaxConnections), options)
     {
     }
 
@@ -108,9 +116,11 @@ public sealed class AppsCatalogClient
     /// 5 s, and every caller limits its own wait. The catalog and the file proxy each make their own, so busy downloads
     /// never hold up a catalog read.
     /// </summary>
-    public static HttpClient CreateHttpClient() =>
+    /// <param name="maxConnections">Connections to the image at once; a request beyond them waits for one.</param>
+    public static HttpClient CreateHttpClient(int maxConnections) =>
         new(new SocketsHttpHandler
         {
+            MaxConnectionsPerServer = maxConnections,
             AllowAutoRedirect = false,
             UseProxy = false,
             ConnectTimeout = TimeSpan.FromSeconds(5),
@@ -127,12 +137,12 @@ public sealed class AppsCatalogClient
         return manifest == null ? AppsCatalog.Unreachable : AppsManifest.Parse(System.Text.Encoding.UTF8.GetString(manifest));
     }
 
-    /// <summary>Reads one guide (<c>guides/&lt;name&gt;</c>): its markdown, or null when it cannot be read or is not acceptable.</summary>
-    public async Task<string?> GetGuideAsync(string name, CancellationToken cancellationToken = default)
+    /// <summary>Reads one guide (<c>guides/&lt;name&gt;</c>), parsed: null when it cannot be read or is not acceptable.</summary>
+    public async Task<AppGuide?> GetGuideAsync(string name, CancellationToken cancellationToken = default)
     {
         if (!AppsManifest.IsGuideName(name)) return null;
         var bytes = await ReadAsync("guides/" + Uri.EscapeDataString(name), AppGuideMarkdown.MaxBytes, cancellationToken);
-        // On the thread pool: the trial parse must not hold up the caller's context (a Blazor circuit).
+        // On the thread pool: the parse must not hold up the caller's context (a Blazor circuit).
         return bytes == null ? null : await Task.Run(() => AppGuideMarkdown.Decode(bytes), cancellationToken);
     }
 
@@ -157,16 +167,27 @@ public sealed class AppsCatalogClient
             using var response = await _http.GetAsync(new Uri(_options.SourceUrl, relative), HttpCompletionOption.ResponseHeadersRead, timeout.Token);
             if (!response.IsSuccessStatusCode) return null;
 
+            var declared = response.Content.Headers.ContentLength;
+            if (declared > maxBytes) return null;
+
+            // Sized to the body (one byte more, to see one that runs past what it declared), growing only up to the cap.
             await using var stream = await response.Content.ReadAsStreamAsync(timeout.Token);
-            var buffer = new byte[maxBytes + 1];
+            var buffer = new byte[(int)Math.Min(maxBytes, declared ?? InitialBufferBytes) + 1];
             var length = 0;
-            int read;
-            while (length < buffer.Length && (read = await stream.ReadAsync(buffer.AsMemory(length), timeout.Token)) > 0)
+            while (true)
             {
+                if (length == buffer.Length)
+                {
+                    if (length > maxBytes) return null;
+                    Array.Resize(ref buffer, Math.Min(maxBytes + 1, buffer.Length * 2));
+                }
+
+                var read = await stream.ReadAsync(buffer.AsMemory(length), timeout.Token);
+                if (read == 0) break;
                 length += read;
             }
 
-            return length > maxBytes ? null : buffer[..length];
+            return buffer[..length];
         }
         catch (Exception ex) when (ex is HttpRequestException or OperationCanceledException or IOException or InvalidOperationException)
         {

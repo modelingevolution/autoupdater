@@ -75,6 +75,8 @@ public sealed class FakeAppsContainer : IAsyncDisposable
     public string? IconName { get; init; }
     /// <summary>What <c>/icons/{name}</c> answers, for any name; 404 when null.</summary>
     public byte[]? IconBytes { get; init; }
+    /// <summary>Awaited before <c>/icons/{name}</c> answers, if set: lets a test hold icon reads in flight.</summary>
+    public Func<Task>? BeforeIcon { get; init; }
     public Uri BaseAddress => _server.BaseAddress;
     public int FileRequests => Requests.Count(p => p.StartsWith("/files/"));
     public int IconRequests => Requests.Count(p => p.StartsWith("/icons/"));
@@ -94,7 +96,11 @@ public sealed class FakeAppsContainer : IAsyncDisposable
             });
             app.MapGet("/manifest.json", () => Results.Text(manifest, "application/json"));
             app.MapMethods("/files/{name}", [HttpMethods.Get, HttpMethods.Head], (HttpContext context, string name) => Serve(context, name));
-            app.MapGet("/icons/{name}", () => IconBytes == null ? Results.NotFound() : Results.Bytes(IconBytes, "image/png"));
+            app.MapGet("/icons/{name}", async () =>
+            {
+                if (BeforeIcon != null) await BeforeIcon();
+                return IconBytes == null ? Results.NotFound() : Results.Bytes(IconBytes, "image/png");
+            });
         });
         return this;
     }

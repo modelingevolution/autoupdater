@@ -239,7 +239,7 @@ public sealed class AppsImageIntegrationTests(AppsImageFixture image) : IClassFi
     [Fact]
     public async Task Guide_ThroughTheClient_IsTheMarkdown()
     {
-        (await Client().GetGuideAsync("linux.md")).Should().Be(await File.ReadAllTextAsync(AppsImageFixture.Guide("linux.md")));
+        (await Client().GetGuideAsync("linux.md"))!.Text.Should().Be(await File.ReadAllTextAsync(AppsImageFixture.Guide("linux.md")));
     }
 
     [Theory]
@@ -564,6 +564,8 @@ public sealed class AppsImageIntegrationTests(AppsImageFixture image) : IClassFi
             { ["--app", "viewer", "--name", "x", "--download", "--arch", "x64"], "--platform must be one of" },
             { ["--app", "viewer", "--name", "x", .. download, "--label", new string('x', 41)], "longer than 40" },
             { ["--app", "viewer", "--name", "x", .. download, .. download], "same platform, architecture and label" },
+            { ["--app", "viewer", "--name", "x", .. download, "--label", "Kiosk", .. download, "--label", "kiosk"], "same platform, architecture and label" },
+            { ["--app", "viewer", "--name", "x", .. download, "--label", "Kiosk devices", .. download, "--label", " KIOSK devices  "], "same platform, architecture and label" },
             { ["--app", "viewer", "--name", "x", .. Enumerable.Range(0, 9).SelectMany(i => download.Append("--label").Append($"v{i}"))], "at most 8 downloads" },
             { ["--app", "viewer", "--name", "x", .. download, "--version", "1.0.0"], "--version given without --file" },
             { ["--app", "viewer", "--name", "x", .. download, "--file", file], "--version is missing" },

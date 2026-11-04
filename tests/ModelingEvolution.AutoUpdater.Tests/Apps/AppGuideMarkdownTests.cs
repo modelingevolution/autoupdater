@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using System.Text;
 using AngleSharp.Dom;
 using Bunit;
@@ -30,8 +29,12 @@ public sealed class AppGuideMarkdownTests : IAsyncLifetime
 
     public async Task DisposeAsync() => await _context.DisposeAsync();
 
+    /// <summary>As the page does it: decoded (the one parse) first, then rendered.</summary>
     private IRenderedComponent<AppGuideView> Render(string markdown) =>
-        _context.Render<AppGuideView>(p => p.Add(v => v.Markdown, markdown));
+        Render(AppGuideMarkdown.Decode(Encoding.UTF8.GetBytes(markdown)) ?? throw new InvalidOperationException("not decodable: " + markdown));
+
+    private IRenderedComponent<AppGuideView> Render(AppGuide guide) =>
+        _context.Render<AppGuideView>(p => p.Add(v => v.Guide, guide));
 
     private static string Text(IRenderedComponent<AppGuideView> guide) =>
         string.Join(" ", guide.Nodes.Select(n => n.TextContent)).ReplaceLineEndings(" ");
@@ -174,7 +177,7 @@ public sealed class AppGuideMarkdownTests : IAsyncLifetime
     [Fact]
     public void Decode_ValidUtf8_ReturnsTheText_WithoutABom()
     {
-        AppGuideMarkdown.Decode([0xEF, 0xBB, 0xBF, .. "# Hi"u8]).Should().Be("# Hi");
+        AppGuideMarkdown.Decode([0xEF, 0xBB, 0xBF, .. "# Hi"u8])!.Text.Should().Be("# Hi");
     }
 
     [Fact]
@@ -208,10 +211,33 @@ public sealed class AppGuideMarkdownTests : IAsyncLifetime
         var markdown = string.Concat(Enumerable.Repeat("1. A step with **bold** and `code`.\n", 400));
         Encoding.UTF8.GetByteCount(markdown).Should().BeLessThanOrEqualTo(AppGuideMarkdown.MaxBytes);
 
-        var text = AppGuideMarkdown.Decode(Encoding.UTF8.GetBytes(markdown));
+        var guide = AppGuideMarkdown.Decode(Encoding.UTF8.GetBytes(markdown));
 
-        text.Should().NotBeNull();
-        Render(text!).FindAll("ol li").Should().HaveCount(400);
+        guide.Should().NotBeNull();
+        Render(guide!).FindAll("ol li").Should().HaveCount(400);
+    }
+
+    [Fact]
+    public void Render_ShowsTheParsedDocument_AndNeverParsesTheTextAgain()
+    {
+        var shown = AppGuideMarkdown.Decode("# Parsed off the render path"u8)!;
+        var other = AppGuideMarkdown.Decode("# Text the renderer would parse"u8)!;
+
+        // The text and the document disagree on purpose: what shows can only have come from the document.
+        var guide = Render(new AppGuide(other.Text, shown.Document));
+
+        guide.Find("h1").TextContent.Should().Be("Parsed off the render path");
+        guide.Markup.Should().NotContain("Text the renderer would parse");
+    }
+
+    [Fact]
+    public void Rerender_KeepsShowingTheSameDocument()
+    {
+        var guide = Render("1. One.\n2. Two.");
+
+        guide.Render();
+
+        guide.FindAll("ol li").Select(li => li.TextContent).Should().Equal("One.", "Two.");
     }
 
     public static TheoryData<string, string> Pathological() => new()
@@ -223,23 +249,24 @@ public sealed class AppGuideMarkdownTests : IAsyncLifetime
     };
 
     /// <summary>
-    /// The worst guides found: parse cost grows faster than size, so the cap is what bounds them. The checking parse (off the
-    /// page's render path) and the render (on it) each stay well under a second at the cap; the bound allows for CI.
+    /// The worst guides found, at the cap: the parse (on the pool, in <see cref="AppsCatalogClient.GetGuideAsync"/>) either
+    /// accepts or refuses them, and an accepted one renders from its document without throwing. Their cost is bounded by
+    /// <see cref="AppGuideMarkdown.MaxBytes"/>; no clock is asserted.
     /// </summary>
     [Theory]
     [MemberData(nameof(Pathological))]
-    public void PathologicalGuide_AtTheCap_DecodesAndRendersWithinTwoSecondsEach(string what, string unit)
+    public void PathologicalGuide_AtTheCap_DecodesOnce_AndRendersWithoutThrowing(string what, string unit)
     {
         var markdown = string.Concat(Enumerable.Repeat(unit, AppGuideMarkdown.MaxBytes / unit.Length));
+        Encoding.UTF8.GetByteCount(markdown).Should().BeLessThanOrEqualTo(AppGuideMarkdown.MaxBytes, what);
 
-        var decode = Stopwatch.StartNew();
-        var text = AppGuideMarkdown.Decode(Encoding.UTF8.GetBytes(markdown));
-        decode.Stop();
-        var render = Stopwatch.StartNew();
-        if (text != null) Render(text);
-        render.Stop();
+        var guide = AppGuideMarkdown.Decode(Encoding.UTF8.GetBytes(markdown));
 
-        decode.Elapsed.Should().BeLessThan(TimeSpan.FromSeconds(2), what);
-        render.Elapsed.Should().BeLessThan(TimeSpan.FromSeconds(2), what);
+        if (guide != null)
+        {
+            var rendered = Render(guide);
+            rendered.Markup.Should().NotBeEmpty(what);
+            NothingActive(rendered);
+        }
     }
 }

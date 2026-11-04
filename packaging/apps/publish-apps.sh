@@ -181,7 +181,7 @@ for id in "${IDS[@]}"; do
         app_json+=",\"icon\":\"$iname\""
     fi
 
-    downloads_json="" count=0 keys=" "
+    downloads_json="" count=0 keys=$'\n'
     for i in "${!D_APP[@]}"; do
         [ "${D_APP[$i]}" = "$id" ] || continue
         count=$((count + 1))
@@ -194,9 +194,13 @@ for id in "${IDS[@]}"; do
             check_text "$what: --label" "$label" "$MAX_LABEL"
             d+=",\"label\":$(json_string "$label")"
         fi
-        key="$platform/$arch/$label"
-        case "$keys" in *" $key "*) die "$what: another download of this app has the same platform, architecture and label" ;; esac
-        keys+="$key "
+        # Trimmed and case-insensitive, as the AutoUpdater compares them: "Kiosk" and "kiosk " are the same download.
+        key="${label#"${label%%[![:space:]]*}"}"
+        key="$platform/$arch/${key%"${key##*[![:space:]]}"}"
+        key="${key,,}"
+        # One key per line: a label may hold spaces, never a newline (check_text above).
+        case "$keys" in *$'\n'"$key"$'\n'*) die "$what: another download of this app has the same platform, architecture and label" ;; esac
+        keys+="$key"$'\n'
         [ "${D_PREVIEW[$i]}" = false ] || d+=",\"preview\":true"
 
         path="${D_FILE[$i]}" version="${D_VERSION[$i]}"

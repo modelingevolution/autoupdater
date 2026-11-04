@@ -21,8 +21,9 @@ public sealed record AppsFileProxyLimits(int MaxConcurrentDownloads, TimeSpan He
 /// <remarks>
 /// Only a name listed in the image's manifest.json, read afresh for each request, is fetched; anything else is a 404 and
 /// the container is never asked for it. The container's answer is passed through as it is.
-/// Downloads use their own HTTP client and are capped (<see cref="AppsFileProxyLimits.MaxConcurrentDownloads"/>, far below
-/// nginx's 256 connections), so however many slow downloads are open, the Apps page's catalog reads still get through.
+/// Downloads use their own HTTP client and are capped (<see cref="AppsFileProxyLimits.MaxConcurrentDownloads"/>, 16); the
+/// catalog's reads have their own (<see cref="AppsCatalogClient.MaxConnections"/>, 8). Together that is far below nginx's
+/// 256 connections, however many browsers are open, so a catalog read always gets through.
 /// </remarks>
 public sealed class AppsFileProxy
 {
@@ -44,7 +45,7 @@ public sealed class AppsFileProxy
     private readonly AppsCatalogClient _catalog;
     private readonly ILogger<AppsFileProxy> _log;
     private readonly AppsFileProxyLimits _limits;
-    private readonly HttpClient _files = AppsCatalogClient.CreateHttpClient();
+    private readonly HttpClient _files;
     private readonly SemaphoreSlim _slots;
 
     public AppsFileProxy(AppsCatalogClient catalog, ILogger<AppsFileProxy> log, AppsFileProxyLimits? limits = null)
@@ -53,6 +54,7 @@ public sealed class AppsFileProxy
         _log = log;
         _limits = limits ?? AppsFileProxyLimits.Default;
         _slots = new SemaphoreSlim(_limits.MaxConcurrentDownloads, _limits.MaxConcurrentDownloads);
+        _files = AppsCatalogClient.CreateHttpClient(_limits.MaxConcurrentDownloads);
     }
 
     public async Task HandleAsync(HttpContext context, string name)
