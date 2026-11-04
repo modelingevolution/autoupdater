@@ -106,19 +106,12 @@ else
                 @* Each step carries its own number: a counter would be captured by the child-content lambdas and show its last value. *@
                 @foreach (var (step, number) in row.Guide.Steps.Select((s, i) => (s, i + 1)))
                 {
-                    <MudStack Row="true" Spacing="2" AlignItems="AlignItems.Start" data-testid="app-step">
+                    <MudStack Row="true" Spacing="2" AlignItems="AlignItems.Baseline" data-testid="app-step">
                         <MudText Typo="Typo.body2">@(number).</MudText>
-                        <MudText Typo="Typo.body2">
-                            @step.Text
-                            @if (step.Unverified)
-                            {
-                                <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Color="Color.Warning" data-testid="app-step-unverified">Unverified</MudChip>
-                            }
-                        </MudText>
+                        <MudText Typo="Typo.body2">@step.Text</MudText>
                     </MudStack>
                 }
             </MudStack>
-            <MudText Typo="Typo.caption" Class="mt-2">These steps are written from the product's source and have not all been run on a device yet.</MudText>
         </MudPaper>
     </ObservableForEach>
 </MudStack>
