@@ -382,9 +382,19 @@ public class AppIconTests
     }
 
     [Fact]
-    public void Path_IsRelativeToThePage()
+    public void Path_IsRelativeToThePage_AndCarriesTheVersion()
     {
-        AppIcon.Path("example-viewer.png").Should().Be("apps/icons/example-viewer.png");
+        AppIcon.Path("example-viewer.png", "0123abcd").Should().Be("apps/icons/example-viewer.png?v=0123abcd");
+    }
+
+    [Fact]
+    public void Version_IsAShortHashOfTheBytes_ThatChangesWithThem()
+    {
+        var version = AppIcon.Version([.. Signature, 1]);
+
+        version.Should().MatchRegex("^[0-9a-f]{16}$");
+        AppIcon.Version([.. Signature, 1]).Should().Be(version);
+        AppIcon.Version([.. Signature, 2]).Should().NotBe(version);
     }
 }
 
@@ -484,7 +494,7 @@ public class AppsCatalogClientTests
     {
         var (client, handler) = Client((_, _) => Task.FromResult(Ok("1. Install it.")));
 
-        (await client.GetGuideAsync("viewer.md")).Should().Be("1. Install it.");
+        (await client.GetGuideAsync("viewer.md"))!.Text.Should().Be("1. Install it.");
         handler.Paths.Should().Equal("/guides/viewer.md");
     }
 
@@ -494,6 +504,77 @@ public class AppsCatalogClientTests
         var (client, _) = Client((_, _) => Task.FromResult(Ok(Enumerable.Repeat((byte)'a', AppGuideMarkdown.MaxBytes + 1).ToArray())));
 
         (await client.GetGuideAsync("viewer.md")).Should().BeNull();
+    }
+
+    [Fact]
+    public async Task GetGuideAsync_DeclaredOverTheCap_IsUnavailable_WithoutReadingTheBody()
+    {
+        var body = new CountingStream(new MemoryStream(new byte[AppGuideMarkdown.MaxBytes + 1]));
+        var (client, _) = Client((_, _) =>
+        {
+            var content = new StreamContent(body);
+            content.Headers.ContentLength = AppGuideMarkdown.MaxBytes + 1;
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = content });
+        });
+
+        (await client.GetGuideAsync("viewer.md")).Should().BeNull();
+        body.BytesRead.Should().Be(0);
+    }
+
+    [Fact]
+    public async Task GetGuideAsync_BodyLongerThanDeclared_IsUnavailable()
+    {
+        var (client, _) = Client((_, _) =>
+        {
+            var content = new StreamContent(new MemoryStream(Enumerable.Repeat((byte)'a', AppGuideMarkdown.MaxBytes + 1).ToArray()));
+            content.Headers.ContentLength = 10;
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = content });
+        });
+
+        (await client.GetGuideAsync("viewer.md")).Should().BeNull();
+    }
+
+    [Fact]
+    public async Task GetGuideAsync_BodyOfUnknownLength_IsReadWhole()
+    {
+        var text = string.Concat(Enumerable.Repeat("1. Step.\n", 1500));
+        var (client, _) = Client((_, _) => Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StreamContent(new NonSeekableStream(Encoding.UTF8.GetBytes(text))),
+        }));
+
+        (await client.GetGuideAsync("viewer.md"))!.Text.Should().Be(text);
+    }
+
+    private sealed class CountingStream(Stream inner) : Stream
+    {
+        public long BytesRead { get; private set; }
+        public override bool CanRead => true;
+        public override bool CanSeek => false;
+        public override bool CanWrite => false;
+        public override long Length => throw new NotSupportedException();
+        public override long Position { get => throw new NotSupportedException(); set => throw new NotSupportedException(); }
+        public override void Flush() { }
+        public override int Read(byte[] buffer, int offset, int count) { var n = inner.Read(buffer, offset, count); BytesRead += n; return n; }
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+        public override void SetLength(long value) => throw new NotSupportedException();
+        public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+    }
+
+    /// <summary>A body with no known length, as a chunked response has.</summary>
+    private sealed class NonSeekableStream(byte[] bytes) : Stream
+    {
+        private readonly MemoryStream _inner = new(bytes);
+        public override bool CanRead => true;
+        public override bool CanSeek => false;
+        public override bool CanWrite => false;
+        public override long Length => throw new NotSupportedException();
+        public override long Position { get => throw new NotSupportedException(); set => throw new NotSupportedException(); }
+        public override void Flush() { }
+        public override int Read(byte[] buffer, int offset, int count) => _inner.Read(buffer, offset, Math.Min(count, 1000));
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+        public override void SetLength(long value) => throw new NotSupportedException();
+        public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
     }
 
     [Fact]
@@ -582,7 +663,7 @@ public class AppsCatalogClientTests
             catch (OperationCanceledException) { }
         });
 
-        var client = new AppsCatalogClient(AppsCatalogClient.CreateHttpClient(), new AppsOptions(new Uri($"http://127.0.0.1:{port}/")));
+        var client = new AppsCatalogClient(AppsCatalogClient.CreateHttpClient(AppsCatalogClient.MaxConnections), new AppsOptions(new Uri($"http://127.0.0.1:{port}/")));
 
         var catalog = await client.GetAsync();
         await stop.CancelAsync();
@@ -763,30 +844,32 @@ public class AppCardTests
     }
 
     [Fact]
-    public void SetGuide_NullIsUnavailable_TextIsLoaded()
+    public void SetGuide_NullIsUnavailable_AGuideIsLoaded()
     {
         var unavailable = new DownloadRow(WithFile);
         var loaded = new DownloadRow(WithFile);
+        var guide = AppGuideMarkdown.Decode("1. Install."u8)!;
 
         unavailable.SetGuide(null);
-        loaded.SetGuide("1. Install.");
+        loaded.SetGuide(guide);
 
         unavailable.Guide.Should().Be(LoadState.Unavailable);
         loaded.Guide.Should().Be(LoadState.Loaded);
-        loaded.GuideMarkdown.Should().Be("1. Install.");
+        loaded.GuideContent.Should().BeSameAs(guide);
     }
 
     [Fact]
-    public void SetIcon_FalseIsUnavailable_TrueIsLoaded()
+    public void SetIcon_NullIsUnavailable_AVersionIsLoaded()
     {
         var unavailable = new AppCard(Viewer, Deployed);
         var loaded = new AppCard(Viewer, Deployed);
 
-        unavailable.SetIcon(false);
-        loaded.SetIcon(true);
+        unavailable.SetIcon(null);
+        loaded.SetIcon("0123abcd");
 
         unavailable.Icon.Should().Be(LoadState.Unavailable);
         loaded.Icon.Should().Be(LoadState.Loaded);
+        loaded.IconVersion.Should().Be("0123abcd");
     }
 
     [Theory]

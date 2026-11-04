@@ -6,6 +6,22 @@ using Markdig.Syntax.Inlines;
 namespace ModelingEvolution.AutoUpdater.Apps;
 
 /// <summary>
+/// An install guide that passed <see cref="AppGuideMarkdown.Decode"/>: its text, and its document as parsed and cleaned up
+/// by <see cref="AppGuideMarkdown.Pipeline"/>. Only Decode makes one, so a document is never one the cleanup did not see.
+/// </summary>
+public sealed class AppGuide
+{
+    internal AppGuide(string text, MarkdownDocument document)
+    {
+        Text = text;
+        Document = document;
+    }
+
+    public string Text { get; }
+    public MarkdownDocument Document { get; }
+}
+
+/// <summary>
 /// The markdown rules for an app's install guide. The guide comes from the apps image, so it is untrusted: raw HTML is not
 /// parsed (it stays visible as text), every image is replaced by its alt text, and a link keeps its target only when that is
 /// http, https or relative; any other link (javascript:, data:, file:, protocol-relative //host, ...) is reduced to its text.
@@ -31,11 +47,11 @@ public static class AppGuideMarkdown
     }
 
     /// <summary>
-    /// The guide's text, or null when it is empty, too large, not valid UTF-8, or markdown that fails to parse (Markdig
-    /// throws past its nesting limit). Parsed once here, off the page's render path, so the renderer never meets a guide
-    /// that would throw.
+    /// The guide, parsed and cleaned up, or null when it is empty, too large, not valid UTF-8, or markdown that fails to
+    /// parse (Markdig throws past its nesting limit). This is the only parse: the caller runs it off the page's render path,
+    /// and the page renders <see cref="AppGuide.Document"/> as it is.
     /// </summary>
-    public static string? Decode(ReadOnlySpan<byte> bytes)
+    public static AppGuide? Decode(ReadOnlySpan<byte> bytes)
     {
         if (bytes.IsEmpty || bytes.Length > MaxBytes) return null;
         if (bytes.StartsWith((ReadOnlySpan<byte>)[0xEF, 0xBB, 0xBF])) bytes = bytes[3..];
@@ -52,8 +68,7 @@ public static class AppGuideMarkdown
         if (string.IsNullOrWhiteSpace(text)) return null;
         try
         {
-            Markdown.Parse(text, Pipeline);
-            return text;
+            return new AppGuide(text, Markdown.Parse(text, Pipeline));
         }
         catch (Exception)
         {

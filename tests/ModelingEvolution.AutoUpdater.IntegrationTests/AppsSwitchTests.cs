@@ -40,7 +40,8 @@ public sealed class AutoUpdaterWebApp : IAsyncDisposable
     public Uri BaseAddress { get; }
     public IServiceProvider Services => _app.Services;
 
-    public static async Task<AutoUpdaterWebApp> StartAsync(IDictionary<string, string?> configuration)
+    /// <param name="services">Registrations added last, so they win: e.g. smaller limits.</param>
+    public static async Task<AutoUpdaterWebApp> StartAsync(IDictionary<string, string?> configuration, Action<IServiceCollection>? services = null)
     {
         var builder = WebApplication.CreateBuilder(new WebApplicationOptions
         {
@@ -64,6 +65,7 @@ public sealed class AutoUpdaterWebApp : IAsyncDisposable
             .AddSingleton<DockerComposeConfigurationModel>()
             .AddSingleton<PackageStateReadModel>()
             .AddSingleton(Substitute.For<IProgressService>());
+        services?.Invoke(builder.Services);
 
         var app = builder.Build();
         app.ConfigurePipeline();
@@ -108,7 +110,7 @@ public sealed class AppsSwitchTests
         (await client.GetAsync("apps")).StatusCode.Should().Be(HttpStatusCode.NotFound);
         (await client.GetAsync("Apps/")).StatusCode.Should().Be(HttpStatusCode.NotFound);
         (await client.GetAsync(AppsOptions.DownloadPath("a.msi"))).StatusCode.Should().Be(HttpStatusCode.NotFound);
-        (await client.GetAsync(AppIcon.Path("viewer.png"))).StatusCode.Should().Be(HttpStatusCode.NotFound);
+        (await client.GetAsync("apps/icons/viewer.png")).StatusCode.Should().Be(HttpStatusCode.NotFound);
         web.Services.GetService<AppsCatalogClient>().Should().BeNull();
         web.Services.GetService<AppsFileProxy>().Should().BeNull();
     }
@@ -150,7 +152,8 @@ public sealed class AppsIconEndpointTests
 {
     private static readonly byte[] Png = [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0, 0, 0, 13, 0x49, 0x48, 0x44, 0x52];
 
-    private static async Task<(FakeAppsContainer Container, AutoUpdaterWebApp Web, HttpClient Client)> StartAsync(byte[]? icon)
+    private static async Task<(FakeAppsContainer Container, AutoUpdaterWebApp Web, HttpClient Client)> StartAsync(byte[]? icon,
+        Func<Task>? beforeIcon = null, AppIconLimits? limits = null)
     {
         var container = await new FakeAppsContainer
         {
@@ -158,12 +161,13 @@ public sealed class AppsIconEndpointTests
             Serve = (context, _) => context.Response.WriteAsync("x"),
             IconName = "viewer.png",
             IconBytes = icon,
+            BeforeIcon = beforeIcon,
         }.StartAsync();
         var web = await AutoUpdaterWebApp.StartAsync(new Dictionary<string, string?>
         {
             ["Apps:Enabled"] = "true",
             ["Apps:SourceUrl"] = container.BaseAddress.ToString(),
-        });
+        }, services => { if (limits != null) services.AddSingleton(new AppIconSlots(limits)); });
         return (container, web, new HttpClient { BaseAddress = web.BaseAddress });
     }
 
@@ -175,12 +179,92 @@ public sealed class AppsIconEndpointTests
         await using (web)
         using (client)
         {
-            using var response = await client.GetAsync(AppIcon.Path("viewer.png"));
+            using var response = await client.GetAsync("apps/icons/viewer.png");
 
             response.StatusCode.Should().Be(HttpStatusCode.OK);
             response.Content.Headers.ContentType!.MediaType.Should().Be("image/png");
             response.Headers.GetValues("X-Content-Type-Options").Should().Contain("nosniff");
             (await response.Content.ReadAsByteArrayAsync()).Should().Equal(Png);
+        }
+    }
+
+    [Fact]
+    public async Task WithItsVersion_TheBrowserMayKeepIt_WithoutOrStale_ItRevalidates()
+    {
+        var (container, web, client) = await StartAsync(Png);
+        await using (container)
+        await using (web)
+        using (client)
+        {
+            var version = AppIcon.Version(Png);
+
+            using var versioned = await client.GetAsync(AppIcon.Path("viewer.png", version));
+            using var stale = await client.GetAsync(AppIcon.Path("viewer.png", "0000000000000000"));
+            using var plain = await client.GetAsync("apps/icons/viewer.png");
+
+            versioned.Headers.CacheControl!.ToString().Should().Contain("immutable").And.Contain("max-age=31536000");
+            versioned.Headers.ETag!.Tag.Should().Be($"\"{version}\"");
+            stale.Headers.CacheControl!.NoCache.Should().BeTrue();
+            plain.Headers.CacheControl!.NoCache.Should().BeTrue();
+        }
+    }
+
+    [Fact]
+    public async Task IfNoneMatchWithItsETag_Is304_WithNoBody()
+    {
+        var (container, web, client) = await StartAsync(Png);
+        await using (container)
+        await using (web)
+        using (client)
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Get, "apps/icons/viewer.png");
+            request.Headers.TryAddWithoutValidation("If-None-Match", $"\"{AppIcon.Version(Png)}\"");
+
+            using var response = await client.SendAsync(request);
+
+            response.StatusCode.Should().Be(HttpStatusCode.NotModified);
+            (await response.Content.ReadAsByteArrayAsync()).Should().BeEmpty();
+        }
+    }
+
+    [Fact]
+    public async Task Head_IsAnsweredLikeGet_WithoutABody()
+    {
+        var (container, web, client) = await StartAsync(Png);
+        await using (container)
+        await using (web)
+        using (client)
+        {
+            using var response = await client.SendAsync(new HttpRequestMessage(HttpMethod.Head, "apps/icons/viewer.png"));
+
+            response.StatusCode.Should().Be(HttpStatusCode.OK);
+            response.Content.Headers.ContentType!.MediaType.Should().Be("image/png");
+        }
+    }
+
+    [Fact]
+    public async Task MoreRequestsThanSlots_WaitThenGet503_AndTheImageIsAskedOnlyBySlotHolders()
+    {
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var (container, web, client) = await StartAsync(Png, () => release.Task, new AppIconLimits(1, TimeSpan.FromMilliseconds(300)));
+        await using (container)
+        await using (web)
+        using (client)
+        {
+            var held = client.GetAsync("apps/icons/viewer.png");
+            // The first request holds the only slot once the image has been asked.
+            var deadline = DateTime.UtcNow.AddSeconds(10);
+            while (container.IconRequests == 0 && DateTime.UtcNow < deadline) await Task.Delay(10);
+            container.IconRequests.Should().Be(1, "the first request reached the image");
+
+            using var refused = await client.GetAsync("apps/icons/viewer.png");
+            release.SetResult();
+            using var served = await held;
+
+            refused.StatusCode.Should().Be(HttpStatusCode.ServiceUnavailable);
+            refused.Headers.RetryAfter.Should().NotBeNull();
+            served.StatusCode.Should().Be(HttpStatusCode.OK);
+            container.IconRequests.Should().Be(1, "the refused request never reached the image");
         }
     }
 
@@ -202,7 +286,7 @@ public sealed class AppsIconEndpointTests
         await using (web)
         using (client)
         {
-            using var response = await client.GetAsync(AppIcon.Path("viewer.png"));
+            using var response = await client.GetAsync("apps/icons/viewer.png");
 
             response.StatusCode.Should().Be(HttpStatusCode.NotFound, what);
             container.IconRequests.Should().Be(1, "the image was asked, and its answer refused");

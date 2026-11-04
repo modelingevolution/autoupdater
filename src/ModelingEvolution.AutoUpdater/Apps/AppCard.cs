@@ -63,8 +63,8 @@ public sealed class DownloadRow : INotifyPropertyChanged
     public AppStatus Status { get; private set; } = AppStatus.NotAvailableYet;
     public LoadState Guide { get; private set; }
 
-    /// <summary>The guide's markdown, once <see cref="Guide"/> is <see cref="LoadState.Loaded"/>.</summary>
-    public string? GuideMarkdown { get; private set; }
+    /// <summary>The parsed guide, once <see cref="Guide"/> is <see cref="LoadState.Loaded"/>.</summary>
+    public AppGuide? GuideContent { get; private set; }
 
     public bool CanDownload => Status == AppStatus.Ready;
 
@@ -77,11 +77,11 @@ public sealed class DownloadRow : INotifyPropertyChanged
     }
 
     /// <summary>The guide as read: null means it could not be read.</summary>
-    public void SetGuide(string? markdown)
+    public void SetGuide(AppGuide? guide)
     {
         if (Download.Guide == null) return;
-        GuideMarkdown = markdown;
-        Guide = markdown == null ? LoadState.Unavailable : LoadState.Loaded;
+        GuideContent = guide;
+        Guide = guide == null ? LoadState.Unavailable : LoadState.Loaded;
         PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(Guide)));
     }
 
@@ -114,15 +114,20 @@ public sealed class AppCard : INotifyPropertyChanged
     /// <summary><see cref="LoadState.Loaded"/> once the image's icon was read and is a PNG; otherwise the page shows a neutral icon.</summary>
     public LoadState Icon { get; private set; }
 
+    /// <summary>The loaded icon's <see cref="AppIcon.Version"/>, which goes into its URL so the browser may cache it.</summary>
+    public string? IconVersion { get; private set; }
+
     public void Apply(AppsPackageSnapshot package)
     {
         foreach (var row in Downloads) row.Apply(package);
     }
 
-    public void SetIcon(bool available)
+    /// <summary>The icon as read: its version, or null when it could not be read or is not a PNG.</summary>
+    public void SetIcon(string? version)
     {
         if (Entry.Icon == null) return;
-        Icon = available ? LoadState.Loaded : LoadState.Unavailable;
+        IconVersion = version;
+        Icon = version != null ? LoadState.Loaded : LoadState.Unavailable;
         PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(Icon)));
     }
 

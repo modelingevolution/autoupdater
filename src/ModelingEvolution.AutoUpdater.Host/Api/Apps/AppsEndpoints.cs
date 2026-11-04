@@ -5,6 +5,22 @@ using MudBlazor;
 namespace ModelingEvolution.AutoUpdater.Host.Api.Apps;
 
 /// <summary>
+/// The icon endpoint's cap: requests that read the image at once; one more waits up to <paramref name="Wait"/> for a slot,
+/// then gets 503. A page's icons are cached by the browser, so the cap is met only by a client that keeps asking.
+/// </summary>
+public sealed record AppIconLimits(int MaxConcurrent, TimeSpan Wait)
+{
+    public static readonly AppIconLimits Default = new(4, TimeSpan.FromSeconds(5));
+}
+
+/// <summary>The icon endpoint's slots, one set for the AutoUpdater.</summary>
+public sealed class AppIconSlots(AppIconLimits limits)
+{
+    public AppIconLimits Limits { get; } = limits;
+    public SemaphoreSlim Slots { get; } = new(limits.MaxConcurrent, limits.MaxConcurrent);
+}
+
+/// <summary>
 /// The Apps feature's wiring. All of it hangs on <see cref="AppsSettings"/>: disabled (the default), nothing is registered
 /// but the settings, no endpoint is mapped, and <c>/apps</c> and everything under it answer 404.
 /// </summary>
@@ -15,7 +31,8 @@ public static class AppsEndpoints
         services.AddApps(configuration.AppsSettings());
 
     /// <summary>Registers <see cref="AppsSettings"/> always, and the markdown renderer, catalog client and file proxy only when the page is enabled.</summary>
-    public static IServiceCollection AddApps(this IServiceCollection services, AppsSettings settings, AppsFileProxyLimits? limits = null)
+    public static IServiceCollection AddApps(this IServiceCollection services, AppsSettings settings, AppsFileProxyLimits? limits = null,
+        AppIconLimits? iconLimits = null)
     {
         services.AddSingleton(settings);
         if (settings.Options is not { } options) return services;
@@ -24,6 +41,7 @@ public static class AppsEndpoints
         services.AddMudMarkdownServices();
         services.AddSingleton(_ => new AppsCatalogClient(options));
         services.AddSingleton(sp => new AppsFileProxy(sp.GetRequiredService<AppsCatalogClient>(), sp.GetRequiredService<ILogger<AppsFileProxy>>(), limits));
+        services.AddSingleton(new AppIconSlots(iconLimits ?? AppIconLimits.Default));
         return services;
     }
 
@@ -48,7 +66,7 @@ public static class AppsEndpoints
 
     /// <summary>
     /// Only when enabled: GET and HEAD <c>/apps/files/{name}</c>, the apps container's file through
-    /// <see cref="AppsFileProxy"/>, and GET <c>/apps/icons/{name}</c>, an app's icon.
+    /// <see cref="AppsFileProxy"/>, and GET and HEAD <c>/apps/icons/{name}</c>, an app's icon.
     /// </summary>
     public static IEndpointRouteBuilder MapAppsEndpoints(this IEndpointRouteBuilder app)
     {
@@ -57,27 +75,48 @@ public static class AppsEndpoints
         app.MapMethods("/apps/files/{name}", [HttpMethods.Get, HttpMethods.Head],
                 (HttpContext context, string name, AppsFileProxy proxy) => proxy.HandleAsync(context, name))
             .ExcludeFromDescription();
-        app.MapGet("/apps/icons/{name}", ServeIconAsync).ExcludeFromDescription();
+        app.MapMethods("/apps/icons/{name}", [HttpMethods.Get, HttpMethods.Head], ServeIconAsync).ExcludeFromDescription();
         return app;
     }
 
     /// <summary>
     /// An icon the manifest lists, read from the image and served only when it is a PNG within the size cap; anything else
-    /// is a 404 (the page then shows its neutral icon). It is small, so it is read whole rather than streamed.
+    /// is a 404 (the page then shows its neutral icon). It is small, so it is read whole rather than streamed. Its ETag is
+    /// <see cref="AppIcon.Version"/>; asked for with that version (<c>?v=</c>, as the page links it), the browser may keep
+    /// it for good, since another icon gets another URL.
     /// </summary>
-    private static async Task<IResult> ServeIconAsync(HttpContext context, string name, AppsCatalogClient client)
+    private static async Task<IResult> ServeIconAsync(HttpContext context, string name, AppsCatalogClient client, AppIconSlots slots)
     {
         if (!AppsManifest.IsIconName(name)) return Results.NotFound();
         var aborted = context.RequestAborted;
-        var catalog = await client.GetAsync(aborted);
-        if (!catalog.Icons.Contains(name, StringComparer.Ordinal)) return Results.NotFound();
+        if (!await slots.Slots.WaitAsync(slots.Limits.Wait, aborted))
+        {
+            context.Response.Headers.RetryAfter = "1";
+            return Results.StatusCode(StatusCodes.Status503ServiceUnavailable);
+        }
 
-        var bytes = await client.GetIconAsync(name, aborted);
-        if (bytes == null) return Results.NotFound();
+        try
+        {
+            var catalog = await client.GetAsync(aborted);
+            if (!catalog.Icons.Contains(name, StringComparer.Ordinal)) return Results.NotFound();
 
-        context.Response.Headers.XContentTypeOptions = "nosniff";
-        context.Response.Headers.CacheControl = "no-cache";
-        context.Response.Headers.ContentSecurityPolicy = "default-src 'none'";
-        return Results.Bytes(bytes, AppIcon.ContentType);
+            var bytes = await client.GetIconAsync(name, aborted);
+            if (bytes == null) return Results.NotFound();
+
+            var version = AppIcon.Version(bytes);
+            var etag = $"\"{version}\"";
+            var headers = context.Response.Headers;
+            headers.XContentTypeOptions = "nosniff";
+            headers.ContentSecurityPolicy = "default-src 'none'";
+            headers.ETag = etag;
+            headers.CacheControl = context.Request.Query["v"] == version ? "private, max-age=31536000, immutable" : "no-cache";
+            if (context.Request.Headers.IfNoneMatch.Any(v => v != null && v.Split(',').Any(t => t.Trim() == etag || t.Trim() == "*")))
+                return Results.StatusCode(StatusCodes.Status304NotModified);
+            return Results.Bytes(bytes, AppIcon.ContentType);
+        }
+        finally
+        {
+            slots.Slots.Release();
+        }
     }
 }

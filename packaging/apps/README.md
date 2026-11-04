@@ -66,7 +66,7 @@ Per download:
 |---|---|
 | `platform` | One of `windows`, `linux`, `macos`, `android`, `ios`. Anything else leaves the download out. |
 | `architecture` | One of `x64`, `arm64`, `x86`, `arm`, `any`. Anything else leaves the download out. |
-| `label` | Optional short variant name, plain text, at most 40 characters (e.g. `Kiosk devices`). A later download with the same platform, architecture and label is left out. |
+| `label` | Optional short variant name, plain text, at most 40 characters (e.g. `Kiosk devices`). A later download with the same platform, architecture and label (compared trimmed and ignoring case) is left out. |
 | `preview` | Optional `true`/`false`: shows a "Preview" chip. |
 | `version`, `file`, `size` | All three or none. None: the download shows "Not available yet". `version`: `[0-9A-Za-z][0-9A-Za-z.+~_-]{0,63}`; `file`: `[A-Za-z0-9][A-Za-z0-9._+~-]{0,127}`, unique in the image; `size`: bytes, > 0. |
 | `guide` | Optional. A file name like `file`, ending in `.md`, served at `/guides/<guide>`. |
@@ -150,9 +150,15 @@ Enabled with a missing or invalid setting, the AutoUpdater logs a configuration 
 it still starts, since it is the station's recovery path. As environment variables: `Apps__Enabled=true`,
 `Apps__SourceUrl=...`.
 
-The page reads `manifest.json`, the guides and the icons once, when it opens. Browsers download through the AutoUpdater
-at `/apps/files/<name>`, which streams the file from the image (ranges and validators pass through) and only for a name
-the manifest lists. Icons come from `/apps/icons/<name>`, likewise only for a listed icon, and only when it is a PNG.
+The page reads `manifest.json` when it opens, then each distinct guide and icon once (downloads that share a guide share
+one read), at most 4 at a time. Browsers download through the AutoUpdater at `/apps/files/<name>`, which streams the
+file from the image (ranges and validators pass through) and only for a name the manifest lists. Icons come from
+`/apps/icons/<name>?v=<hash>`, likewise only for a listed icon, and only when it is a PNG; the hash changes with the
+icon, so the browser keeps it.
+
+Connections to the image: the AutoUpdater opens at most 16 for file downloads and 8 for manifest, guide and icon reads,
+whatever the number of browsers (more requests wait for a free one); the image's nginx allows 256. The icon endpoint
+also serves at most 4 requests at once, and answers 503 to one that waits more than 5 s.
 
 ## Run the tests
 

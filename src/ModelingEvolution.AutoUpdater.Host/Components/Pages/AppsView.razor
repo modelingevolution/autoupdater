@@ -82,7 +82,7 @@ else if (_package != null)
             <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="3" data-icon-state="@card.Icon">
                 @if (card.Icon == LoadState.Loaded)
                 {
-                    <img src="@AppIcon.Path(card.Entry.Icon!)" alt="" width="48" height="48" style="object-fit: contain;" data-testid="app-icon" />
+                    <img src="@AppIcon.Path(card.Entry.Icon!, card.IconVersion!)" alt="" width="48" height="48" style="object-fit: contain;" data-testid="app-icon" />
                 }
                 else
                 {
@@ -138,7 +138,7 @@ else if (_package != null)
                             <ErrorBoundary>
                                 <ChildContent>
                                     <div class="mt-3" data-testid="download-guide">
-                                        <AppGuideView Markdown="@row.GuideMarkdown" />
+                                        <AppGuideView Guide="@row.GuideContent" />
                                     </div>
                                 </ChildContent>
                                 <ErrorContent>
@@ -158,6 +158,9 @@ else if (_package != null)
 
 @code {
     [Parameter, EditorRequired] public AppsOptions Options { get; set; } = null!;
+
+    /// <summary>Reads of guides and icons one page open has in flight at once.</summary>
+    private const int MaxReadsAtOnce = 4;
 
     private readonly ObservableCollection<AppCard> _cards = new();
     private readonly CancellationTokenSource _stop = new();
@@ -188,7 +191,10 @@ else if (_package != null)
         if (firstRender) _load = LoadAsync(_stop.Token);
     }
 
-    /// <summary>One read of manifest.json, then each listed icon and guide. Nothing polls: reloading the page reads again.</summary>
+    /// <summary>
+    /// One read of manifest.json, then each distinct icon and guide once (downloads may share a guide), at most
+    /// <see cref="MaxReadsAtOnce"/> at a time. Nothing polls: reloading the page reads again.
+    /// </summary>
     private async Task LoadAsync(CancellationToken stop)
     {
         try
@@ -203,9 +209,14 @@ else if (_package != null)
                 StateHasChanged();
             });
 
-            var icons = cards.Where(c => c.Entry.Icon != null).Select(card => LoadIconAsync(card, stop));
-            var guides = cards.SelectMany(c => c.Downloads).Where(r => r.Download.Guide != null).Select(row => LoadGuideAsync(row, stop));
-            await Task.WhenAll(icons.Concat(guides));
+            using var gate = new SemaphoreSlim(MaxReadsAtOnce, MaxReadsAtOnce);
+            var icons = cards.Where(c => c.Entry.Icon != null)
+                .GroupBy(c => c.Entry.Icon!, StringComparer.Ordinal)
+                .Select(g => LoadIconAsync(g.Key, g.ToList(), gate, stop));
+            var guides = cards.SelectMany(c => c.Downloads).Where(r => r.Download.Guide != null)
+                .GroupBy(r => r.Download.Guide!, StringComparer.Ordinal)
+                .Select(g => LoadGuideAsync(g.Key, g.ToList(), gate, stop));
+            await Task.WhenAll(icons.Concat(guides).ToList());
         }
         catch (OperationCanceledException)
         {
@@ -220,13 +231,24 @@ else if (_package != null)
         }
     }
 
-    /// <summary>One download's guide. Whatever goes wrong, that section ends as "Install guide unavailable", never a spinner.</summary>
-    private async Task LoadGuideAsync(DownloadRow row, CancellationToken stop)
+    /// <summary>
+    /// One guide, read and parsed once for every download that lists it. Whatever goes wrong, those sections end as
+    /// "Install guide unavailable", never a spinner.
+    /// </summary>
+    private async Task LoadGuideAsync(string name, IReadOnlyList<DownloadRow> rows, SemaphoreSlim gate, CancellationToken stop)
     {
-        string? markdown;
+        AppGuide? guide;
         try
         {
-            markdown = await CatalogClient.GetGuideAsync(row.Download.Guide!, stop);
+            await gate.WaitAsync(stop);
+            try
+            {
+                guide = await CatalogClient.GetGuideAsync(name, stop);
+            }
+            finally
+            {
+                gate.Release();
+            }
         }
         catch (OperationCanceledException) when (stop.IsCancellationRequested)
         {
@@ -234,20 +256,35 @@ else if (_package != null)
         }
         catch (Exception ex)
         {
-            Logger.LogWarning(ex, "The install guide {Guide} could not be read", row.Download.Guide);
-            markdown = null;
+            Logger.LogWarning(ex, "The install guide {Guide} could not be read", name);
+            guide = null;
         }
 
-        await InvokeAsync(() => row.SetGuide(markdown));
+        await InvokeAsync(() =>
+        {
+            foreach (var row in rows) row.SetGuide(guide);
+        });
     }
 
-    /// <summary>Checks the icon is there and a PNG before the browser is pointed at it; otherwise the neutral icon stays.</summary>
-    private async Task LoadIconAsync(AppCard card, CancellationToken stop)
+    /// <summary>
+    /// Checks the icon is there and a PNG before the browser is pointed at it, and takes its version for the URL, so the
+    /// browser fetches it once and keeps it; otherwise the neutral icon stays.
+    /// </summary>
+    private async Task LoadIconAsync(string name, IReadOnlyList<AppCard> cards, SemaphoreSlim gate, CancellationToken stop)
     {
-        bool available;
+        string? version;
         try
         {
-            available = await CatalogClient.GetIconAsync(card.Entry.Icon!, stop) != null;
+            await gate.WaitAsync(stop);
+            try
+            {
+                var bytes = await CatalogClient.GetIconAsync(name, stop);
+                version = bytes == null ? null : AppIcon.Version(bytes);
+            }
+            finally
+            {
+                gate.Release();
+            }
         }
         catch (OperationCanceledException) when (stop.IsCancellationRequested)
         {
@@ -255,11 +292,14 @@ else if (_package != null)
         }
         catch (Exception ex)
         {
-            Logger.LogWarning(ex, "The icon {Icon} could not be read", card.Entry.Icon);
-            available = false;
+            Logger.LogWarning(ex, "The icon {Icon} could not be read", name);
+            version = null;
         }
 
-        await InvokeAsync(() => card.SetIcon(available));
+        await InvokeAsync(() =>
+        {
+            foreach (var card in cards) card.SetIcon(version);
+        });
     }
 
     private AppsPackageSnapshot Snapshot() => _package == null
