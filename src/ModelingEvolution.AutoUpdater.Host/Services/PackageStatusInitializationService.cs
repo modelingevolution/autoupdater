@@ -7,13 +7,11 @@ namespace ModelingEvolution.AutoUpdater.Host.Services;
 /// Hosted service to initialize static dependencies for DockerComposeConfiguration
 /// </summary>
 /// <remarks>
-/// It takes <paramref name="readModel"/> only so the read model exists, and has subscribed, before the startup version
-/// checks publish their results. A lazily created read model missed them, and every page showed "Version unknown" after a
-/// restart until someone pressed refresh.
+/// It shows each startup check on <paramref name="readModel"/> before running it. Taking the read model here also creates it,
+/// and so subscribes it, before the checks publish their results: a lazily created read model missed them, and every page
+/// showed "Version unknown" after a restart until someone pressed refresh.
 /// </remarks>
-#pragma warning disable CS9113 // The parameter is unread on purpose: see remarks.
 public class PackageStatusInitializationService(DockerComposeConfigurationModel model, UpdateHost uh, PackageStateReadModel readModel, ILogger<DockerComposeConfiguration> logger) : IHostedService
-#pragma warning restore CS9113
 {
     public async Task StartAsync(CancellationToken cancellationToken)
     {
@@ -23,6 +21,7 @@ public class PackageStatusInitializationService(DockerComposeConfigurationModel 
         for (int i = 0; i < packages.Count; i++)
         {
             var pck = packages[i];
+            readModel.BeginVersionCheck(pck.FriendlyName);
             try
             {
                 await uh.CheckIsUpdateAvailable(pck);

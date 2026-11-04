@@ -9,7 +9,8 @@
 #
 # It writes manifest.json (version, size, SHA-256) and SHA256SUMS, builds a multi-arch image with one
 # layer per file, pushes it, and prints the next step: pin the release in the compose package.
-# Runs in Git Bash, WSL and Linux. Needs docker with buildx, sha256sum, stat.
+# Runs in Git Bash, WSL and Linux. Needs docker with buildx, sha256sum, stat. Pushing more than one platform needs a
+# builder that can: Docker Desktop's containerd image store, or `docker buildx create --use --driver docker-container`.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -20,8 +21,10 @@ RELEASE=""
 LOCAL_TAG=""
 OVERWRITE=false
 DRY_RUN=false
-# A fixed time on every file: a layer's digest covers mtimes, and an unchanged file must keep its layer.
-LAYER_MTIME="2020-01-01T00:00:00Z"
+# Each file's mtime comes from its SHA-256: a layer's digest covers mtimes, so an unchanged file keeps its layer (a
+# station does not download it again), while a changed file gets another mtime, hence another ETag and Last-Modified
+# from nginx (no stale installer from a browser cache, no resumed download joining two builds).
+MTIME_BASE=1577836800   # 2020-01-01T00:00:00Z; plus up to 16^7 s (about 8.5 years) from the hash
 
 declare -A FILE=() VERSION=()
 PLATFORM_NAMES=(windows linux android)
@@ -29,7 +32,7 @@ PLATFORM_NAMES=(windows linux android)
 die() { echo "ERROR: $*" >&2; exit 1; }
 
 usage() {
-    sed -n '2,12p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+    sed -n '2,13p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
     cat <<EOF
 
 Options:
@@ -85,16 +88,16 @@ for platform in "${PLATFORM_NAMES[@]}"; do
     [[ "$version" =~ ^[0-9A-Za-z][0-9A-Za-z.+~_-]{0,63}$ ]] || die "$platform: --$platform-version is missing or invalid: '$version'"
     name="$(basename "$path")"
     # The same rule as the nginx location and the AutoUpdater's manifest reader.
-    [[ "$name" =~ ^[A-Za-z0-9][A-Za-z0-9._+~-]*$ ]] || die "$platform: file name not allowed: '$name'"
+    [[ "$name" =~ ^[A-Za-z0-9][A-Za-z0-9._+~-]{0,127}$ ]] || die "$platform: file name not allowed (letters, digits, ._+~-, at most 128): '$name'"
     [ ! -e "$STAGE/files/$name" ] || die "two apps use the same file name: $name"
 
     cp "$path" "$STAGE/files/$name"
     chmod 0644 "$STAGE/files/$name"
-    touch -d "$LAYER_MTIME" "$STAGE/files/$name"
 
     size="$(stat -c %s "$STAGE/files/$name")"
     [ "$size" -gt 0 ] || die "$platform: empty file: $path"
     sha="$(sha256sum "$STAGE/files/$name" | cut -d' ' -f1)"
+    touch -d "@$((MTIME_BASE + 16#${sha:0:7}))" "$STAGE/files/$name"
 
     printf '%s  %s\n' "$sha" "$name" >> "$STAGE/SHA256SUMS"
     entries+="${entries:+,}"$'\n'"    {\"platform\":\"$platform\",\"version\":\"$version\",\"file\":\"$name\",\"size\":$size,\"sha256\":\"$sha\"}"
@@ -115,8 +118,18 @@ if [ -n "$LOCAL_TAG" ]; then
 fi
 
 IMAGE="$REGISTRY/$REPOSITORY:$RELEASE"
-if [ "$OVERWRITE" = false ] && docker manifest inspect "$IMAGE" > /dev/null 2>&1; then
-    die "$IMAGE already exists. Use a new --release (a station that has it would not see the change), or --overwrite."
+if [ "$OVERWRITE" = false ]; then
+    # Only a clear "not found" lets the push go ahead. Any other failure (login, network, an old CLI) stops here, because
+    # treating it as "absent" would overwrite a release that stations may already have.
+    if inspect="$(docker buildx imagetools inspect "$IMAGE" 2>&1)"; then
+        die "$IMAGE already exists. Use a new --release (a station that has it would not see the change), or --overwrite."
+    fi
+    # A refused login wins over "not found": some registries answer an unauthorised lookup with both.
+    if grep -qiE 'unauthori|denied|forbidden|authenticat' <<< "$inspect" \
+        || ! grep -qiE 'not found|manifest unknown|name unknown' <<< "$inspect"; then
+        echo "$inspect" >&2
+        die "could not check whether $IMAGE exists (above). Fix that and run again; nothing was pushed."
+    fi
 fi
 
 docker buildx build --platform "$PLATFORMS" --tag "$IMAGE" --push .

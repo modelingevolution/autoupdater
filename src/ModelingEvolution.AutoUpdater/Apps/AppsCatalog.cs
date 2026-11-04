@@ -7,8 +7,12 @@ namespace ModelingEvolution.AutoUpdater.Apps;
 /// <summary>One file the apps container offers.</summary>
 public sealed record AppFile(string Platform, string Version, string FileName, long Size, string Sha256, bool Verified);
 
-/// <summary>What the apps container offers now. <see cref="Reachable"/> is false when it could not be read.</summary>
-public sealed record AppsCatalog(bool Reachable, string? Release, ImmutableArray<AppFile> Files)
+/// <summary>
+/// What the apps container offers now. <see cref="Reachable"/> is false when it could not be read.
+/// <see cref="VerificationKnown"/> is false when the container gave no usable verification result: then nothing is verified,
+/// but nothing is known to be wrong either.
+/// </summary>
+public sealed record AppsCatalog(bool Reachable, string? Release, ImmutableArray<AppFile> Files, bool VerificationKnown = true)
 {
     public static readonly AppsCatalog Unreachable = new(false, null, ImmutableArray<AppFile>.Empty);
 
@@ -42,7 +46,7 @@ public static partial class AppsManifest
             if (root.ValueKind != JsonValueKind.Object) return AppsCatalog.Unreachable;
             if (!root.TryGetProperty("apps", out var apps) || apps.ValueKind != JsonValueKind.Array) return AppsCatalog.Unreachable;
 
-            var verified = ReadVerifiedPredicate(verificationJson);
+            var (verificationKnown, verified) = ReadVerification(verificationJson);
             var files = ImmutableArray.CreateBuilder<AppFile>();
             foreach (var app in apps.EnumerateArray())
             {
@@ -53,7 +57,7 @@ public static partial class AppsManifest
             }
 
             var release = ReadString(root, "release");
-            return new AppsCatalog(true, release != null && VersionPattern().IsMatch(release) ? release : null, files.ToImmutable());
+            return new AppsCatalog(true, release != null && VersionPattern().IsMatch(release) ? release : null, files.ToImmutable(), verificationKnown);
         }
         catch (JsonException)
         {
@@ -78,29 +82,30 @@ public static partial class AppsManifest
     }
 
     /// <summary>Fails closed: no verification, an unreadable one, or anything but "the check ran" verifies nothing.</summary>
-    private static Func<string, bool> ReadVerifiedPredicate(string? verificationJson)
+    private static (bool Known, Func<string, bool> Verified) ReadVerification(string? verificationJson)
     {
-        if (string.IsNullOrWhiteSpace(verificationJson)) return _ => false;
+        (bool, Func<string, bool>) unknown = (false, _ => false);
+        if (string.IsNullOrWhiteSpace(verificationJson)) return unknown;
 
         try
         {
             using var document = JsonDocument.Parse(verificationJson);
             var root = document.RootElement;
-            if (root.ValueKind != JsonValueKind.Object) return _ => false;
+            if (root.ValueKind != JsonValueKind.Object) return unknown;
 
             var state = ReadString(root, "state");
-            if (state is not ("verified" or "failed")) return _ => false;
-            if (!root.TryGetProperty("blocked", out var blocked) || blocked.ValueKind != JsonValueKind.Array) return _ => false;
+            if (state is not ("verified" or "failed")) return unknown;
+            if (!root.TryGetProperty("blocked", out var blocked) || blocked.ValueKind != JsonValueKind.Array) return unknown;
 
             var names = blocked.EnumerateArray()
                 .Where(b => b.ValueKind == JsonValueKind.String)
                 .Select(b => b.GetString()!)
                 .ToImmutableHashSet();
-            return name => !names.Contains(name);
+            return (true, name => !names.Contains(name));
         }
         catch (JsonException)
         {
-            return _ => false;
+            return unknown;
         }
     }
 

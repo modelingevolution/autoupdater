@@ -1,32 +1,18 @@
-using System.Globalization;
 using Microsoft.Extensions.Configuration;
 using ModelingEvolution.AutoUpdater.Extensions;
 
 namespace ModelingEvolution.AutoUpdater.Apps;
 
-/// <summary>Where the apps package is. The defaults match the compose package in packaging/apps/compose.</summary>
+/// <summary>Where the apps package is. Read through <see cref="ConfigurationExtensions"/>; defaults match packaging/apps/compose.</summary>
 public sealed record AppsOptions(string PackageName, int Port, Uri InternalBaseUrl)
 {
-    public const string DefaultPackageName = "rocketwelder-apps";
-    public const int DefaultPort = 8095;
-    private const string DefaultDockerHost = "172.17.0.1";
+    public static AppsOptions From(IConfiguration configuration) =>
+        new(configuration.AppsPackageName(), configuration.AppsPort(), configuration.AppsInternalBaseUrl());
 
-    public static AppsOptions From(IConfiguration configuration)
-    {
-        var name = configuration["Apps:PackageName"];
-        var port = int.TryParse(configuration["Apps:Port"], NumberStyles.None, CultureInfo.InvariantCulture, out var p) && p is > 0 and < 65536
-            ? p
-            : DefaultPort;
-
-        // The AutoUpdater runs in a container: the published port is reached through the same host address as SSH.
-        var host = configuration.SshHost();
-        var fallback = new UriBuilder(Uri.UriSchemeHttp, string.IsNullOrWhiteSpace(host) ? DefaultDockerHost : host, port).Uri;
-        var internalBaseUrl = Uri.TryCreate(configuration["Apps:InternalBaseUrl"], UriKind.Absolute, out var configured) ? configured : fallback;
-
-        return new AppsOptions(string.IsNullOrWhiteSpace(name) ? DefaultPackageName : name, port, internalBaseUrl);
-    }
-
-    /// <summary>The address a browser downloads from: the host the person reached the page on, at the container's port.</summary>
+    /// <summary>
+    /// The address a browser downloads from: the host the person reached the page on, at the container's port.
+    /// Always http: the container serves plain http on the LAN, so a page served over https would be blocked as mixed content.
+    /// </summary>
     public string DownloadUrl(Uri pageUri, string fileName) =>
         new UriBuilder(Uri.UriSchemeHttp, pageUri.Host, Port, "/files/" + Uri.EscapeDataString(fileName)).Uri.AbsoluteUri;
 }
@@ -40,18 +26,28 @@ public sealed class AppsCatalogClient
     private readonly HttpClient _http;
     private readonly AppsOptions _options;
 
-    public AppsCatalogClient(IConfiguration configuration) : this(new HttpClient(), AppsOptions.From(configuration))
+    public AppsCatalogClient(IConfiguration configuration) : this(CreateHttpClient(), AppsOptions.From(configuration))
     {
     }
 
+    /// <param name="http">Used as given: each read has its own 3 s limit, whatever the client's Timeout.</param>
     public AppsCatalogClient(HttpClient http, AppsOptions options)
     {
         _http = http;
         _options = options;
-        _http.Timeout = System.Threading.Timeout.InfiniteTimeSpan; // Each read below has its own limit.
     }
 
     public AppsOptions Options => _options;
+
+    /// <summary>
+    /// No redirects and no proxy: the AutoUpdater reads two documents from one container, and a container that answers with a
+    /// redirect must not make it fetch some other address.
+    /// </summary>
+    public static HttpClient CreateHttpClient() =>
+        new(new SocketsHttpHandler { AllowAutoRedirect = false, UseProxy = false })
+        {
+            Timeout = System.Threading.Timeout.InfiniteTimeSpan,
+        };
 
     public async Task<AppsCatalog> GetAsync(CancellationToken cancellationToken = default)
     {

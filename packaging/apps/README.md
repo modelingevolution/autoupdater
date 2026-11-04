@@ -6,7 +6,7 @@ Apps page only reads the container's manifest and shows download links; it has n
 
 | Path | What it is |
 |---|---|
-| `image/` | Dockerfile, nginx config and the start-up check. alpine + nginx. Measured locally: 18.9 MB as reported by `docker images`, with 2.1 MB of test files in it; the base layers are pulled once. |
+| `image/` | Dockerfile, nginx config and the start-up check. alpine + nginx. Measured locally: 18.7 MB as reported by `docker images`, with one 2 MB test file in it; the base layers are pulled once. |
 | `publish-apps.sh` | Builds and pushes the image from a laptop. |
 | `compose/` | The AutoUpdater package. Becomes the `rocketwelder-apps-compose` repo. |
 
@@ -24,13 +24,19 @@ Then, in `rocketwelder-apps-compose`: `./release.sh 1.2.0`. Stations see the new
 downloads until an operator starts it there, or uses "Update all".
 
 An app left out of the command shows as "Not available yet". To carry an app forward unchanged, pass the same file again:
-each file is its own layer with a fixed mtime, so a station does not download it twice.
+each file is its own layer, and its mtime is derived from its SHA-256, so an unchanged file keeps its layer and a station
+does not download it twice. A changed file gets another mtime, so its `ETag` and `Last-Modified` change too: a browser
+revalidates (`Cache-Control: no-cache`) instead of reusing an older installer, and an `If-Range` resume started on an
+older build gets the whole new file rather than a mix of the two.
+
+`publish-apps.sh` refuses a release tag that already exists, and also refuses when it cannot tell (a refused login, no
+network): only a clear "not found" from the registry lets it push. `--overwrite` skips that check.
 
 ## What the container serves
 
 | Path | Answer |
 |---|---|
-| `/files/<name>` | The file, with `Content-Disposition: attachment` and range support. 503 if it failed verification. |
+| `/files/<name>` | The file, with `Content-Disposition: attachment`, `Cache-Control: no-cache` and single-range support. 503 for any file the start-up check did not find matching the manifest: a mismatch, a file nobody listed, or a container started without the check (fail closed). Symlinks are refused. |
 | `/manifest.json` | `release` and, per app: `platform`, `version`, `file`, `size`, `sha256`. |
 | `/verification.json` | `state` (`verified` or `failed`) and `blocked`: the result of hashing every file at start. |
 | `/health` | 200 once verification has finished. |

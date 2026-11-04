@@ -2,7 +2,9 @@ using System.Net;
 using System.Text;
 using FluentAssertions;
 using Microsoft.Extensions.Configuration;
+using System.Net.Sockets;
 using ModelingEvolution.AutoUpdater.Apps;
+using ModelingEvolution.AutoUpdater.Extensions;
 
 namespace ModelingEvolution.AutoUpdater.Tests.Apps;
 
@@ -50,7 +52,16 @@ public class AppsManifestTests
     [InlineData("""{"state":"verified"}""")]
     public void Parse_NoUsableVerification_FailsClosed(string? verification)
     {
-        AppsManifest.Parse(Manifest(), verification).Find("windows")!.Verified.Should().BeFalse();
+        var catalog = AppsManifest.Parse(Manifest(), verification);
+
+        catalog.Find("windows")!.Verified.Should().BeFalse();
+        catalog.VerificationKnown.Should().BeFalse();
+    }
+
+    [Fact]
+    public void Parse_ContainerReportedItsCheck_VerificationIsKnown()
+    {
+        AppsManifest.Parse(Manifest(), """{"state":"failed","blocked":["setup.exe"]}""").VerificationKnown.Should().BeTrue();
     }
 
     [Theory]
@@ -188,6 +199,50 @@ public class AppsCatalogClientTests
     }
 
     [Fact]
+    public async Task GetAsync_ContainerRedirects_DoesNotFollowAndIsUnreachable()
+    {
+        // A real socket, so the production handler (not a stub) decides whether to follow.
+        using var listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        var port = ((IPEndPoint)listener.LocalEndpoint).Port;
+        var requestedPaths = new List<string>();
+        using var stop = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+        var server = Task.Run(async () =>
+        {
+            try
+            {
+                while (!stop.IsCancellationRequested)
+                {
+                    using var socket = await listener.AcceptTcpClientAsync(stop.Token);
+                    var stream = socket.GetStream();
+                    var reader = new StreamReader(stream, Encoding.ASCII);
+                    var requestLine = await reader.ReadLineAsync(stop.Token) ?? "";
+                    lock (requestedPaths) requestedPaths.Add(requestLine.Split(' ').ElementAtOrDefault(1) ?? "");
+                    while (!string.IsNullOrEmpty(await reader.ReadLineAsync(stop.Token))) { }
+                    var response = $"HTTP/1.1 302 Found\r\nLocation: http://127.0.0.1:{port}/elsewhere\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
+                    await stream.WriteAsync(Encoding.ASCII.GetBytes(response), stop.Token);
+                }
+            }
+            catch (OperationCanceledException) { }
+        });
+
+        var client = new AppsCatalogClient(AppsCatalogClient.CreateHttpClient(),
+            new AppsOptions("rocketwelder-apps", 8095, new Uri($"http://127.0.0.1:{port}/")));
+
+        var catalog = await client.GetAsync();
+        await stop.CancelAsync();
+        listener.Stop();
+        await server;
+
+        catalog.Should().Be(AppsCatalog.Unreachable);
+        lock (requestedPaths)
+        {
+            requestedPaths.Should().NotBeEmpty();
+            requestedPaths.Should().NotContain("/elsewhere");
+        }
+    }
+
+    [Fact]
     public async Task GetAsync_ManifestOkButNoVerification_OffersNothingAsVerified()
     {
         var sha = new string('c', 64);
@@ -255,6 +310,14 @@ public class AppRowTests
     public void Decide_FileFailedVerification_IsChecksumFailed()
     {
         AppRow.Decide(WithGood, Good with { Verified = false }, Deployed).Should().Be(AppStatus.ChecksumFailed);
+    }
+
+    [Fact]
+    public void Decide_ContainerGaveNoVerificationResult_IsNotVerified()
+    {
+        var unknown = WithGood with { VerificationKnown = false };
+
+        AppRow.Decide(unknown, Good with { Verified = false }, Deployed).Should().Be(AppStatus.NotVerified);
     }
 
     [Fact]
@@ -339,40 +402,115 @@ public class AppGuidesTests
     }
 }
 
-public class AppsMessageSanitizerTests
+public class AppsFailureTextTests
 {
+    private const string SeeLog = " The AutoUpdater's log has the details.";
+    private const string Credentials = "The registry or repository refused this station's credentials.";
+    private const string Network = "The station could not reach the registry or the network.";
+    private const string NotFound = "The release was not found in the registry.";
+    private const string Generic = "The update failed.";
+
+    private static readonly string[] AllSentences =
+    [
+        "The station ran out of disk space.", "Another update is already running.", Credentials, NotFound, Network, Generic,
+    ];
+
+    // Every string the review named, plus the shapes the earlier pattern-based sanitizer handled. The page never shows any
+    // part of the failure text, so each one must come out as exactly one fixed sentence.
     [Theory]
-    [InlineData("failed to pull docker.modelingevolution.com/rocketwelder/rocketwelder-apps:1.2.0: denied", "docker.modelingevolution.com")]
-    [InlineData("clone of https://user:s3cret@github.com/x/y.git failed", "s3cret")]
-    [InlineData("clone of https://user:s3cret@github.com/x/y.git failed", "github.com")]
-    [InlineData("dial tcp 192.168.30.29:443: i/o timeout", "192.168.30.29")]
-    [InlineData("Authorization: Basic dXNlcjpwYXNz was rejected", "dXNlcjpwYXNz")]
-    [InlineData("login with password=hunter2 failed", "hunter2")]
-    public void Sanitize_RemovesHostsAddressesAndSecrets(string message, string secret)
+    [InlineData("HARBOR_PASSWORD=hunter2 rejected", Generic)]
+    [InlineData("access_token=abc123def failed", Generic)]
+    [InlineData("api_key=abc123 failed", Generic)]
+    [InlineData("""{"password":"hunter2"}""", Generic)]
+    [InlineData("docker login -u robot --password hunter2 failed", Credentials)]
+    [InlineData("X-Registry-Auth: eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJyb2JvdCJ9 rejected", Generic)]
+    [InlineData("token:abc auth=xyz", Generic)]
+    [InlineData("Authorization: Basic dXNlcjpwYXNz was rejected", Generic)]
+    [InlineData("clone of https://user:s3cret@github.com/x/y.git failed", Generic)]
+    [InlineData("lookup saturn on 127.0.0.11:53: no such host", Network)]
+    [InlineData("dial tcp [fd00::1:2]:443: connect: connection refused", Network)]
+    [InlineData("ssh: connect to host fe80::1%eth0 port 22: Connection timed out", Network)]
+    [InlineData("ssh: connect to host neuron-7 port 22: Connection refused", Network)]
+    [InlineData("dial tcp 192.168.30.29:443: i/o timeout", Network)]
+    [InlineData("git@github.com:modelingevolution/rocketwelder-apps-compose.git: Permission denied (publickey)", Credentials)]
+    [InlineData("failed to pull docker.modelingevolution.com/rocketwelder/rocketwelder-apps:1.2.0: denied", Credentials)]
+    [InlineData("docker.modelingevolution.com/rocketwelder/rocketwelder-apps:1.2.0: manifest unknown", NotFound)]
+    public void Describe_AnyFailure_IsOneFixedSentenceInItsCategory(string failure, string expected)
     {
-        AppsMessageSanitizer.Sanitize(message).Should().NotContain(secret);
+        Describe(failure).Should().Be(expected + SeeLog);
     }
 
     [Theory]
-    [InlineData("write /var/lib/docker/tmp: no space left on device")]
-    [InlineData("Update already in progress")]
-    [InlineData("compose file docker-compose.x64.yml is invalid")]
-    public void Sanitize_KeepsAMessageThatNamesNothingInternal(string message)
+    [InlineData("HARBOR_PASSWORD=hunter2 rejected", "hunter2")]
+    [InlineData("access_token=abc123def failed", "abc123def")]
+    [InlineData("api_key=abc123 failed", "abc123")]
+    [InlineData("""{"password":"hunter2"}""", "hunter2")]
+    [InlineData("docker login -u robot --password hunter2 failed", "hunter2")]
+    [InlineData("lookup saturn on 127.0.0.11:53: no such host", "saturn")]
+    [InlineData("dial tcp [fd00::1:2]:443: connect: connection refused", "fd00")]
+    [InlineData("ssh: connect to host fe80::1%eth0 port 22: Connection timed out", "fe80")]
+    [InlineData("git@github.com:modelingevolution/rocketwelder-apps-compose.git: Permission denied", "modelingevolution")]
+    [InlineData("ssh: connect to host neuron-7 port 22: Connection refused", "neuron-7")]
+    [InlineData("X-Registry-Auth: eyJhbGciOiJIUzI1NiJ9 rejected", "eyJ")]
+    [InlineData("token:abc auth=xyz", "xyz")]
+    public void Describe_NeverRepeatsAnyPartOfTheFailure(string failure, string secret)
     {
-        AppsMessageSanitizer.Sanitize(message).Should().Be(message);
+        var text = Describe(failure);
+
+        text.Should().NotContainEquivalentOf(secret);
+        AllSentences.Select(s => s + SeeLog).Should().Contain(text);
+    }
+
+    [Theory]
+    [InlineData("write /var/lib/docker/tmp: no space left on device", "The station ran out of disk space.")]
+    [InlineData("Update already in progress", "Another update is already running.")]
+    public void Describe_KnownCondition_SaysWhatHappened(string failure, string expected)
+    {
+        Describe(failure).Should().Be(expected + SeeLog);
     }
 
     [Theory]
     [InlineData(null)]
+    [InlineData("")]
     [InlineData("  ")]
-    public void Sanitize_NoMessage_StillSaysSomething(string? message)
+    public void Describe_NoMessage_StillSaysSomething(string? failure)
     {
-        AppsMessageSanitizer.Sanitize(message).Should().NotBeNullOrWhiteSpace();
+        Describe(failure).Should().Be(Generic + SeeLog);
+    }
+
+    private static string Describe(string? failure) => AppsFailureText.Describe(failure);
+}
+
+public class AppsConfigurationTests
+{
+    private static IConfiguration Config(params (string Key, string Value)[] values) => new ConfigurationBuilder()
+        .AddInMemoryCollection(values.Select(v => new KeyValuePair<string, string?>(v.Key, v.Value)))
+        .Build();
+
+    [Fact]
+    public void Extensions_NothingConfigured_ReturnTheDefaults()
+    {
+        var config = Config();
+
+        config.DockerHostAddress().Should().Be(ModelingEvolution.AutoUpdater.Extensions.ConfigurationExtensions.DefaultDockerHost).And.Be("172.17.0.1");
+        config.AppsPackageName().Should().Be("rocketwelder-apps");
+        config.AppsPort().Should().Be(8095);
+        config.AppsInternalBaseUrl().Should().Be(new Uri("http://172.17.0.1:8095/"));
     }
 
     [Fact]
-    public void Sanitize_VeryLongMessage_IsCut()
+    public void DockerHostAddress_PrefersSshHostOverHostAddress()
     {
-        AppsMessageSanitizer.Sanitize(new string('x', 5000)).Length.Should().BeLessThan(310);
+        Config(("SshHost", "10.0.0.9"), ("HostAddress", "10.0.0.8")).DockerHostAddress().Should().Be("10.0.0.9");
+        Config(("HostAddress", "10.0.0.8")).DockerHostAddress().Should().Be("10.0.0.8");
+    }
+
+    [Theory]
+    [InlineData("http://127.0.0.1:9000/", "http://127.0.0.1:9000/")]
+    [InlineData("ftp://127.0.0.1/", "http://172.17.0.1:8095/")]
+    [InlineData("not a url", "http://172.17.0.1:8095/")]
+    public void AppsInternalBaseUrl_OnlyAnHttpUrlOverridesTheDefault(string configured, string expected)
+    {
+        Config(("Apps:InternalBaseUrl", configured)).AppsInternalBaseUrl().Should().Be(new Uri(expected));
     }
 }

@@ -11,7 +11,7 @@ served over HTTP on the station's LAN. The image is pre-built and pulled, never 
 | `docker-compose.x64.yml`, `docker-compose.arm64.yml` | Per-arch overrides, layered by AutoUpdater on `uname -m`. |
 | `rocketwelder-apps.version` | Bare semver of the pinned release. |
 | `update-version.sh` | `set X.Y.Z` pins the image tag; `list` queries Harbor for release tags. |
-| `release.sh` | Pins, generates `up-X.Y.Z.sh`, commits, pushes master, then pushes the git tag AutoUpdater detects. |
+| `release.sh` | Checks first that the tag exists neither locally nor on origin (and stops, changing nothing, if origin cannot be asked). Then pins, generates `up-X.Y.Z.sh`, commits only those files, pushes master, and pushes the git tag AutoUpdater detects. |
 | `prune-old-images.sh` | Keeps the two newest apps images on a station. Always exits 0. |
 
 ## Register on a station

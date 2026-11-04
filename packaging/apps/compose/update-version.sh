@@ -64,20 +64,22 @@ get_current_version() {
     if [ -f "$VERSION_FILE" ]; then
         tr -d '[:space:]' < "$VERSION_FILE"
     else
-        grep -E "image:.*$IMAGE_NAME:" "$COMPOSE_FILE" | head -1 | sed "s|.*$IMAGE_NAME:\([^[:space:]]*\).*|\1|"
+        { grep -E "image:.*$IMAGE_NAME:" "$COMPOSE_FILE" || true; } | head -1 | sed "s|.*$IMAGE_NAME:\([^[:space:]]*\).*|\1|"
     fi
 }
 
 # Fetch the semver release tags for the image from the Harbor API.
 fetch_versions() {
-    local curl_auth=()
+    # The credentials go to curl through a config file descriptor, never on its command line, where any user's ps sees them.
+    local url="$HARBOR_API/projects/$HARBOR_PROJECT/repositories/$HARBOR_REPO/artifacts?page_size=100&with_tag=true"
+    local body
     if [ -n "${HARBOR_USERNAME:-}" ] && [ -n "${HARBOR_PASSWORD:-}" ]; then
-        curl_auth=(-u "$HARBOR_USERNAME:$HARBOR_PASSWORD")
+        body=$(curl -fsSL -K <(printf 'user = "%s:%s"\n' "$HARBOR_USERNAME" "$HARBOR_PASSWORD") "$url")
+    else
+        body=$(curl -fsSL "$url")
     fi
-    curl -fsSL "${curl_auth[@]}" \
-        "$HARBOR_API/projects/$HARBOR_PROJECT/repositories/$HARBOR_REPO/artifacts?page_size=100&with_tag=true" \
-        | jq -r '.[].tags[]?.name' \
-        | grep -E '^[0-9]+\.[0-9]+\.[0-9]+$'
+    # No release tag yet is an empty list, not a failure (grep exits 1 on no match, which pipefail would turn into one).
+    jq -r '.[].tags[]?.name' <<< "$body" | { grep -E '^[0-9]+\.[0-9]+\.[0-9]+$' || true; }
 }
 
 check_registry() {

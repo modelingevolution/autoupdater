@@ -27,14 +27,21 @@ public sealed class AppsImageFixture : IAsyncLifetime
     private readonly string _workDir = Directory.CreateTempSubdirectory("apps-image-").FullName;
     private IContainer _healthy = null!;
     private IContainer _tampered = null!;
+    private IContainer _noCheck = null!;
 
     public string Tag { get; } = $"rocketwelder-apps-test:{Guid.NewGuid():N}";
     public byte[] WindowsBytes { get; } = RandomNumberGenerator.GetBytes(2 * 1024 * 1024);
     public HttpClient Healthy { get; private set; } = null!;
     public HttpClient Tampered { get; private set; } = null!;
+    /// <summary>The image started without its start-up check, as another entrypoint would.</summary>
+    public HttpClient NoCheck { get; private set; } = null!;
+    public IContainer HealthyContainer => _healthy;
+    public string WindowsPath => Path.Combine(_workDir, WindowsFile);
+    public string LinuxPath => Path.Combine(_workDir, LinuxFile);
     /// <summary>Its root filesystem is writable and its /tmp allows exec, unlike the compose-restricted one.</summary>
     public IContainer ScratchContainer => _tampered;
     public int HealthyPort => _healthy.GetMappedPublicPort(ContainerPort);
+    public int TamperedPort => _tampered.GetMappedPublicPort(ContainerPort);
 
     public async Task InitializeAsync()
     {
@@ -55,9 +62,9 @@ public sealed class AppsImageFixture : IAsyncLifetime
         _healthy = new ContainerBuilder()
             .WithImage(Tag)
             .WithPortBinding(ContainerPort, true)
-            .WithTmpfsMount("/tmp")
             .WithCreateParameterModifier(p =>
             {
+                p.HostConfig.Tmpfs = new Dictionary<string, string> { ["/tmp"] = "size=16m,mode=1777" };
                 p.HostConfig.ReadonlyRootfs = true;
                 p.HostConfig.CapDrop = ["ALL"];
                 p.HostConfig.SecurityOpt = ["no-new-privileges:true"];
@@ -74,18 +81,28 @@ public sealed class AppsImageFixture : IAsyncLifetime
             .WithWaitStrategy(Wait.ForUnixContainer().UntilHttpRequestIsSucceeded(r => r.ForPort(ContainerPort).ForPath("/health")))
             .Build();
 
-        await Task.WhenAll(_healthy.StartAsync(), _tampered.StartAsync());
+        _noCheck = new ContainerBuilder()
+            .WithImage(Tag)
+            .WithPortBinding(ContainerPort, true)
+            .WithEntrypoint("nginx", "-e", "/dev/stderr", "-g", "daemon off;")
+            .WithWaitStrategy(Wait.ForUnixContainer().UntilHttpRequestIsSucceeded(r => r.ForPort(ContainerPort).ForPath("/health")))
+            .Build();
+
+        await Task.WhenAll(_healthy.StartAsync(), _tampered.StartAsync(), _noCheck.StartAsync());
 
         Healthy = new HttpClient { BaseAddress = new Uri($"http://127.0.0.1:{HealthyPort}/") };
-        Tampered = new HttpClient { BaseAddress = new Uri($"http://127.0.0.1:{_tampered.GetMappedPublicPort(ContainerPort)}/") };
+        Tampered = new HttpClient { BaseAddress = new Uri($"http://127.0.0.1:{TamperedPort}/") };
+        NoCheck = new HttpClient { BaseAddress = new Uri($"http://127.0.0.1:{_noCheck.GetMappedPublicPort(ContainerPort)}/") };
     }
 
     public async Task DisposeAsync()
     {
         Healthy?.Dispose();
         Tampered?.Dispose();
+        NoCheck?.Dispose();
         if (_healthy != null) await _healthy.DisposeAsync();
         if (_tampered != null) await _tampered.DisposeAsync();
+        if (_noCheck != null) await _noCheck.DisposeAsync();
         await Cli.Wrap("docker").WithArguments(["image", "rm", "-f", Tag]).WithValidation(CommandResultValidation.None).ExecuteBufferedAsync();
         Directory.Delete(_workDir, recursive: true);
     }
@@ -107,7 +124,7 @@ public sealed class AppsImageFixture : IAsyncLifetime
         }
     }
 
-    private static string Bash =>
+    public static string Bash =>
         Environment.GetEnvironmentVariable("APPS_TEST_BASH")
         ?? (OperatingSystem.IsWindows()
             // Git Bash, wherever it is installed. A plain "bash" on Windows can resolve to WSL.
@@ -115,13 +132,20 @@ public sealed class AppsImageFixture : IAsyncLifetime
             : "bash");
 
     /// <summary>Runs publish-apps.sh. Paths go through the script's working directory so that Git Bash can resolve them.</summary>
-    public static async Task<BufferedCommandResult> Publish(params string[] args)
+    public static async Task<BufferedCommandResult> Publish(params string[] args) =>
+        await PublishCommand(args).ExecuteBufferedAsync();
+
+    /// <summary>publish-apps.sh, for a caller that sets the environment or checks the exit code itself.</summary>
+    public static Command PublishCommand(params string[] args) => Cli.Wrap(Bash)
+        .WithWorkingDirectory(PackagingDirectory)
+        .WithArguments(new[] { "./publish-apps.sh" }.Concat(args.Select(ForBash)));
+
+    public static string ForBash(string path) => path.Replace('\\', '/');
+
+    /// <summary>docker exec as root, which the image's own user cannot do; only for the writable scratch container.</summary>
+    public async Task ExecAsRoot(string script)
     {
-        var converted = args.Select(a => a.Contains('\\') ? a.Replace('\\', '/') : a);
-        return await Cli.Wrap(Bash)
-            .WithWorkingDirectory(PackagingDirectory)
-            .WithArguments(new[] { "./publish-apps.sh" }.Concat(converted))
-            .ExecuteBufferedAsync();
+        await Cli.Wrap("docker").WithArguments(["exec", "-u", "0", _tampered.Id, "sh", "-c", script]).ExecuteBufferedAsync();
     }
 }
 
@@ -130,12 +154,14 @@ public sealed class AppsImageIntegrationTests(AppsImageFixture image) : IClassFi
     private static string Hash(byte[] bytes) => Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant();
 
     /// <summary>One raw request, because HttpClient would normalise a traversal away before it reached the server.</summary>
-    private async Task<string> RawGet(string path)
+    private Task<string> RawGet(string path) => RawRequest(image.HealthyPort, "GET", path);
+
+    private static async Task<string> RawRequest(int port, string method, string path, string extraHeaders = "")
     {
         using var tcp = new TcpClient();
-        await tcp.ConnectAsync("127.0.0.1", image.HealthyPort);
+        await tcp.ConnectAsync("127.0.0.1", port);
         await using var stream = tcp.GetStream();
-        await stream.WriteAsync(Encoding.ASCII.GetBytes($"GET {path} HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n"));
+        await stream.WriteAsync(Encoding.ASCII.GetBytes($"{method} {path} HTTP/1.1\r\nHost: localhost\r\n{extraHeaders}Connection: close\r\n\r\n"));
         using var reader = new StreamReader(stream, Encoding.Latin1);
         return await reader.ReadToEndAsync();
     }
@@ -238,7 +264,6 @@ public sealed class AppsImageIntegrationTests(AppsImageFixture image) : IClassFi
     [InlineData("/files")]
     [InlineData("/")]
     [InlineData("/SHA256SUMS")]
-    [InlineData("/files/.hidden")]
     public async Task EverythingElse_Is404_WithNoDirectoryListing(string path)
     {
         StatusOf(await RawGet(path)).Should().Be(404);
@@ -271,6 +296,265 @@ public sealed class AppsImageIntegrationTests(AppsImageFixture image) : IClassFi
 
         catalog.Find("android")!.Verified.Should().BeFalse();
         catalog.Find("windows")!.Verified.Should().BeTrue();
+    }
+
+    private static long DerivedMtime(string sha256) => 1577836800 + Convert.ToInt64(sha256[..7], 16);
+
+    private async Task<AppFile> ManifestEntry(string platform) =>
+        (await new AppsCatalogClient(new HttpClient(), new AppsOptions("rocketwelder-apps", image.HealthyPort, new Uri($"http://127.0.0.1:{image.HealthyPort}/"))).GetAsync())
+            .Find(platform)!;
+
+    [Fact]
+    public async Task Container_RunsAsANonRootUser()
+    {
+        // The uid of the process the container started (verify-files.sh, then nginx in its place), not just of an exec.
+        var uid = await image.HealthyContainer.ExecAsync(["awk", "/^Uid:/ { print $2 }", "/proc/1/status"]);
+
+        uid.Stdout.Trim().Should().NotBeEmpty().And.NotBe("0");
+    }
+
+    [Fact]
+    public async Task Download_SaysNoCache_AndItsValidatorsComeFromTheFileHash()
+    {
+        var file = await ManifestEntry("windows");
+        var mtime = DerivedMtime(file.Sha256);
+
+        using var response = await image.Healthy.GetAsync($"files/{file.FileName}", HttpCompletionOption.ResponseHeadersRead);
+
+        response.Headers.CacheControl!.NoCache.Should().BeTrue();
+        response.Content.Headers.LastModified.Should().Be(DateTimeOffset.FromUnixTimeSeconds(mtime));
+        response.Headers.ETag!.Tag.Should().Be($"\"{mtime:x}-{file.Size:x}\"");
+    }
+
+    [Fact]
+    public async Task ResumeWithTheValidatorOfAnotherBuild_GetsTheWholeFile_NeverAMix()
+    {
+        var file = await ManifestEntry("windows");
+        using var current = new HttpRequestMessage(HttpMethod.Get, $"files/{file.FileName}");
+        current.Headers.Range = new RangeHeaderValue(1000, 1999);
+        current.Headers.IfRange = new RangeConditionHeaderValue(new EntityTagHeaderValue($"\"{DerivedMtime(file.Sha256):x}-{file.Size:x}\""));
+        using var older = new HttpRequestMessage(HttpMethod.Get, $"files/{file.FileName}");
+        older.Headers.Range = new RangeHeaderValue(1000, 1999);
+        older.Headers.IfRange = new RangeConditionHeaderValue(new EntityTagHeaderValue($"\"5e0be100-{file.Size:x}\""));
+
+        using var sameBuild = await image.Healthy.SendAsync(current);
+        using var otherBuild = await image.Healthy.SendAsync(older);
+
+        sameBuild.StatusCode.Should().Be(HttpStatusCode.PartialContent);
+        otherBuild.StatusCode.Should().Be(HttpStatusCode.OK);
+        Hash(await otherBuild.Content.ReadAsByteArrayAsync()).Should().Be(file.Sha256);
+    }
+
+    [Fact]
+    public async Task PercentEncodedName_ReachesTheSameFile()
+    {
+        // %52 is "R": nginx decodes before matching, so the encoded form is the same file under the same rules.
+        var response = await RawGet($"/files/%52{AppsImageFixture.WindowsFile[1..]}");
+
+        StatusOf(response).Should().Be(200);
+    }
+
+    [Theory]
+    [InlineData("HEAD", "")]
+    [InlineData("GET", "Range: bytes=0-99\r\n")]
+    [InlineData("GET", "Range: bytes=-1\r\n")]
+    public async Task BlockedFile_Is503_ForEveryWayOfAskingForIt(string method, string headers)
+    {
+        var response = await RawRequest(image.TamperedPort, method, $"/files/{AppsImageFixture.AndroidFile}", headers);
+
+        StatusOf(response).Should().Be(503);
+    }
+
+    [Fact]
+    public async Task BlockedFile_PercentEncoded_Is503()
+    {
+        // %6E is "n".
+        var response = await RawRequest(image.TamperedPort, "GET", $"/files/%6E{AppsImageFixture.AndroidFile[1..]}");
+
+        StatusOf(response).Should().Be(503);
+    }
+
+    [Fact]
+    public async Task ContainerStartedWithoutItsCheck_ServesNoFile()
+    {
+        using var response = await image.NoCheck.GetAsync($"files/{AppsImageFixture.WindowsFile}", HttpCompletionOption.ResponseHeadersRead);
+
+        response.StatusCode.Should().Be(HttpStatusCode.ServiceUnavailable);
+    }
+
+    [Fact]
+    public async Task Symlink_IsRefused_EvenWithAnOkMarker()
+    {
+        // As if the check had passed it: the link exists and carries a marker, so only nginx's own rule stands in the way.
+        await image.ExecAsRoot("ln -sf /etc/passwd /srv/apps/files/link.bin && touch /tmp/apps-state/ok/link.bin");
+
+        var response = await RawRequest(image.TamperedPort, "GET", "/files/link.bin");
+
+        StatusOf(response).Should().Be(403);
+        response.Should().NotContain("root:");
+    }
+
+    [Fact]
+    public async Task DotFile_Is404_EvenWhenItExistsWithAnOkMarker()
+    {
+        await image.ExecAsRoot("printf secret > /srv/apps/files/.hidden && touch /tmp/apps-state/ok/.hidden");
+
+        var response = await RawRequest(image.TamperedPort, "GET", "/files/.hidden");
+
+        StatusOf(response).Should().Be(404);
+        response.Should().NotContain("secret");
+    }
+
+    [Fact]
+    public async Task UnchangedFiles_KeepTheirLayers_WhenAnotherAppChanges()
+    {
+        var dir = Directory.CreateTempSubdirectory("apps-layers-");
+        var tag = $"rocketwelder-apps-test:{Guid.NewGuid():N}";
+        try
+        {
+            var android = Path.Combine(dir.FullName, AppsImageFixture.AndroidFile);
+            await File.WriteAllBytesAsync(android, RandomNumberGenerator.GetBytes(64 * 1024));
+            await AppsImageFixture.Publish(
+                "--release", "1.0.1", "--local-tag", tag,
+                "--windows", image.WindowsPath, "--windows-version", "1.0.0",
+                "--android", android, "--android-version", "1.0.1",
+                "--linux", image.LinuxPath, "--linux-version", "1.0.0");
+
+            var first = await Layers(image.Tag);
+            var second = await Layers(tag);
+
+            // Layer order: base, windows, linux, android, then manifest + SHA256SUMS.
+            second.Should().HaveCount(first.Length);
+            second[..^4].Should().Equal(first[..^4], "the base did not change");
+            second[^4].Should().Be(first[^4], "the windows file did not change");
+            second[^3].Should().Be(first[^3], "the linux file did not change");
+            second[^2].Should().NotBe(first[^2], "the android file changed");
+        }
+        finally
+        {
+            await Cli.Wrap("docker").WithArguments(["image", "rm", "-f", tag]).WithValidation(CommandResultValidation.None).ExecuteBufferedAsync();
+            dir.Delete(recursive: true);
+        }
+
+        static async Task<string[]> Layers(string tag)
+        {
+            var inspect = await Cli.Wrap("docker").WithArguments(["image", "inspect", "-f", "{{range .RootFS.Layers}}{{println .}}{{end}}", tag]).ExecuteBufferedAsync();
+            return inspect.StandardOutput.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        }
+    }
+
+    /// <summary>
+    /// publish-apps.sh against a stub docker that answers the tag lookup as told and records whether a push was attempted.
+    /// </summary>
+    [Theory]
+    [InlineData(1, "ERROR: docker.example.test/rocketwelder/rocketwelder-apps:9.9.9: not found", true, "")]
+    [InlineData(1, "ERROR: failed to authorize: failed to fetch oauth token: 401 Unauthorized", false, "could not check")]
+    [InlineData(1, "ERROR: unauthorized: authentication required (repository not found)", false, "could not check")]
+    [InlineData(1, "ERROR: dial tcp: lookup docker.example.test: no such host", false, "could not check")]
+    [InlineData(0, "Name: docker.example.test/rocketwelder/rocketwelder-apps:9.9.9", false, "already exists")]
+    public async Task PublishScript_PushesOnlyWhenTheRegistrySaysTheTagIsNotFound(int inspectExit, string inspectOutput, bool pushes, string refusal)
+    {
+        var dir = Directory.CreateTempSubdirectory("apps-publish-stub-");
+        try
+        {
+            var bin = Directory.CreateDirectory(Path.Combine(dir.FullName, "bin")).FullName;
+            var log = Path.Combine(dir.FullName, "docker.log");
+            await File.WriteAllTextAsync(Path.Combine(bin, "docker"), """
+                #!/bin/sh
+                echo "$*" >> "$STUB_LOG"
+                if [ "$1 $2 $3" = "buildx imagetools inspect" ]; then echo "$STUB_INSPECT_OUTPUT" >&2; exit "$STUB_INSPECT_EXIT"; fi
+                exit 0
+                """.Replace("\r", ""));
+            if (!OperatingSystem.IsWindows())
+                File.SetUnixFileMode(Path.Combine(bin, "docker"), UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+            var app = Path.Combine(dir.FullName, "a.exe");
+            await File.WriteAllBytesAsync(app, [1, 2, 3]);
+
+            var run = await AppsImageFixture.PublishCommand("--release", "9.9.9", "--registry", "docker.example.test", "--windows", app, "--windows-version", "1.0.0")
+                .WithEnvironmentVariables(e => e
+                    .Set("PATH", bin + Path.PathSeparator + Environment.GetEnvironmentVariable("PATH"))
+                    .Set("STUB_LOG", AppsImageFixture.ForBash(log))
+                    .Set("STUB_INSPECT_EXIT", inspectExit.ToString())
+                    .Set("STUB_INSPECT_OUTPUT", inspectOutput))
+                .WithValidation(CommandResultValidation.None)
+                .ExecuteBufferedAsync();
+
+            var calls = await File.ReadAllTextAsync(log);
+            calls.Should().Contain("buildx imagetools inspect docker.example.test/rocketwelder/rocketwelder-apps:9.9.9", "the stub docker must be the one called");
+            if (pushes)
+            {
+                run.ExitCode.Should().Be(0, run.StandardError);
+                calls.Should().Contain("buildx build --platform");
+            }
+            else
+            {
+                run.ExitCode.Should().NotBe(0);
+                run.StandardError.Should().Contain(refusal);
+                calls.Should().NotContain("buildx build");
+            }
+        }
+        finally
+        {
+            dir.Delete(recursive: true);
+        }
+    }
+
+    /// <summary>
+    /// release.sh in a throwaway clone of a throwaway bare origin. Each case must stop before writing anything.
+    /// </summary>
+    [Theory]
+    [InlineData("remote", "already exists on origin")]
+    [InlineData("local", "already exists locally")]
+    [InlineData("unreachable", "Could not ask origin")]
+    public async Task ReleaseScript_ExistingOrUnknownTag_StopsBeforeChangingTheTree(string situation, string expected)
+    {
+        var dir = Directory.CreateTempSubdirectory("apps-release-");
+        try
+        {
+            var setup = $$"""
+                set -e
+                git init -q --bare origin.git
+                git init -q -b master repo
+                cp -r "{{AppsImageFixture.ForBash(Path.Combine(AppsImageFixture.PackagingDirectory, "compose"))}}"/. repo/
+                cd repo
+                git config user.name test && git config user.email test@example.invalid && git config core.autocrlf false
+                git remote add origin ../origin.git
+                git add -A && git commit -qm init && git push -q origin master
+                case "{{situation}}" in
+                    remote) git tag v1.0.0 && git push -q origin v1.0.0 && git tag -d v1.0.0 > /dev/null ;;
+                    local) git tag v1.0.0 ;;
+                    unreachable) git remote set-url origin ../missing.git ;;
+                esac
+                """;
+            await Cli.Wrap(AppsImageFixture.Bash).WithWorkingDirectory(dir.FullName).WithArguments(["-c", setup.Replace("\r", "")]).ExecuteBufferedAsync();
+            var repo = Path.Combine(dir.FullName, "repo");
+
+            var release = await Cli.Wrap(AppsImageFixture.Bash).WithWorkingDirectory(repo).WithArguments(["./release.sh", "1.0.0"])
+                .WithValidation(CommandResultValidation.None).ExecuteBufferedAsync();
+            var status = await Cli.Wrap("git").WithWorkingDirectory(repo).WithArguments(["status", "--porcelain"]).ExecuteBufferedAsync();
+
+            release.ExitCode.Should().NotBe(0);
+            release.StandardError.Should().Contain(expected);
+            status.StandardOutput.Should().BeEmpty("nothing may be pinned or written when the release stops");
+            File.Exists(Path.Combine(repo, "up-1.0.0.sh")).Should().BeFalse();
+        }
+        finally
+        {
+            foreach (var file in dir.EnumerateFiles("*", SearchOption.AllDirectories)) file.Attributes = FileAttributes.Normal;
+            dir.Delete(recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task ReleaseScript_MessageOptionWithoutAValue_IsAClearError()
+    {
+        var release = await Cli.Wrap(AppsImageFixture.Bash)
+            .WithWorkingDirectory(Path.Combine(AppsImageFixture.PackagingDirectory, "compose"))
+            .WithArguments(["./release.sh", "1.0.0", "-m"])
+            .WithValidation(CommandResultValidation.None).ExecuteBufferedAsync();
+
+        release.ExitCode.Should().NotBe(0);
+        release.StandardError.Should().Contain("needs a message");
     }
 
     [Fact]

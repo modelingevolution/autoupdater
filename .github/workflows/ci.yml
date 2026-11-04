@@ -37,7 +37,7 @@ jobs:
       run: |
         dotnet test tests/ModelingEvolution.AutoUpdater.IntegrationTests/ \
           --configuration Release \
-          --filter "FullyQualifiedName~SshCommandTimeoutIntegrationTests|FullyQualifiedName~SshServiceFileOperationsIntegrationTests|FullyQualifiedName~AppsImageIntegrationTests" \
+          --filter "FullyQualifiedName~SshCommandTimeoutIntegrationTests|FullyQualifiedName~SshServiceFileOperationsIntegrationTests|FullyQualifiedName~AppsImageIntegrationTests|FullyQualifiedName~PackageStatusStartupTests" \
           --logger "console;verbosity=normal"
 
     - name: Upload Allure results

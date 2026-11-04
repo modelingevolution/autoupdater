@@ -64,7 +64,9 @@ main() {
             -h|--help) print_usage; exit 0 ;;
             --dry-run) dry_run=true; shift ;;
             --format=json) FORMAT="json"; shift ;;
-            -m|--message) message="$2"; shift 2 ;;
+            -m|--message)
+                [[ $# -ge 2 && -n "$2" ]] || { print_error "$1 needs a message"; exit 1; }
+                message="$2"; shift 2 ;;
             -*) print_error "Unknown option: $1"; print_usage; exit 1 ;;
             *)
                 if [[ -z "$version" ]]; then version="$1"; shift
@@ -81,6 +83,20 @@ main() {
     validate_version "$version" || exit 1
 
     local tag="v$version"
+
+    # The tag is checked before anything is written: a release that already exists must leave the tree as it was, with
+    # no new pin and no up-X.Y.Z.sh. The remote is asked too, since a local clone may not have fetched every tag.
+    if git -C "$SCRIPT_DIR" tag -l "$tag" | grep -qx "$tag"; then
+        print_error "Tag $tag already exists locally"
+        exit 1
+    fi
+    local remote_status=0
+    git -C "$SCRIPT_DIR" ls-remote --exit-code --tags origin "refs/tags/$tag" > /dev/null || remote_status=$?
+    case "$remote_status" in
+        2) ;;   # not on origin: go ahead
+        0) print_error "Tag $tag already exists on origin"; exit 1 ;;
+        *) print_error "Could not ask origin whether $tag exists (git ls-remote exit $remote_status); nothing was changed"; exit 1 ;;
+    esac
 
     if [[ "$dry_run" == true ]]; then
         print_info "🔍 DRY RUN — would perform:"
@@ -100,15 +116,12 @@ main() {
     printf '#!/bin/sh\nexec sh "$(dirname "$0")/prune-old-images.sh"\n' > "$SCRIPT_DIR/up-$version.sh"
     chmod +x "$SCRIPT_DIR/up-$version.sh"
 
-    if git -C "$SCRIPT_DIR" tag -l | grep -qx "$tag"; then
-        print_error "Tag $tag already exists"
-        exit 1
-    fi
-
-    if [[ -n $(git -C "$SCRIPT_DIR" status --porcelain) ]]; then
+    # Only the files a release changes, never whatever else happens to be in the tree.
+    local release_files=(rocketwelder-apps.version docker-compose.yml docker-compose.x64.yml docker-compose.arm64.yml "up-$version.sh")
+    if [[ -n $(git -C "$SCRIPT_DIR" status --porcelain -- "${release_files[@]}") ]]; then
         print_info "Committing changes..."
-        git -C "$SCRIPT_DIR" add -A
-        git -C "$SCRIPT_DIR" commit -m "${message:-release: $tag}"
+        git -C "$SCRIPT_DIR" add -- "${release_files[@]}"
+        git -C "$SCRIPT_DIR" commit -m "${message:-release: $tag}" -- "${release_files[@]}"
         print_success "✓ Changes committed"
     else
         print_warning "No changes to commit (version already pinned)"

@@ -10,6 +10,7 @@ public enum AppStatus
     ServiceUnavailable,
     NotAvailableYet,
     ChecksumFailed,
+    NotVerified,
     Ready,
 }
 
@@ -36,6 +37,7 @@ public sealed class AppRow(AppGuide guide) : INotifyPropertyChanged
 
         File = file;
         Status = status;
+        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(File)));
         PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(Status)));
     }
 
@@ -45,6 +47,7 @@ public sealed class AppRow(AppGuide guide) : INotifyPropertyChanged
         if (catalog == null) return AppStatus.Checking;
         if (!catalog.Reachable) return package.Deployed ? AppStatus.ServiceUnavailable : AppStatus.NotDownloaded;
         if (file == null) return AppStatus.NotAvailableYet;
-        return file.Verified ? AppStatus.Ready : AppStatus.ChecksumFailed;
+        if (file.Verified) return AppStatus.Ready;
+        return catalog.VerificationKnown ? AppStatus.ChecksumFailed : AppStatus.NotVerified;
     }
 }

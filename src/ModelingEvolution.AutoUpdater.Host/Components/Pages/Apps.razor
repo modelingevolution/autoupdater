@@ -9,6 +9,7 @@
 @inject PackageStateReadModel ReadModel
 @inject IProgressService Progress
 @inject NavigationManager Navigation
+@inject ILogger<Apps> Logger
 
 <PageTitle>Apps</PageTitle>
 
@@ -34,7 +35,7 @@ else
         else if (!context.IsPackageValid)
         {
             <MudAlert Severity="Severity.Error" Class="mb-4" data-testid="apps-package-error">
-                <MudText Typo="Typo.body2">The last download or version check failed: @AppsMessageSanitizer.Sanitize(context.OperationMessage)</MudText>
+                <MudText Typo="Typo.body2">The last download or version check failed. @AppsFailureText.Describe(context.OperationMessage)</MudText>
                 <MudText Typo="Typo.body2">To retry, open <MudLink Href="/">Packages</MudLink>, check the version of this package, then update it.</MudText>
             </MudAlert>
         }
@@ -133,15 +134,25 @@ else
     private Task? _refreshLoop;
 
     private bool ProgressIsOurs => Progress.IsRunning && _package != null && Progress.CurrentApplication == _package.PackageName.ToString();
-    private string ProgressCaption => ProgressIsOurs ? AppsMessageSanitizer.Sanitize(Progress.PhaseMessage ?? Progress.CurrentOperation) : "Starting";
+    // The AutoUpdater's own fixed operation and pull-progress captions (UpdateHost.FormatPullPhase), never error text.
+    private string ProgressCaption => ProgressIsOurs ? Progress.PhaseMessage ?? Progress.CurrentOperation : "Starting";
     private double? ProgressValue => ProgressIsOurs ? Progress.PhaseProgress ?? Progress.ProgressPercentage : null;
 
     protected override void OnInitialized()
     {
-        _package = ReadModel.GetPackageState(new PackageName(CatalogClient.Options.PackageName));
-        if (_package != null) _package.PropertyChanged += OnPackageChanged;
+        AttachPackage();
         Progress.Changed += OnProgressChanged;
         ApplyToRows();
+    }
+
+    /// <summary>Finds the package, also later: one registered while the page is open shows up on the next refresh.</summary>
+    private bool AttachPackage()
+    {
+        if (_package != null) return false;
+        _package = ReadModel.GetPackageState(new PackageName(CatalogClient.Options.PackageName));
+        if (_package == null) return false;
+        _package.PropertyChanged += OnPackageChanged;
+        return true;
     }
 
     protected override void OnAfterRender(bool firstRender)
@@ -161,6 +172,7 @@ else
                 await InvokeAsync(() =>
                 {
                     _catalog = catalog;
+                    if (AttachPackage()) StateHasChanged();
                     ApplyToRows();
                 });
             } while (await timer.WaitForNextTickAsync(stop));
@@ -170,6 +182,11 @@ else
         }
         catch (ObjectDisposedException)
         {
+        }
+        catch (Exception ex)
+        {
+            // Never fault the loop silently, and never let DisposeAsync rethrow: the page just stops refreshing.
+            Logger.LogWarning(ex, "The Apps page stopped refreshing the apps catalog");
         }
     }
 
@@ -197,6 +214,7 @@ else
         AppStatus.ServiceUnavailable => "Unavailable",
         AppStatus.NotAvailableYet => "Not available yet",
         AppStatus.ChecksumFailed => "Checksum failed",
+        AppStatus.NotVerified => "Not verified",
         AppStatus.Ready => "Ready, checksum verified",
         _ => status.ToString(),
     };
@@ -206,6 +224,7 @@ else
         AppStatus.Ready => Color.Success,
         AppStatus.Downloading => Color.Info,
         AppStatus.ChecksumFailed or AppStatus.ServiceUnavailable => Color.Error,
+        AppStatus.NotVerified => Color.Warning,
         _ => Color.Default,
     };
 
