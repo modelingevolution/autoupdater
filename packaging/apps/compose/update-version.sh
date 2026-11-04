@@ -1,8 +1,9 @@
 #!/bin/bash
 
-# RocketWelder Apps Compose — version pin script.
-# `set X.Y.Z` writes rocketwelder-apps.version and seds the pinned image tag across the base +
-# arch overrides. `list` queries the Harbor API for the available :X.Y.Z release tags.
+# Apps compose package: version pin script.
+# `set X.Y.Z` writes apps.version and seds the pinned image tag across the base + arch overrides.
+# `list` queries the Harbor API for the available :X.Y.Z release tags.
+# The image (registry/project/repository) is read from docker-compose.yml, so this script names no product.
 
 set -euo pipefail
 
@@ -14,17 +15,19 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m'
 
-# Harbor registry (the multi-arch image the device pulls).
-REGISTRY="docker.modelingevolution.com"
-IMAGE_NAME="rocketwelder/rocketwelder-apps"   # <project>/<repository> on Harbor
-HARBOR_PROJECT="rocketwelder"
-HARBOR_REPO="rocketwelder-apps"
+# The pinned image, e.g. registry.example.com/example/apps:1.2.0 -> registry registry.example.com, Harbor project
+# example, repository apps.
+IMAGE_REF="$(sed -n 's/^[[:space:]]*image:[[:space:]]*\([^[:space:]]*\).*/\1/p' "$SCRIPT_DIR/docker-compose.yml" | head -1)"
+IMAGE_REPO="${IMAGE_REF%:*}"
+REGISTRY="${IMAGE_REPO%%/*}"
+IMAGE_NAME="${IMAGE_REPO#*/}"                 # <project>/<repository> on Harbor
+HARBOR_PROJECT="${IMAGE_NAME%%/*}"
+HARBOR_REPO="${IMAGE_NAME#*/}"
 HARBOR_API="https://$REGISTRY/api/v2.0"
-# Optional Harbor API credentials (a pull robot) for the private project. Export before
-# running `list`:
-#   HARBOR_USERNAME='robot$rocketwelder+deploy-pull' HARBOR_PASSWORD='<secret>'
+# Optional Harbor API credentials (a pull robot) for a private project. Export before running `list`:
+#   HARBOR_USERNAME='robot$<project>+<name>' HARBOR_PASSWORD='<secret>'
 
-VERSION_FILE="$SCRIPT_DIR/rocketwelder-apps.version"
+VERSION_FILE="$SCRIPT_DIR/apps.version"
 COMPOSE_FILE="$SCRIPT_DIR/docker-compose.yml"
 ARCH_FILES=("$SCRIPT_DIR/docker-compose.x64.yml" "$SCRIPT_DIR/docker-compose.arm64.yml")
 FORMAT="text"
@@ -35,7 +38,7 @@ log_warn()  { if [ "$FORMAT" = "json" ]; then echo -e "${YELLOW}[WARN]${NC} $1" 
 
 show_help() {
     cat << EOF
-RocketWelder Apps Compose — version pin script
+Apps compose package: version pin script
 
 USAGE:
     ./update-version.sh <command> [options]
@@ -51,7 +54,7 @@ OPTIONS:
     --format=json           Output the result as JSON (for scripting)
 
 ENVIRONMENT (for 'list' on the private project):
-    HARBOR_USERNAME         Harbor robot/user (e.g. 'robot$rocketwelder+deploy-pull')
+    HARBOR_USERNAME         Harbor robot/user (e.g. 'robot$<project>+<name>')
     HARBOR_PASSWORD         Harbor robot/user secret
 
 JSON OUTPUT FORMAT:
@@ -137,7 +140,7 @@ set_version() {
     fi
 
     echo "$new_version" > "$VERSION_FILE"
-    log_info "✓ Pinned rocketwelder-apps.version to $new_version"
+    log_info "✓ Pinned apps.version to $new_version"
 
     sed -i "s|image: $REGISTRY/$IMAGE_NAME:[^[:space:]]*|image: $REGISTRY/$IMAGE_NAME:$new_version|g" "$COMPOSE_FILE"
     log_info "✓ Updated $(basename "$COMPOSE_FILE") image tag"

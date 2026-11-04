@@ -25,10 +25,16 @@ public static class ConfigurationExtensions
         logger.LogInformation("  VpnProviderAccess: {VpnProviderAccess}", configuration.VpnProviderAccess());
 
         // Apps page
+        var apps = ModelingEvolution.AutoUpdater.Apps.AppsSettings.From(configuration);
         logger.LogInformation("Apps Configuration:");
-        logger.LogInformation("  Apps:PackageName: {AppsPackageName}", configuration.AppsPackageName());
-        logger.LogInformation("  Apps:Port: {AppsPort}", configuration.AppsPort());
-        logger.LogInformation("  Apps:InternalBaseUrl: {AppsInternalBaseUrl}", configuration.AppsInternalBaseUrl());
+        logger.LogInformation("  Apps:Enabled: {AppsEnabled}", apps.Enabled);
+        if (apps.Options is { } options)
+        {
+            logger.LogInformation("  Apps:SourceUrl: {AppsSourceUrl}", options.SourceUrl);
+            logger.LogInformation("  Apps:Title: {AppsTitle}", options.Title);
+            logger.LogInformation("  Apps:PackageName: {AppsPackageName}", options.PackageName ?? "Not set");
+        }
+        if (apps.Error != null) logger.LogError("Apps configuration error: {AppsError}", apps.Error);
 
         // Environment Information
         logger.LogInformation("Environment:");
@@ -38,7 +44,7 @@ public static class ConfigurationExtensions
         logger.LogInformation("=========================================");
     }
     
-    // Extension methods for common configuration values following the rocket-welder pattern
+    // Extension methods for common configuration values 
     public static string SshUser(this IConfiguration configuration) => 
         configuration.GetValue<string>("SshUser") ?? string.Empty;
     
@@ -72,15 +78,9 @@ public static class ConfigurationExtensions
         configuration.GetValue<string>("SshHost") ?? string.Empty;
 
     private const string HostAddressKey = "HostAddress";
-    private const string AppsPackageNameKey = "Apps:PackageName";
-    private const string AppsPortKey = "Apps:Port";
-    private const string AppsInternalBaseUrlKey = "Apps:InternalBaseUrl";
 
     /// <summary>The Docker host's address on the default bridge, as seen from inside a container.</summary>
     public const string DefaultDockerHost = "172.17.0.1";
-
-    public const string DefaultAppsPackageName = "rocketwelder-apps";
-    public const int DefaultAppsPort = 8095;
 
     /// <summary>The host the AutoUpdater container reaches: SshHost, else HostAddress, else the Docker bridge.</summary>
     public static string DockerHostAddress(this IConfiguration configuration)
@@ -90,25 +90,4 @@ public static class ConfigurationExtensions
         var hostAddress = configuration.GetValue<string>(HostAddressKey);
         return string.IsNullOrWhiteSpace(hostAddress) ? DefaultDockerHost : hostAddress;
     }
-
-    /// <summary>The package whose container serves the apps (packaging/apps/compose).</summary>
-    public static string AppsPackageName(this IConfiguration configuration)
-    {
-        var name = configuration.GetValue<string>(AppsPackageNameKey);
-        return string.IsNullOrWhiteSpace(name) ? DefaultAppsPackageName : name;
-    }
-
-    /// <summary>The LAN port the apps container publishes; browsers download from it.</summary>
-    public static int AppsPort(this IConfiguration configuration) =>
-        int.TryParse(configuration.GetValue<string>(AppsPortKey), System.Globalization.NumberStyles.None,
-            System.Globalization.CultureInfo.InvariantCulture, out var port) && port is > 0 and < 65536
-            ? port
-            : DefaultAppsPort;
-
-    /// <summary>Where the AutoUpdater reads the apps manifest: configured, else the Docker host at the apps port.</summary>
-    public static Uri AppsInternalBaseUrl(this IConfiguration configuration) =>
-        Uri.TryCreate(configuration.GetValue<string>(AppsInternalBaseUrlKey), UriKind.Absolute, out var configured)
-            && (configured.Scheme == Uri.UriSchemeHttp || configured.Scheme == Uri.UriSchemeHttps)
-            ? configured
-            : new UriBuilder(Uri.UriSchemeHttp, configuration.DockerHostAddress(), configuration.AppsPort()).Uri;
 }

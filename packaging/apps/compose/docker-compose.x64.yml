@@ -1,6 +1,6 @@
 # x86_64 override, selected by AutoUpdater on `uname -m` = x86_64. Pulls the multi-arch image; never builds.
 
 services:
-  rocketwelder-apps:
-    image: docker.modelingevolution.com/rocketwelder/rocketwelder-apps:0.0.0
+  apps:
+    image: registry.example.com/example/apps:0.0.0
     platform: linux/amd64

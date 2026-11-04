@@ -1,0 +1,9 @@
+{
+  "schemaVersion": 2,
+  "release": "1.2.0",
+  "apps": [
+    {"id": "windows", "title": "Example Viewer for Windows",
+     "version": "2.1.0", "file": "ExampleViewer-2.1.0.msi", "size": 48234496, "guide": "windows.md"},
+    {"id": "android", "title": "Example Viewer for Android", "guide": "android.md"}
+  ]
+}

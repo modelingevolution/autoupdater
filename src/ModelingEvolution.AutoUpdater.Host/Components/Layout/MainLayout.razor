@@ -1,5 +1,6 @@
 ﻿@inherits LayoutComponentBase
 @inject NavigationManager Navigation
+@inject ModelingEvolution.AutoUpdater.Apps.AppsSettings Apps
 
 @* Required *@
 <MudThemeProvider @bind-IsDarkMode="_isDark"/>
@@ -25,7 +26,10 @@
         </MudDrawerHeader>
         <MudNavMenu>
             <MudNavLink Href="/" Match="NavLinkMatch.All" Icon="@Icons.Material.Filled.Dashboard">Packages</MudNavLink>
-            <MudNavLink Href="/apps" Match="NavLinkMatch.Prefix" Icon="@Icons.Material.Filled.GetApp" data-testid="nav-apps">Apps</MudNavLink>
+            @if (Apps.Options is { } apps)
+            {
+                <MudNavLink Href="/apps" Match="NavLinkMatch.Prefix" Icon="@Icons.Material.Filled.GetApp" data-testid="nav-apps">@apps.Title</MudNavLink>
+            }
             <MudNavLink Href="/remote-support" Match="NavLinkMatch.Prefix" Icon="@Icons.Material.Filled.Support">Remote Support</MudNavLink>
         </MudNavMenu>
         <div style="display: flex; flex-direction: column; height: 100%;">

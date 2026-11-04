@@ -1,0 +1,10 @@
+@using ModelingEvolution.AutoUpdater.Apps
+
+@* An app's install guide, from the apps image: untrusted markdown. AppGuideMarkdown.Pipeline does not parse raw HTML,
+   drops images and keeps only http, https and relative link targets; RawValue means the text is the markdown itself,
+   never a file or URL to fetch. *@
+<MudMarkdown Value="@Markdown" SourceType="MarkdownSourceType.RawValue" MarkdownPipeline="@AppGuideMarkdown.Pipeline" />
+
+@code {
+    [Parameter, EditorRequired] public string? Markdown { get; set; }
+}

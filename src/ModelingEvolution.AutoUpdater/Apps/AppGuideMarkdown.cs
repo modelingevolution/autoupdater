@@ -1,0 +1,122 @@
+using System.Text;
+using Markdig;
+using Markdig.Syntax;
+using Markdig.Syntax.Inlines;
+
+namespace ModelingEvolution.AutoUpdater.Apps;
+
+/// <summary>
+/// The markdown rules for an app's install guide. The guide comes from the apps image, so it is untrusted: raw HTML is not
+/// parsed (it stays visible as text), every image is replaced by its alt text, and a link keeps its target only when that is
+/// http, https or relative; any other link (javascript:, data:, file:, protocol-relative //host, ...) is reduced to its text.
+/// The cleanup runs on the parsed document, so it holds for whichever renderer gets <see cref="Pipeline"/>.
+/// </summary>
+public static class AppGuideMarkdown
+{
+    /// <summary>The largest guide the AutoUpdater reads; a larger one is "unavailable".</summary>
+    public const int MaxBytes = 64 * 1024;
+
+    private static readonly UTF8Encoding StrictUtf8 = new(encoderShouldEmitUTF8Identifier: false, throwOnInvalidBytes: true);
+
+    public static MarkdownPipeline Pipeline { get; } = CreatePipeline();
+
+    private static MarkdownPipeline CreatePipeline()
+    {
+        var builder = new MarkdownPipelineBuilder().DisableHtml();
+        builder.DocumentProcessed += Sanitize;
+        return builder.Build();
+    }
+
+    /// <summary>
+    /// The guide's text, or null when it is empty, too large, not valid UTF-8, or markdown that Markdig refuses to parse
+    /// (it throws past its nesting limit). Parsed once here, so the renderer never meets a guide that would throw.
+    /// </summary>
+    public static string? Decode(ReadOnlySpan<byte> bytes)
+    {
+        if (bytes.IsEmpty || bytes.Length > MaxBytes) return null;
+        if (bytes.StartsWith((ReadOnlySpan<byte>)[0xEF, 0xBB, 0xBF])) bytes = bytes[3..];
+        string text;
+        try
+        {
+            text = StrictUtf8.GetString(bytes);
+        }
+        catch (DecoderFallbackException)
+        {
+            return null;
+        }
+
+        if (string.IsNullOrWhiteSpace(text)) return null;
+        try
+        {
+            Markdown.Parse(text, Pipeline);
+            return text;
+        }
+        catch (ArgumentException)
+        {
+            return null;
+        }
+    }
+
+    /// <summary>http or https, or a relative reference with no scheme that does not start with // or a backslash.</summary>
+    public static bool IsAllowedUrl(string? url)
+    {
+        if (string.IsNullOrWhiteSpace(url)) return false;
+        var trimmed = url.Trim();
+        if (trimmed.Any(c => char.IsControl(c) || char.IsWhiteSpace(c))) return false;
+        if (trimmed.StartsWith("//") || trimmed.StartsWith('\\') || trimmed.StartsWith("/\\")) return false;
+
+        var end = trimmed.IndexOfAny(['/', '?', '#']);
+        var head = end < 0 ? trimmed : trimmed[..end];
+        if (!head.Contains(':')) return true;
+
+        return Uri.TryCreate(trimmed, UriKind.Absolute, out var absolute)
+               && (absolute.Scheme == Uri.UriSchemeHttp || absolute.Scheme == Uri.UriSchemeHttps);
+    }
+
+    private static void Sanitize(MarkdownDocument document)
+    {
+        // Collected first: replacing while walking would invalidate the walk.
+        var html = document.Descendants<HtmlBlock>().ToList();
+        foreach (var block in html)
+        {
+            var paragraph = new ParagraphBlock { Inline = new ContainerInline().AppendChild(new LiteralInline(block.Lines.ToString())) };
+            var parent = block.Parent!;
+            parent[parent.IndexOf(block)] = paragraph;
+        }
+
+        foreach (var inline in document.Descendants<HtmlInline>().ToList())
+            inline.ReplaceBy(new LiteralInline(inline.Tag ?? ""));
+
+        foreach (var autolink in document.Descendants<AutolinkInline>().ToList())
+        {
+            if (autolink.IsEmail || !IsAllowedUrl(autolink.Url)) autolink.ReplaceBy(new LiteralInline(autolink.Url ?? ""));
+        }
+
+        foreach (var link in document.Descendants<LinkInline>().ToList())
+        {
+            if (link.IsImage) link.ReplaceBy(new LiteralInline(TextOf(link)));
+            else if (!IsAllowedUrl(link.Url)) Unwrap(link);
+        }
+    }
+
+    /// <summary>Puts a link's children where the link was, so its text stays and its target goes.</summary>
+    private static void Unwrap(LinkInline link)
+    {
+        Inline anchor = link;
+        foreach (var child in link.ToList())
+        {
+            child.Remove();
+            anchor.InsertAfter(child);
+            anchor = child;
+        }
+
+        link.Remove();
+    }
+
+    private static string TextOf(ContainerInline container)
+    {
+        var text = new StringBuilder();
+        foreach (var literal in container.Descendants<LiteralInline>()) text.Append(literal.Content.ToString());
+        return text.ToString();
+    }
+}

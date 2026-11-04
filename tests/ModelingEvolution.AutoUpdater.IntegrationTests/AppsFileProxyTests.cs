@@ -10,6 +10,7 @@ using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Hosting.Server;
 using Microsoft.AspNetCore.Hosting.Server.Features;
 using Microsoft.AspNetCore.Http;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using ModelingEvolution.AutoUpdater.Apps;
@@ -48,9 +49,7 @@ public sealed class TestWebServer : IAsyncDisposable
 
     /// <summary>The AutoUpdater's /apps/files/{name} endpoint, reading the catalog from and proxying to <paramref name="container"/>.</summary>
     public static Task<TestWebServer> StartProxyAsync(Uri container, AppsFileProxyLimits? limits = null) => StartAsync(
-        services => services
-            .AddSingleton(new AppsCatalogClient(AppsCatalogClient.CreateHttpClient(), new AppsOptions("rocketwelder-apps", container.Port, container)))
-            .AddSingleton(sp => new AppsFileProxy(sp.GetRequiredService<AppsCatalogClient>(), sp.GetRequiredService<ILogger<AppsFileProxy>>(), limits)),
+        services => services.AddApps(new AppsSettings(new AppsOptions(container), null), limits),
         app => app.MapAppsEndpoints());
 
     public async ValueTask DisposeAsync()
@@ -62,23 +61,22 @@ public sealed class TestWebServer : IAsyncDisposable
 
 /// <summary>
 /// Stands in for the apps container where a test must control its timing or see every request it gets. Lists the given
-/// files as verified; <see cref="Serve"/> answers for them.
+/// files in its manifest.json; <see cref="Serve"/> answers for them.
 /// </summary>
 public sealed class FakeAppsContainer : IAsyncDisposable
 {
     private TestWebServer _server = null!;
 
     public ConcurrentQueue<string> Requests { get; } = new();
-    public required (string Platform, string Name)[] Files { get; init; }
+    public required (string Id, string Name)[] Files { get; init; }
     public required Func<HttpContext, string, Task> Serve { get; init; }
     public Uri BaseAddress => _server.BaseAddress;
     public int FileRequests => Requests.Count(p => p.StartsWith("/files/"));
 
     public async Task<FakeAppsContainer> StartAsync()
     {
-        var sha = new string('a', 64);
-        var manifest = "{\"apps\":[" + string.Join(",", Files.Select(f =>
-            $"{{\"platform\":\"{f.Platform}\",\"version\":\"1\",\"file\":\"{f.Name}\",\"size\":1,\"sha256\":\"{sha}\"}}")) + "]}";
+        var manifest = "{\"schemaVersion\":2,\"apps\":[" + string.Join(",", Files.Select(f =>
+            $"{{\"id\":\"{f.Id}\",\"title\":\"Example Viewer\",\"version\":\"1\",\"file\":\"{f.Name}\",\"size\":1}}")) + "]}";
         _server = await TestWebServer.StartAsync(_ => { }, app =>
         {
             app.Use(async (context, next) =>
@@ -87,7 +85,6 @@ public sealed class FakeAppsContainer : IAsyncDisposable
                 await next();
             });
             app.MapGet("/manifest.json", () => Results.Text(manifest, "application/json"));
-            app.MapGet("/verification.json", () => Results.Text("""{"state":"verified","blocked":[]}""", "application/json"));
             app.MapMethods("/files/{name}", [HttpMethods.Get, HttpMethods.Head], (HttpContext context, string name) => Serve(context, name));
         });
         return this;
@@ -112,11 +109,10 @@ public sealed class RawFakeContainer : IAsyncDisposable
     {
         var container = new RawFakeContainer();
         container._listener.Start();
-        var manifest = $$"""{"apps":[{"platform":"windows","version":"1","file":"{{fileName}}","size":1,"sha256":"{{new string('a', 64)}}"}]}""";
+        var manifest = $$"""{"schemaVersion":2,"apps":[{"id":"windows","title":"Example Viewer","version":"1","file":"{{fileName}}","size":1}]}""";
         container._loop = container.ServeAsync(path => path switch
         {
             "/manifest.json" => Ok(manifest),
-            "/verification.json" => Ok("""{"state":"verified","blocked":[]}"""),
             _ => Encoding.Latin1.GetBytes(fileResponse),
         });
         return Task.FromResult(container);
@@ -157,7 +153,6 @@ public sealed class AppsFileProxyTests(AppsImageFixture image) : IClassFixture<A
     private static string Hash(byte[] bytes) => Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant();
 
     private Uri Healthy => new($"http://127.0.0.1:{image.HealthyPort}/");
-    private Uri Tampered => new($"http://127.0.0.1:{image.TamperedPort}/");
 
     private static HttpClient ClientFor(TestWebServer proxy) => new() { BaseAddress = proxy.BaseAddress };
 
@@ -267,28 +262,12 @@ public sealed class AppsFileProxyTests(AppsImageFixture image) : IClassFixture<A
         response.StatusCode.Should().Be(HttpStatusCode.RequestedRangeNotSatisfiable);
     }
 
-    [Fact]
-    public async Task FileTheContainerBlocked_IsNotOffered_ThroughTheProxy()
-    {
-        // The tampered container's verification lists the Android file as blocked, so it is not in the verified catalog.
-        await using var proxy = await TestWebServer.StartProxyAsync(Tampered);
-        using var client = ClientFor(proxy);
-
-        using var blocked = await client.GetAsync(AppsOptions.DownloadPath(AppsImageFixture.AndroidFile));
-        using var unlisted = await client.GetAsync(AppsOptions.DownloadPath("unlisted.bin"));
-        using var intact = await client.GetAsync(AppsOptions.DownloadPath(AppsImageFixture.WindowsFile));
-
-        blocked.StatusCode.Should().Be(HttpStatusCode.NotFound);
-        unlisted.StatusCode.Should().Be(HttpStatusCode.NotFound);
-        intact.StatusCode.Should().Be(HttpStatusCode.OK);
-    }
-
     // ---- Against a fake container, which shows every request it gets and controls its timing ----
 
     [Fact]
     public async Task ContainerAnswers503_IsPassedThrough()
     {
-        // Verified when the catalog was read, refused by the container now (it re-checked after a restart, say).
+        // Listed in the manifest, refused by the container itself.
         await using var container = await new FakeAppsContainer
         {
             Files = [("windows", "a.msi")],
@@ -344,8 +323,7 @@ public sealed class AppsFileProxyTests(AppsImageFixture image) : IClassFixture<A
         using var response = await client.GetAsync(AppsOptions.DownloadPath("other.msi"));
 
         response.StatusCode.Should().Be(HttpStatusCode.NotFound);
-        container.Requests.Count.Should().Be(before, "the catalog read for a.msi is still fresh, and other.msi is not in it");
-        container.Requests.Should().NotContain("/files/other.msi");
+        container.Requests.Skip(before).Should().Equal(["/manifest.json"], "the manifest is read afresh, and other.msi is not in it");
     }
 
     [Theory]
@@ -518,7 +496,7 @@ public sealed class AppsFileProxyTests(AppsImageFixture image) : IClassFixture<A
         refused.Headers.RetryAfter!.Delta.Should().Be(TimeSpan.FromSeconds(AppsFileProxy.RetryAfterSeconds));
         container.FileRequests.Should().Be(2, "the refused download never reached the container");
         catalog.Reachable.Should().BeTrue();
-        catalog.Files.Should().ContainSingle(f => f.FileName == "hold.msi" && f.Verified);
+        catalog.Files.Should().ContainSingle(f => f.FileName == "hold.msi");
 
         // A browser that leaves gives its slot back.
         held[0].Dispose();
@@ -648,5 +626,64 @@ public sealed class AppsFileProxyTests(AppsImageFixture image) : IClassFixture<A
         // The whole process (client, proxy and fake container together) allocated far less than the file: nothing held it.
         allocated.Should().BeLessThan(32L * 1024 * 1024, $"{allocated / (1024 * 1024)} MB were allocated to move 256 MB");
         peakHeap.Should().BeLessThan(128L * 1024 * 1024);
+    }
+}
+
+/// <summary>
+/// The Apps switch, on the AutoUpdater's own pipeline pieces: <c>AddApps</c>, <c>UseAppsGate</c> and <c>MapAppsEndpoints</c>.
+/// A plain <c>/apps</c> endpoint stands in for the Razor page, which the gate must hide the same way.
+/// </summary>
+public sealed class AppsSwitchTests
+{
+    private static Task<TestWebServer> StartAsync(AppsSettings settings) => TestWebServer.StartAsync(
+        services => services.AddApps(settings),
+        app =>
+        {
+            app.UseAppsGate();
+            app.MapAppsEndpoints();
+            app.MapGet("/apps", () => "the page");
+            app.MapGet("/packages", () => "another page");
+        });
+
+    [Fact]
+    public async Task Disabled_AppsAndEverythingUnderIt_Is404_AndNothingReadsTheImage()
+    {
+        await using var server = await StartAsync(AppsSettings.Disabled);
+        using var client = new HttpClient { BaseAddress = server.BaseAddress };
+
+        (await client.GetAsync("apps")).StatusCode.Should().Be(HttpStatusCode.NotFound);
+        (await client.GetAsync("Apps/")).StatusCode.Should().Be(HttpStatusCode.NotFound);
+        (await client.GetAsync(AppsOptions.DownloadPath("a.msi"))).StatusCode.Should().Be(HttpStatusCode.NotFound);
+        (await client.GetAsync("packages")).StatusCode.Should().Be(HttpStatusCode.OK, "only /apps is gated");
+        server.Services.GetService<AppsCatalogClient>().Should().BeNull();
+        server.Services.GetService<AppsFileProxy>().Should().BeNull();
+    }
+
+    [Fact]
+    public async Task EnabledButMisconfigured_IsOffLikeDisabled()
+    {
+        var settings = AppsSettings.From(new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?> { ["Apps:Enabled"] = "true" }).Build());
+        await using var server = await StartAsync(settings);
+        using var client = new HttpClient { BaseAddress = server.BaseAddress };
+
+        settings.Error.Should().Contain("Apps:SourceUrl");
+        (await client.GetAsync("apps")).StatusCode.Should().Be(HttpStatusCode.NotFound);
+        server.Services.GetService<AppsCatalogClient>().Should().BeNull();
+    }
+
+    [Fact]
+    public async Task Enabled_ThePageAndTheFileProxyAreServed()
+    {
+        await using var container = await new FakeAppsContainer
+        {
+            Files = [("viewer", "a.msi")],
+            Serve = (context, _) => context.Response.WriteAsync("x"),
+        }.StartAsync();
+        await using var server = await StartAsync(new AppsSettings(new AppsOptions(container.BaseAddress), null));
+        using var client = new HttpClient { BaseAddress = server.BaseAddress };
+
+        (await client.GetStringAsync("apps")).Should().Be("the page");
+        (await client.GetStringAsync(AppsOptions.DownloadPath("a.msi"))).Should().Be("x");
     }
 }

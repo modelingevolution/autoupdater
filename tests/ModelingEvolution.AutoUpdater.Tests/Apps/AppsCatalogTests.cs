@@ -1,67 +1,50 @@
 using System.Net;
-using System.Text;
-using FluentAssertions;
-using Microsoft.Extensions.Configuration;
 using System.Net.Sockets;
+using System.Text;
+using Bunit;
+using FluentAssertions;
+using Markdig;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
 using ModelingEvolution.AutoUpdater.Apps;
 using ModelingEvolution.AutoUpdater.Extensions;
+using ModelingEvolution.AutoUpdater.Host.Components.Shared;
+using MudBlazor;
+using MudBlazor.Services;
 
 namespace ModelingEvolution.AutoUpdater.Tests.Apps;
 
 public class AppsManifestTests
 {
-    private const string Sha = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    private static string Entry(string id = "viewer", string title = "Example Viewer", string? file = "\"version\":\"1.2.3\",\"file\":\"setup.exe\",\"size\":10", string? guide = "\"guide\":\"viewer.md\"")
+    {
+        var parts = new List<string> { $"\"id\":\"{id}\"", $"\"title\":{System.Text.Json.JsonSerializer.Serialize(title)}" };
+        if (file != null) parts.Add(file);
+        if (guide != null) parts.Add(guide);
+        return "{" + string.Join(",", parts) + "}";
+    }
 
-    private static string Manifest(string file = "setup.exe", string sha = Sha, string version = "1.2.3", long size = 10, string platform = "windows") =>
-        $$"""{"schemaVersion":1,"release":"1.0.0","apps":[{"platform":"{{platform}}","version":"{{version}}","file":"{{file}}","size":{{size}},"sha256":"{{sha}}"}]}""";
-
-    private const string AllVerified = """{"state":"verified","blocked":[]}""";
+    private static string Manifest(params string[] entries) =>
+        $$"""{"schemaVersion":2,"release":"1.0.0","apps":[{{string.Join(",", entries)}}]}""";
 
     [Fact]
-    public void Parse_ValidDocuments_ReturnsVerifiedFile()
+    public void Parse_ExampleFixture_ReadsBothAppsInOrder()
     {
-        var catalog = AppsManifest.Parse(Manifest(), AllVerified);
+        var catalog = AppsManifest.Parse(File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "Fixtures", "Apps", "manifest.json")));
 
         catalog.Reachable.Should().BeTrue();
-        catalog.Release.Should().Be("1.0.0");
-        catalog.Find("windows").Should().Be(new AppFile("windows", "1.2.3", "setup.exe", 10, Sha, true));
+        catalog.Release.Should().Be("1.2.0");
+        catalog.Apps.Should().Equal(
+            new AppEntry("windows", "Example Viewer for Windows", new AppFile("2.1.0", "ExampleViewer-2.1.0.msi", 48234496), "windows.md"),
+            new AppEntry("android", "Example Viewer for Android", null, "android.md"));
     }
 
     [Fact]
-    public void Parse_FileBlockedByTheContainer_IsNotVerified()
+    public void Parse_AppWithoutFileOrGuide_IsListedWithNeither()
     {
-        var catalog = AppsManifest.Parse(Manifest(), """{"state":"failed","blocked":["setup.exe"]}""");
+        var app = AppsManifest.Parse(Manifest(Entry(file: null, guide: null))).Find("viewer");
 
-        catalog.Find("windows")!.Verified.Should().BeFalse();
-    }
-
-    [Fact]
-    public void Parse_OtherFileBlocked_ThisOneStaysVerified()
-    {
-        var catalog = AppsManifest.Parse(Manifest(), """{"state":"failed","blocked":["other.apk"]}""");
-
-        catalog.Find("windows")!.Verified.Should().BeTrue();
-    }
-
-    [Theory]
-    [InlineData(null)]
-    [InlineData("")]
-    [InlineData("not json")]
-    [InlineData("[]")]
-    [InlineData("""{"state":"unknown","blocked":[]}""")]
-    [InlineData("""{"state":"verified"}""")]
-    public void Parse_NoUsableVerification_FailsClosed(string? verification)
-    {
-        var catalog = AppsManifest.Parse(Manifest(), verification);
-
-        catalog.Find("windows")!.Verified.Should().BeFalse();
-        catalog.VerificationKnown.Should().BeFalse();
-    }
-
-    [Fact]
-    public void Parse_ContainerReportedItsCheck_VerificationIsKnown()
-    {
-        AppsManifest.Parse(Manifest(), """{"state":"failed","blocked":["setup.exe"]}""").VerificationKnown.Should().BeTrue();
+        app.Should().Be(new AppEntry("viewer", "Example Viewer", null, null));
     }
 
     [Theory]
@@ -69,96 +52,352 @@ public class AppsManifestTests
     [InlineData("")]
     [InlineData("<html>not json</html>")]
     [InlineData("[]")]
-    [InlineData("""{"apps":"nope"}""")]
     [InlineData("{")]
+    [InlineData("""{"schemaVersion":2,"apps":"nope"}""")]
     public void Parse_BrokenManifest_IsUnreachableAndDoesNotThrow(string? manifest)
     {
-        AppsManifest.Parse(manifest, AllVerified).Should().Be(AppsCatalog.Unreachable);
+        AppsManifest.Parse(manifest).Should().Be(AppsCatalog.Unreachable);
     }
 
     [Theory]
-    [InlineData("../../etc/passwd")]
-    [InlineData("..")]
-    [InlineData(".hidden")]
-    [InlineData("a/b.exe")]
-    [InlineData("a b.exe")]
-    [InlineData("a%2fb.exe")]
-    [InlineData("<script>.exe")]
-    public void Parse_UnsafeFileName_DropsTheEntry(string file)
+    [InlineData("""{"apps":[]}""", "?")]
+    [InlineData("""{"schemaVersion":1,"apps":[]}""", "1")]
+    [InlineData("""{"schemaVersion":3,"apps":[]}""", "3")]
+    [InlineData("""{"schemaVersion":"2","apps":[]}""", "?")]
+    [InlineData("""{"schemaVersion":2.5,"apps":[]}""", "2.5")]
+    [InlineData("""{"schemaVersion":99999999999999999999,"apps":[]}""", "?")]
+    public void Parse_UnknownSchemaVersion_IsRefusedWithWhatItDeclared(string manifest, string declared)
     {
-        AppsManifest.Parse(Manifest(file: file), AllVerified).Files.Should().BeEmpty();
+        var catalog = AppsManifest.Parse(manifest);
+
+        catalog.Reachable.Should().BeFalse();
+        catalog.Apps.Should().BeEmpty();
+        catalog.UnsupportedSchemaVersion.Should().Be(declared);
     }
 
     [Theory]
-    [InlineData("short")]
-    [InlineData("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")]
-    public void Parse_MalformedSha256_DropsTheEntry(string sha)
+    [InlineData("Windows")]
+    [InlineData("-viewer")]
+    [InlineData("view er")]
+    [InlineData("viewer\n")]
+    [InlineData("abcdefghijklmnopqrstuvwxyz0123456")]
+    [InlineData("")]
+    public void Parse_InvalidId_DropsTheEntry(string id)
     {
-        AppsManifest.Parse(Manifest(sha: sha), AllVerified).Files.Should().BeEmpty();
-    }
-
-    [Theory]
-    [InlineData(0)]
-    [InlineData(-1)]
-    public void Parse_NonPositiveSize_DropsTheEntry(long size)
-    {
-        AppsManifest.Parse(Manifest(size: size), AllVerified).Files.Should().BeEmpty();
+        AppsManifest.Parse(Manifest(Entry(id: id))).Apps.Should().BeEmpty();
     }
 
     [Fact]
-    public void Parse_UnknownPlatform_DropsTheEntry()
+    public void Parse_TitleOverTheLimit_DropsTheEntry_AtTheLimitKeepsIt()
     {
-        AppsManifest.Parse(Manifest(platform: "beos"), AllVerified).Files.Should().BeEmpty();
+        AppsManifest.Parse(Manifest(Entry(title: new string('x', 81)))).Apps.Should().BeEmpty();
+        AppsManifest.Parse(Manifest(Entry(title: new string('x', 80)))).Apps.Should().ContainSingle();
+    }
+
+    public static TheoryData<string> HostileTitles() =>
+    [
+        "",
+        "   ",
+        "line\nbreak",
+        "tab\there",
+        "nul\0",
+        "del" + (char)0x7F,
+        "c1" + (char)0x85,
+        "override" + (char)0x202E + "exe.txt",
+        "isolate" + (char)0x2066,
+        "separator" + (char)0x2028,
+    ];
+
+    [Theory]
+    [MemberData(nameof(HostileTitles))]
+    public void Parse_TitleThatIsNotPlainText_DropsTheEntry(string title)
+    {
+        AppsManifest.Parse(Manifest(Entry(title: title), Entry(id: "other"))).Apps.Select(a => a.Id).Should().Equal("other");
     }
 
     [Fact]
-    public void Parse_WrongJsonTypesInAnEntry_DropsItWithoutThrowing()
+    public void Parse_EscapedLoneSurrogate_DropsTheEntryWithoutThrowing()
     {
-        const string manifest = """{"release":5,"apps":[7,{"platform":1,"version":2,"file":3,"size":"x","sha256":4}]}""";
+        const string manifest = """{"schemaVersion":2,"apps":[{"id":"viewer","title":"bad \udc00 title"},{"id":"other","title":"Fine"}]}""";
 
-        var catalog = AppsManifest.Parse(manifest, AllVerified);
+        AppsManifest.Parse(manifest).Apps.Select(a => a.Id).Should().Equal("other");
+    }
+
+    [Fact]
+    public void Parse_NonAsciiTitle_IsKept()
+    {
+        AppsManifest.Parse(Manifest(Entry(title: "Przeglądarka – wersja ✓"))).Find("viewer")!.Title.Should().Be("Przeglądarka – wersja ✓");
+    }
+
+    [Theory]
+    [InlineData("\"version\":\"1\",\"file\":\"a.exe\"")]
+    [InlineData("\"file\":\"a.exe\",\"size\":1")]
+    [InlineData("\"version\":\"1\",\"size\":1")]
+    [InlineData("\"version\":\"1\",\"file\":\"../../etc/passwd\",\"size\":1")]
+    [InlineData("\"version\":\"1\",\"file\":\".hidden\",\"size\":1")]
+    [InlineData("\"version\":\"1\",\"file\":\"a b.exe\",\"size\":1")]
+    [InlineData("\"version\":\"1\",\"file\":\"a.exe\",\"size\":0")]
+    [InlineData("\"version\":\"1\",\"file\":\"a.exe\",\"size\":-1")]
+    [InlineData("\"version\":\"1\",\"file\":\"a.exe\",\"size\":\"10\"")]
+    [InlineData("\"version\":\"1 2\",\"file\":\"a.exe\",\"size\":1")]
+    [InlineData("\"version\":1,\"file\":\"a.exe\",\"size\":1")]
+    public void Parse_IncompleteOrInvalidFileFields_DropsTheEntry(string fileFields)
+    {
+        AppsManifest.Parse(Manifest(Entry(file: fileFields))).Apps.Should().BeEmpty();
+    }
+
+    [Theory]
+    [InlineData("\"guide\":\"viewer.txt\"")]
+    [InlineData("\"guide\":\"../viewer.md\"")]
+    [InlineData("\"guide\":\".md\"")]
+    [InlineData("\"guide\":7")]
+    [InlineData("\"guide\":\"a b.md\"")]
+    public void Parse_InvalidGuideName_DropsTheEntry(string guide)
+    {
+        AppsManifest.Parse(Manifest(Entry(guide: guide))).Apps.Should().BeEmpty();
+    }
+
+    [Fact]
+    public void Parse_DuplicateIdOrFileName_KeepsTheFirst()
+    {
+        var catalog = AppsManifest.Parse(Manifest(
+            Entry(id: "a", title: "First"),
+            Entry(id: "a", title: "Second", file: null),
+            Entry(id: "b", title: "Same file")));
+
+        catalog.Apps.Should().ContainSingle().Which.Title.Should().Be("First");
+    }
+
+    [Fact]
+    public void Parse_MoreThanSixteenApps_ReadsOnlyTheFirstSixteen()
+    {
+        var entries = Enumerable.Range(0, 40).Select(i => Entry(id: $"app-{i}", file: null, guide: null)).ToArray();
+
+        var catalog = AppsManifest.Parse(Manifest(entries));
+
+        catalog.Apps.Should().HaveCount(AppsManifest.MaxApps);
+        catalog.Apps[^1].Id.Should().Be("app-15");
+    }
+
+    [Fact]
+    public void Parse_WrongJsonTypes_DropsThoseEntriesWithoutThrowing()
+    {
+        const string manifest = """{"schemaVersion":2,"release":5,"apps":[7,null,"x",[],{"id":1,"title":2},{"id":"ok","title":"Fine"}]}""";
+
+        var catalog = AppsManifest.Parse(manifest);
 
         catalog.Reachable.Should().BeTrue();
-        catalog.Files.Should().BeEmpty();
         catalog.Release.Should().BeNull();
+        catalog.Apps.Select(a => a.Id).Should().Equal("ok");
+    }
+
+    [Fact]
+    public void Parse_DeeplyNestedDocument_IsUnreachableNotAStackOverflow()
+    {
+        var nested = new string('[', 10_000) + new string(']', 10_000);
+
+        AppsManifest.Parse($$"""{"schemaVersion":2,"apps":[],"x":{{nested}}}""").Should().Be(AppsCatalog.Unreachable);
+    }
+
+    [Theory]
+    [InlineData("ExampleViewer-2.1.0.msi", true)]
+    [InlineData("a.exe\n", false)]
+    [InlineData("..", false)]
+    [InlineData("a%2Fb", false)]
+    [InlineData("", false)]
+    [InlineData(null, false)]
+    public void IsSafeFileName_OnlyAPlainName(string? name, bool safe)
+    {
+        AppsManifest.IsSafeFileName(name).Should().Be(safe);
+    }
+}
+
+public class AppGuideMarkdownTests
+{
+    private static string Html(string markdown) => Markdown.ToHtml(markdown, AppGuideMarkdown.Pipeline);
+
+    private static string Rendered(string markdown)
+    {
+        using var context = new BunitContext();
+        context.Services.AddMudServices();
+        context.Services.AddMudMarkdownServices();
+        context.JSInterop.Mode = JSRuntimeMode.Loose;
+        return context.Render<AppGuideView>(p => p.Add(v => v.Markdown, markdown)).Markup;
+    }
+
+    [Fact]
+    public void Guide_OrdinaryMarkdown_RendersListsEmphasisAndHttpLinks()
+    {
+        var markup = Rendered("**Preview.** Android 12.\n\n1. Download it.\n2. See [the vendor](https://example.com/help).\n");
+
+        markup.Should().Contain("Preview.").And.Contain("Download it.").And.Contain("href=\"https://example.com/help\"");
+        markup.Should().Contain("<ol");
+    }
+
+    [Theory]
+    [InlineData("<script>alert(1)</script>")]
+    [InlineData("before <script>alert(1)</script> after")]
+    [InlineData("<img src=x onerror=alert(1)>")]
+    [InlineData("<div onclick=\"alert(1)\">x</div>")]
+    [InlineData("<iframe src=\"https://evil.example\"></iframe>")]
+    public void Guide_RawHtml_IsNeverInterpreted(string markdown)
+    {
+        foreach (var output in new[] { Html(markdown), Rendered(markdown) })
+        {
+            output.Should().NotContain("<script").And.NotContain("<img").And.NotContain("<iframe").And.NotContain("<div onclick");
+        }
+    }
+
+    [Theory]
+    [InlineData("[click](javascript:alert(1))")]
+    [InlineData("[click](JAVASCRIPT:alert(1))")]
+    [InlineData("[click](  javascript:alert(1))")]
+    [InlineData("[click](data:text/html;base64,PHNjcmlwdD4=)")]
+    [InlineData("[click](vbscript:msgbox)")]
+    [InlineData("[click](file:///etc/passwd)")]
+    [InlineData("[click](//evil.example/x)")]
+    [InlineData("[click][ref]\n\n[ref]: javascript:alert(1)")]
+    [InlineData("<javascript:alert(1)>")]
+    public void Guide_LinkToAnythingButHttpHttpsOrRelative_KeepsOnlyItsText(string markdown)
+    {
+        foreach (var output in new[] { Html(markdown), Rendered(markdown) })
+        {
+            output.Should().NotContainEquivalentOf("href=\"javascript").And.NotContainEquivalentOf("href=\"data:")
+                .And.NotContainEquivalentOf("href=\"vbscript").And.NotContainEquivalentOf("href=\"file:")
+                .And.NotContain("href=\"//");
+        }
+    }
+
+    [Fact]
+    public void Guide_LinkText_StaysWhenTheTargetGoes()
+    {
+        Html("Open [the settings](javascript:alert(1)) now.").Should().Contain("Open the settings now.");
+    }
+
+    [Theory]
+    [InlineData("[ok](https://example.com)", "https://example.com")]
+    [InlineData("[ok](http://example.com/a?b#c)", "http://example.com/a?b#c")]
+    [InlineData("[ok](docs/install.html)", "docs/install.html")]
+    [InlineData("[ok](#step-2)", "#step-2")]
+    public void Guide_HttpHttpsAndRelativeLinks_AreKept(string markdown, string href)
+    {
+        Html(markdown).Should().Contain($"href=\"{href}\"");
+    }
+
+    [Theory]
+    [InlineData("![tracking pixel](https://evil.example/p.png)")]
+    [InlineData("![x](javascript:alert(1))")]
+    [InlineData("![relative](shot.png)")]
+    public void Guide_Images_AreReplacedByTheirAltText(string markdown)
+    {
+        foreach (var output in new[] { Html(markdown), Rendered(markdown) })
+        {
+            output.Should().NotContain("<img").And.NotContain("src=");
+        }
+
+        Html(markdown).Should().Contain(markdown[2..markdown.IndexOf(']')]);
+    }
+
+    [Fact]
+    public void Decode_ValidUtf8_ReturnsTheText_WithoutABom()
+    {
+        AppGuideMarkdown.Decode([0xEF, 0xBB, 0xBF, .. "# Hi"u8]).Should().Be("# Hi");
+    }
+
+    [Fact]
+    public void Decode_InvalidUtf8_IsUnavailable()
+    {
+        AppGuideMarkdown.Decode([0x61, 0xFF, 0x62]).Should().BeNull();
+        AppGuideMarkdown.Decode([0x61, 0xC3]).Should().BeNull();
+    }
+
+    [Fact]
+    public void Decode_OverTheCapOrEmpty_IsUnavailable()
+    {
+        AppGuideMarkdown.Decode(Encoding.UTF8.GetBytes(new string('a', AppGuideMarkdown.MaxBytes + 1))).Should().BeNull();
+        AppGuideMarkdown.Decode(Encoding.UTF8.GetBytes(new string('a', AppGuideMarkdown.MaxBytes))).Should().NotBeNull();
+        AppGuideMarkdown.Decode([]).Should().BeNull();
+        AppGuideMarkdown.Decode("  \n "u8).Should().BeNull();
+    }
+
+    [Fact]
+    public void Decode_NestingMarkdigRefuses_IsUnavailable_SoTheRendererNeverThrows()
+    {
+        var markdown = new string('>', 5000) + " deep";
+
+        AppGuideMarkdown.Decode(Encoding.UTF8.GetBytes(markdown)).Should().BeNull();
+    }
+
+    [Fact]
+    public void Decode_LargeOrdinaryGuide_IsAcceptedAndRenders()
+    {
+        var markdown = string.Concat(Enumerable.Repeat("1. A step with **bold** and `code`.\n", 1_700));
+
+        var text = AppGuideMarkdown.Decode(Encoding.UTF8.GetBytes(markdown));
+
+        text.Should().NotBeNull();
+        ((Func<string>)(() => Html(text!))).Should().NotThrow();
+    }
+
+    [Fact]
+    public void IsPlainText_LoneSurrogate_IsRefused()
+    {
+        AppsManifest.IsPlainText("lone" + (char)0xD800, 80).Should().BeFalse();
+        AppsManifest.IsPlainText("pair" + char.ConvertFromUtf32(0x1F600), 80).Should().BeTrue();
     }
 }
 
 public class AppsCatalogClientTests
 {
-    private static readonly AppsOptions Options = new("rocketwelder-apps", 8095, new Uri("http://apps.test:8095/"));
+    private static readonly AppsOptions Options = new(new Uri("http://apps.test:8095/"));
+    private const string Manifest = """{"schemaVersion":2,"release":"2.0.0","apps":[{"id":"viewer","title":"Example Viewer","version":"1","file":"a.apk","size":1,"guide":"viewer.md"}]}""";
 
     private sealed class StubHandler(Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage>> respond) : HttpMessageHandler
     {
-        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken) =>
-            respond(request, cancellationToken);
+        public List<string> Paths { get; } = [];
+
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            lock (Paths) Paths.Add(request.RequestUri!.AbsolutePath);
+            return respond(request, cancellationToken);
+        }
     }
 
-    private static AppsCatalogClient Client(Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage>> respond) =>
-        new(new HttpClient(new StubHandler(respond)), Options);
+    private static (AppsCatalogClient Client, StubHandler Handler) Client(Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage>> respond)
+    {
+        var handler = new StubHandler(respond);
+        return (new AppsCatalogClient(new HttpClient(handler), Options), handler);
+    }
 
     private static HttpResponseMessage Ok(string body) => new(HttpStatusCode.OK) { Content = new StringContent(body) };
+    private static HttpResponseMessage Ok(byte[] body) => new(HttpStatusCode.OK) { Content = new ByteArrayContent(body) };
 
     [Fact]
-    public async Task GetAsync_ContainerAnswers_ReadsBothDocuments()
+    public async Task GetAsync_ImageAnswers_ReadsTheManifest_AndOnlyTheManifest()
     {
-        var sha = new string('b', 64);
-        var client = Client((request, _) => Task.FromResult(request.RequestUri!.AbsolutePath switch
-        {
-            "/manifest.json" => Ok($$"""{"release":"2.0.0","apps":[{"platform":"android","version":"1","file":"a.apk","size":1,"sha256":"{{sha}}"}]}"""),
-            "/verification.json" => Ok("""{"state":"verified","blocked":[]}"""),
-            _ => new HttpResponseMessage(HttpStatusCode.NotFound),
-        }));
+        var (client, handler) = Client((_, _) => Task.FromResult(Ok(Manifest)));
 
         var catalog = await client.GetAsync();
 
-        catalog.Find("android")!.Verified.Should().BeTrue();
+        catalog.Find("viewer")!.File!.FileName.Should().Be("a.apk");
+        handler.Paths.Should().Equal("/manifest.json");
+    }
+
+    [Fact]
+    public async Task GetAsync_EachCallReadsAgain_NothingIsCached()
+    {
+        var (client, handler) = Client((_, _) => Task.FromResult(Ok(Manifest)));
+
+        await client.GetAsync();
+        await client.GetAsync();
+
+        handler.Paths.Should().Equal("/manifest.json", "/manifest.json");
     }
 
     [Fact]
     public async Task GetAsync_ConnectionRefused_IsUnreachable()
     {
-        var client = Client((_, _) => throw new HttpRequestException("refused"));
+        var (client, _) = Client((_, _) => throw new HttpRequestException("refused"));
 
         (await client.GetAsync()).Should().Be(AppsCatalog.Unreachable);
     }
@@ -166,15 +405,15 @@ public class AppsCatalogClientTests
     [Fact]
     public async Task GetAsync_NotFound_IsUnreachable()
     {
-        var client = Client((_, _) => Task.FromResult(new HttpResponseMessage(HttpStatusCode.NotFound)));
+        var (client, _) = Client((_, _) => Task.FromResult(new HttpResponseMessage(HttpStatusCode.NotFound)));
 
         (await client.GetAsync()).Should().Be(AppsCatalog.Unreachable);
     }
 
     [Fact]
-    public async Task GetAsync_ContainerHangs_GivesUpWithinItsTimeout()
+    public async Task GetAsync_ImageHangs_GivesUpWithinItsTimeout()
     {
-        var client = Client(async (_, cancellationToken) =>
+        var (client, _) = Client(async (_, cancellationToken) =>
         {
             await Task.Delay(TimeSpan.FromMinutes(5), cancellationToken);
             return Ok("{}");
@@ -190,7 +429,7 @@ public class AppsCatalogClientTests
     [Fact]
     public async Task GetAsync_EndlessDocument_IsRefusedAndDoesNotExhaustMemory()
     {
-        var client = Client((_, _) => Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+        var (client, _) = Client((_, _) => Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
         {
             Content = new StreamContent(new MemoryStream(Encoding.UTF8.GetBytes(new string(' ', 1024 * 1024))))
         }));
@@ -199,7 +438,52 @@ public class AppsCatalogClientTests
     }
 
     [Fact]
-    public async Task GetAsync_ContainerRedirects_DoesNotFollowAndIsUnreachable()
+    public async Task GetGuideAsync_ReadsTheGuideUnderGuides()
+    {
+        var (client, handler) = Client((_, _) => Task.FromResult(Ok("1. Install it.")));
+
+        (await client.GetGuideAsync("viewer.md")).Should().Be("1. Install it.");
+        handler.Paths.Should().Equal("/guides/viewer.md");
+    }
+
+    [Fact]
+    public async Task GetGuideAsync_OverTheCap_IsUnavailable()
+    {
+        var (client, _) = Client((_, _) => Task.FromResult(Ok(new byte[AppGuideMarkdown.MaxBytes + 1].Select(_ => (byte)'a').ToArray())));
+
+        (await client.GetGuideAsync("viewer.md")).Should().BeNull();
+    }
+
+    [Fact]
+    public async Task GetGuideAsync_InvalidUtf8_IsUnavailable()
+    {
+        var (client, _) = Client((_, _) => Task.FromResult(Ok(new byte[] { 0x23, 0x20, 0xFF, 0xFE })));
+
+        (await client.GetGuideAsync("viewer.md")).Should().BeNull();
+    }
+
+    [Theory]
+    [InlineData("../manifest.json")]
+    [InlineData("viewer.txt")]
+    [InlineData("a/b.md")]
+    public async Task GetGuideAsync_NameThatIsNotAGuide_IsNeverRequested(string name)
+    {
+        var (client, handler) = Client((_, _) => Task.FromResult(Ok("x")));
+
+        (await client.GetGuideAsync(name)).Should().BeNull();
+        handler.Paths.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task GetGuideAsync_Missing_IsUnavailable()
+    {
+        var (client, _) = Client((_, _) => Task.FromResult(new HttpResponseMessage(HttpStatusCode.NotFound)));
+
+        (await client.GetGuideAsync("viewer.md")).Should().BeNull();
+    }
+
+    [Fact]
+    public async Task GetAsync_ImageRedirects_DoesNotFollowAndIsUnreachable()
     {
         // A real socket, so the production handler (not a stub) decides whether to follow.
         using var listener = new TcpListener(IPAddress.Loopback, 0);
@@ -226,8 +510,7 @@ public class AppsCatalogClientTests
             catch (OperationCanceledException) { }
         });
 
-        var client = new AppsCatalogClient(AppsCatalogClient.CreateHttpClient(),
-            new AppsOptions("rocketwelder-apps", 8095, new Uri($"http://127.0.0.1:{port}/")));
+        var client = new AppsCatalogClient(AppsCatalogClient.CreateHttpClient(), new AppsOptions(new Uri($"http://127.0.0.1:{port}/")));
 
         var catalog = await client.GetAsync();
         await stop.CancelAsync();
@@ -241,233 +524,171 @@ public class AppsCatalogClientTests
             requestedPaths.Should().NotContain("/elsewhere");
         }
     }
-
-    [Fact]
-    public async Task GetRecentAsync_RemembersAReachableCatalog_ButAFailureOnlyBriefly()
-    {
-        var sha = new string('d', 64);
-        var containerUp = false;
-        var reads = 0;
-        var client = Client((request, _) =>
-        {
-            Interlocked.Increment(ref reads);
-            if (!containerUp) throw new HttpRequestException("refused");
-            return Task.FromResult(request.RequestUri!.AbsolutePath == "/manifest.json"
-                ? Ok($$"""{"apps":[{"platform":"windows","version":"1","file":"a.msi","size":1,"sha256":"{{sha}}"}]}""")
-                : Ok("""{"state":"verified","blocked":[]}"""));
-        });
-        var maxAge = TimeSpan.FromSeconds(10);
-
-        (await client.GetRecentAsync(maxAge)).Reachable.Should().BeFalse();
-        containerUp = true;
-        (await client.GetRecentAsync(maxAge)).Reachable.Should().BeFalse("a failure is remembered for a moment");
-        await Task.Delay(AppsCatalogClient.UnreachableMaxAge + TimeSpan.FromMilliseconds(200));
-        (await client.GetRecentAsync(maxAge)).Reachable.Should().BeTrue("well before the 10 s a good catalog is kept");
-
-        var readsSoFar = reads;
-        (await client.GetRecentAsync(maxAge)).Reachable.Should().BeTrue();
-        reads.Should().Be(readsSoFar, "a reachable catalog is reused for its full age");
-    }
-
-    [Fact]
-    public async Task GetAsync_ManifestOkButNoVerification_OffersNothingAsVerified()
-    {
-        var sha = new string('c', 64);
-        var client = Client((request, _) => Task.FromResult(request.RequestUri!.AbsolutePath == "/manifest.json"
-            ? Ok($$"""{"apps":[{"platform":"linux","version":"1","file":"a.deb","size":1,"sha256":"{{sha}}"}]}""")
-            : new HttpResponseMessage(HttpStatusCode.NotFound)));
-
-        (await client.GetAsync()).Find("linux")!.Verified.Should().BeFalse();
-    }
 }
 
-public class AppsOptionsTests
+public class AppsSettingsTests
 {
     private static IConfiguration Config(params (string Key, string Value)[] values) => new ConfigurationBuilder()
         .AddInMemoryCollection(values.Select(v => new KeyValuePair<string, string?>(v.Key, v.Value)))
         .Build();
 
     [Fact]
-    public void From_NothingConfigured_UsesTheComposePackageDefaults()
+    public void From_NothingConfigured_IsDisabledWithoutError()
     {
-        var options = AppsOptions.From(Config());
+        var settings = AppsSettings.From(Config());
 
-        options.PackageName.Should().Be("rocketwelder-apps");
-        options.Port.Should().Be(8095);
-        options.InternalBaseUrl.Should().Be(new Uri("http://172.17.0.1:8095/"));
+        settings.Enabled.Should().BeFalse();
+        settings.Error.Should().BeNull();
     }
 
     [Fact]
-    public void From_SshHostSet_ReadsTheManifestThroughThatHost()
+    public void From_DisabledExplicitly_IgnoresTheRest()
     {
-        AppsOptions.From(Config(("SshHost", "10.0.0.9"))).InternalBaseUrl.Should().Be(new Uri("http://10.0.0.9:8095/"));
+        AppsSettings.From(Config(("Apps:Enabled", "false"), ("Apps:SourceUrl", "nope"))).Should().Be(AppsSettings.Disabled);
+    }
+
+    [Fact]
+    public void From_EnabledWithASourceUrl_UsesNeutralDefaults()
+    {
+        var settings = AppsSettings.From(Config(("Apps:Enabled", "true"), ("Apps:SourceUrl", "http://172.17.0.1:8095")));
+
+        settings.Enabled.Should().BeTrue();
+        settings.Options.Should().Be(new AppsOptions(new Uri("http://172.17.0.1:8095/"), null, "Apps"));
+    }
+
+    [Fact]
+    public void From_EnabledWithEverything_ReadsTitleAndPackage()
+    {
+        var options = AppsSettings.From(Config(("Apps:Enabled", "True"), ("Apps:SourceUrl", "https://apps.local/base"),
+            ("Apps:Title", "Downloads"), ("Apps:PackageName", "example-apps"))).Options!;
+
+        options.SourceUrl.Should().Be(new Uri("https://apps.local/base/"));
+        options.Title.Should().Be("Downloads");
+        options.PackageName.Should().Be("example-apps");
+        options.FileUrl("a.apk").Should().Be(new Uri("https://apps.local/base/files/a.apk"));
     }
 
     [Theory]
-    [InlineData("nope")]
-    [InlineData("0")]
-    [InlineData("70000")]
-    public void From_InvalidPort_FallsBackToTheDefault(string port)
+    [InlineData(null)]
+    [InlineData("not a url")]
+    [InlineData("ftp://host/")]
+    [InlineData("file:///srv/apps/")]
+    [InlineData("/relative/")]
+    [InlineData("http://user:pass@host/")]
+    [InlineData("http://host/?q=1")]
+    public void From_EnabledWithoutAUsableSourceUrl_StaysOffAndSaysWhy(string? url)
     {
-        AppsOptions.From(Config(("Apps:Port", port))).Port.Should().Be(8095);
+        var values = new List<(string, string)> { ("Apps:Enabled", "true") };
+        if (url != null) values.Add(("Apps:SourceUrl", url));
+
+        var settings = AppsSettings.From(Config(values.ToArray()));
+
+        settings.Enabled.Should().BeFalse();
+        settings.Error.Should().Contain("Apps:SourceUrl");
+    }
+
+    [Fact]
+    public void From_EnabledNotABoolean_StaysOffAndSaysWhy()
+    {
+        var settings = AppsSettings.From(Config(("Apps:Enabled", "yes")));
+
+        settings.Enabled.Should().BeFalse();
+        settings.Error.Should().Contain("Apps:Enabled");
+    }
+
+    [Fact]
+    public void From_TitleThatIsNotPlainText_StaysOffAndSaysWhy()
+    {
+        var settings = AppsSettings.From(Config(("Apps:Enabled", "true"), ("Apps:SourceUrl", "http://h/"), ("Apps:Title", new string('x', 41))));
+
+        settings.Enabled.Should().BeFalse();
+        settings.Error.Should().Contain("Apps:Title");
     }
 
     [Theory]
-    [InlineData("http://station.local:8080/apps", "http://station.local:8080/apps/files/RocketWelderPlayer-2.1.0.msi")]
-    [InlineData("https://station.local/", "https://station.local/apps/files/RocketWelderPlayer-2.1.0.msi")]
+    [InlineData("http://station.local:8080/apps", "http://station.local:8080/apps/files/ExampleViewer-2.1.0.msi")]
+    [InlineData("https://station.local/", "https://station.local/apps/files/ExampleViewer-2.1.0.msi")]
     public void DownloadPath_IsOnThePagesOwnOrigin(string page, string expected)
     {
         // Relative, so the browser keeps the scheme, host and port it opened the page on (Blazor's base href is "/").
-        var path = AppsOptions.DownloadPath("RocketWelderPlayer-2.1.0.msi");
+        var path = AppsOptions.DownloadPath("ExampleViewer-2.1.0.msi");
 
         path.Should().NotStartWith("/").And.NotContain("://");
         new Uri(new Uri(new Uri(page).GetLeftPart(UriPartial.Authority) + "/"), path).AbsoluteUri.Should().Be(expected);
-    }
-
-    [Fact]
-    public void FileUrl_IsUnderTheContainersFilesPath()
-    {
-        AppsOptions.From(Config()).FileUrl("a.apk").Should().Be(new Uri("http://172.17.0.1:8095/files/a.apk"));
-    }
-
-    [Theory]
-    [InlineData("RocketWelderPlayer-2.1.0.msi", true)]
-    [InlineData("a.exe\n", false)]
-    [InlineData("..", false)]
-    [InlineData("a%2Fb", false)]
-    [InlineData("", false)]
-    [InlineData(null, false)]
-    public void IsSafeFileName_OnlyAPlainName(string? name, bool safe)
-    {
-        AppsManifest.IsSafeFileName(name).Should().Be(safe);
     }
 }
 
 public class AppRowTests
 {
-    private static readonly AppFile Good = new("windows", "1", "a.exe", 1, new string('a', 64), true);
-    private static readonly AppsCatalog WithGood = new(true, "1.0.0", [Good]);
-    private static readonly AppsPackageSnapshot Deployed = new(true, false);
+    private static readonly AppFile File = new("1", "a.exe", 1);
+    private static readonly AppEntry WithFile = new("viewer", "Example Viewer", File, "viewer.md");
+    private static readonly AppEntry WithoutFile = new("other", "Other", null, null);
+    private static readonly AppsCatalog Listed = new(true, "1.0.0", [WithFile, WithoutFile]);
+    private static readonly AppsPackageSnapshot Deployed = new(true, true, false);
 
     [Fact]
-    public void Decide_VerifiedFile_IsReady()
+    public void Decide_File_IsReady_NoFile_IsNotAvailableYet()
     {
-        AppRow.Decide(WithGood, Good, Deployed).Should().Be(AppStatus.Ready);
-    }
-
-    [Fact]
-    public void Decide_FileFailedVerification_IsChecksumFailed()
-    {
-        AppRow.Decide(WithGood, Good with { Verified = false }, Deployed).Should().Be(AppStatus.ChecksumFailed);
-    }
-
-    [Fact]
-    public void Decide_ContainerGaveNoVerificationResult_IsNotVerified()
-    {
-        var unknown = WithGood with { VerificationKnown = false };
-
-        AppRow.Decide(unknown, Good with { Verified = false }, Deployed).Should().Be(AppStatus.NotVerified);
-    }
-
-    [Fact]
-    public void Decide_PlatformNotInRelease_IsNotAvailableYet()
-    {
-        AppRow.Decide(new AppsCatalog(true, "1.0.0", []), null, Deployed).Should().Be(AppStatus.NotAvailableYet);
-    }
-
-    [Fact]
-    public void Decide_DeployedButContainerNotAnswering_IsUnavailable()
-    {
-        AppRow.Decide(AppsCatalog.Unreachable, null, Deployed).Should().Be(AppStatus.ServiceUnavailable);
-    }
-
-    [Fact]
-    public void Decide_NeverDeployed_IsNotDownloaded()
-    {
-        AppRow.Decide(AppsCatalog.Unreachable, null, new AppsPackageSnapshot(false, false)).Should().Be(AppStatus.NotDownloaded);
+        AppRow.Decide(File, Deployed).Should().Be(AppStatus.Ready);
+        AppRow.Decide(null, Deployed).Should().Be(AppStatus.NotAvailableYet);
     }
 
     [Fact]
     public void Decide_UpdateRunning_WinsOverEverything()
     {
-        AppRow.Decide(WithGood, Good, new AppsPackageSnapshot(true, true)).Should().Be(AppStatus.Downloading);
+        AppRow.Decide(File, new AppsPackageSnapshot(true, true, true)).Should().Be(AppStatus.Downloading);
     }
 
     [Fact]
-    public void Apply_OnlyAReadyFileCanBeDownloaded()
+    public void For_ReadableCatalog_OneRowPerAppInOrder_OnlyAFileCanBeDownloaded()
     {
-        var row = new AppRow(AppGuides.All.First(g => g.Platform == AppGuides.Windows));
+        var rows = AppRow.For(Listed, Deployed);
 
-        row.Apply(new AppsCatalog(true, "1.0.0", [Good with { Verified = false }]), Deployed);
-        row.CanDownload.Should().BeFalse();
-
-        row.Apply(WithGood, Deployed);
-        row.CanDownload.Should().BeTrue();
-    }
-}
-
-public class AppGuidesTests
-{
-    [Fact]
-    public void All_CoversTheThreePlatforms()
-    {
-        AppGuides.All.Select(g => g.Platform).Should().BeEquivalentTo("windows", "linux", "android");
+        rows.Select(r => r.Id).Should().Equal("viewer", "other");
+        rows[0].CanDownload.Should().BeTrue();
+        rows[1].CanDownload.Should().BeFalse();
+        rows[0].Guide.Should().Be(GuideState.Loading);
+        rows[1].Guide.Should().Be(GuideState.None);
     }
 
     [Fact]
-    public void Android_IsLabelledPreview_AndWarnsThatUninstallErasesSettings()
+    public void For_UnreadableCatalog_InventsNoRows()
     {
-        var android = AppGuides.All.Single(g => g.Platform == AppGuides.Android);
-
-        android.Preview.Should().BeTrue();
-        android.Warning.Should().Contain("erases");
+        AppRow.For(null, Deployed).Should().BeEmpty();
+        AppRow.For(AppsCatalog.Unreachable, Deployed).Should().BeEmpty();
+        AppRow.For(AppsCatalog.Unsupported("1"), Deployed).Should().BeEmpty();
     }
 
     [Fact]
-    public void Windows_SaysSmartScreenWarnsAndHowToContinue()
+    public void SetGuide_NullIsUnavailable_TextIsLoaded()
     {
-        var windows = AppGuides.All.Single(g => g.Platform == AppGuides.Windows);
+        var unavailable = new AppRow(WithFile);
+        var loaded = new AppRow(WithFile);
 
-        windows.Note.Should().Contain("SmartScreen");
-        windows.Steps.Should().Contain(s => s.Text.Contains("More info") && s.Text.Contains("Run anyway"));
+        unavailable.SetGuide(null);
+        loaded.SetGuide("1. Install.");
+
+        unavailable.Guide.Should().Be(GuideState.Unavailable);
+        loaded.Guide.Should().Be(GuideState.Loaded);
+        loaded.GuideMarkdown.Should().Be("1. Install.");
+    }
+
+    [Theory]
+    [InlineData(true, false, AppsPageStatus.NotDownloaded)]
+    [InlineData(true, true, AppsPageStatus.Unavailable)]
+    [InlineData(false, false, AppsPageStatus.Unavailable)]
+    public void DecidePage_ImageNotAnswering_DependsOnThePackage(bool registered, bool deployed, AppsPageStatus expected)
+    {
+        AppRow.DecidePage(AppsCatalog.Unreachable, new AppsPackageSnapshot(registered, deployed, false)).Should().Be(expected);
     }
 
     [Fact]
-    public void Names_AreRocketWelderPlayer_KioskOnlyForTheLinuxDevices()
+    public void DecidePage_CoversCheckingUnsupportedEmptyAndListed()
     {
-        AppGuides.All.Should().OnlyContain(g => g.DisplayName.StartsWith("RocketWelder Player"));
-        AppGuides.All.Single(g => g.Platform == AppGuides.Linux).DisplayName.Should().Be("RocketWelder Player (kiosk devices)");
-
-        var otherText = string.Join(" ", AppGuides.All.Where(g => g.Platform != AppGuides.Linux)
-            .SelectMany(g => new[] { g.DisplayName, g.Requirements, g.Warning, g.Note }.Concat(g.Steps.Select(s => s.Text))));
-        otherText.Should().NotContainEquivalentOf("kiosk").And.NotContainEquivalentOf("RocketWelder Client");
-    }
-
-    [Fact]
-    public void Windows_IsAnMsi_InstalledPerUser()
-    {
-        var windows = AppGuides.All.Single(g => g.Platform == AppGuides.Windows);
-
-        windows.Steps[0].Text.Should().Contain("RocketWelderPlayer-<version>.msi").And.Contain("double-click");
-        windows.Steps.Should().Contain(s => s.Text.Contains("current user") && s.Text.Contains("without administrator rights"));
-    }
-
-    [Fact]
-    public void Linux_WarnsItIsForDedicatedKioskDevicesAndReboots()
-    {
-        var linux = AppGuides.All.Single(g => g.Platform == AppGuides.Linux);
-
-        linux.Warning.Should().Contain("Dedicated kiosk").And.Contain("reboots");
-    }
-
-    [Fact]
-    public void AllText_HasNoInternalHostsAddressesOrCustomerNames()
-    {
-        var text = string.Join(" ", AppGuides.All.SelectMany(g =>
-            new[] { g.DisplayName, g.Requirements, g.Warning, g.Note, g.VerifyHashCommand }.Concat(g.Steps.Select(s => s.Text))));
-
-        text.Should().NotMatchRegex(@"\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}");
-        text.Should().NotContainAny("modelingevolution", "saturn", "Pamet", "Pamet".ToLowerInvariant(), "hyperion");
+        AppRow.DecidePage(null, Deployed).Should().Be(AppsPageStatus.Checking);
+        AppRow.DecidePage(AppsCatalog.Unsupported("1"), Deployed).Should().Be(AppsPageStatus.UnsupportedSchema);
+        AppRow.DecidePage(new AppsCatalog(true, null, []), Deployed).Should().Be(AppsPageStatus.Empty);
+        AppRow.DecidePage(Listed, Deployed).Should().Be(AppsPageStatus.Listed);
     }
 }
 
@@ -491,11 +712,11 @@ public class AppsFailureTextTests
 
     // Only a signal with one meaning names a cause.
     [Theory]
-    [InlineData("Error response from daemon: Head \"https://docker.example.test/v2/rocketwelder/rocketwelder-apps/manifests/1.2.0\": unauthorized: authentication required", Credentials)]
+    [InlineData("Error response from daemon: Head \"https://docker.example.test/v2/example/apps/manifests/1.2.0\": unauthorized: authentication required", Credentials)]
     [InlineData("failed to authorize: failed to fetch oauth token: unexpected status: 401 Unauthorized", Credentials)]
     [InlineData("unauthorized: authentication required (repository not found)", Credentials)]
-    [InlineData("Error response from daemon: manifest for docker.example.test/rocketwelder/rocketwelder-apps:1.2.0 not found: manifest unknown: manifest unknown", NotFound)]
-    [InlineData("docker.example.test/rocketwelder/rocketwelder-apps:1.2.0: manifest unknown", NotFound)]
+    [InlineData("Error response from daemon: manifest for docker.example.test/example/apps:1.2.0 not found: manifest unknown: manifest unknown", NotFound)]
+    [InlineData("docker.example.test/example/apps:1.2.0: manifest unknown", NotFound)]
     [InlineData("name unknown: repository name not known to registry", NotFound)]
     [InlineData("Get \"https://docker.example.test/v2/\": dial tcp: lookup docker.example.test on 127.0.0.11:53: no such host", Network)]
     [InlineData("Get \"https://docker.example.test/v2/\": dial tcp 192.0.2.10:443: connect: connection refused", Network)]
@@ -510,20 +731,20 @@ public class AppsFailureTextTests
     // Each of these would have matched a looser word ("denied", "not found", "network", "timed out") and named the wrong cause.
     [Theory]
     [InlineData("Got permission denied while trying to connect to the Docker daemon socket at unix:///var/run/docker.sock: connect: permission denied")]
-    [InlineData("open /data/rocketwelder-apps/.env: permission denied")]
+    [InlineData("open /data/example-apps/.env: permission denied")]
     [InlineData("deploy@station: Permission denied (publickey).")]
-    [InlineData("git@github.com:modelingevolution/rocketwelder-apps-compose.git: Permission denied (publickey)")]
+    [InlineData("git@github.com:example/example-apps-compose.git: Permission denied (publickey)")]
     [InlineData("bash: docker: command not found")]
     [InlineData("sudo: up-1.2.0.sh: command not found")]
-    [InlineData("network rocketwelder_default not found")]
+    [InlineData("network example_default not found")]
     [InlineData("Error response from daemon: network 3f2a9c not found")]
-    [InlineData("no such service: rocketwelder-apps")]
+    [InlineData("no such service: example-apps")]
     [InlineData("SSH command timed out after 300 seconds: docker compose up -d")]
-    [InlineData("ssh: connect to host neuron-7 port 22: Connection timed out")]
-    [InlineData("ssh: connect to host neuron-7 port 22: Connection refused")]
+    [InlineData("ssh: connect to host station-7 port 22: Connection timed out")]
+    [InlineData("ssh: connect to host station-7 port 22: Connection refused")]
     [InlineData("dial tcp 192.168.30.29:443: i/o timeout")]
     [InlineData("Error response from daemon: pull access denied for x, repository does not exist or may require 'docker login'")]
-    [InlineData("failed to pull docker.example.test/rocketwelder/rocketwelder-apps:1.2.0: denied")]
+    [InlineData("failed to pull docker.example.test/example/apps:1.2.0: denied")]
     [InlineData("docker login -u robot --password hunter2 failed")]
     public void Describe_AmbiguousOrLocalFailure_IsNeutral(string failure)
     {
@@ -537,11 +758,11 @@ public class AppsFailureTextTests
     [InlineData("api_key=abc123 failed", "abc123")]
     [InlineData("""{"password":"hunter2"}""", "hunter2")]
     [InlineData("docker login -u robot --password hunter2 failed", "hunter2")]
-    [InlineData("dial tcp: lookup saturn on 127.0.0.11:53: no such host", "saturn")]
+    [InlineData("dial tcp: lookup buildhost on 127.0.0.11:53: no such host", "buildhost")]
     [InlineData("dial tcp [fd00::1:2]:443: connect: connection refused", "fd00")]
     [InlineData("ssh: connect to host fe80::1%eth0 port 22: Connection timed out", "fe80")]
-    [InlineData("git@github.com:modelingevolution/rocketwelder-apps-compose.git: Permission denied", "modelingevolution")]
-    [InlineData("ssh: connect to host neuron-7 port 22: Connection refused", "neuron-7")]
+    [InlineData("git@github.com:example/example-apps-compose.git: Permission denied", "example-apps-compose")]
+    [InlineData("ssh: connect to host station-7 port 22: Connection refused", "station-7")]
     [InlineData("X-Registry-Auth: eyJhbGciOiJIUzI1NiJ9 rejected", "eyJ")]
     [InlineData("token:abc auth=xyz", "xyz")]
     [InlineData("Authorization: Basic dXNlcjpwYXNz unauthorized: denied", "dXNlcjpwYXNz")]
@@ -573,14 +794,9 @@ public class AppsConfigurationTests
         .Build();
 
     [Fact]
-    public void Extensions_NothingConfigured_ReturnTheDefaults()
+    public void DockerHostAddress_NothingConfigured_IsTheBridgeGateway()
     {
-        var config = Config();
-
-        config.DockerHostAddress().Should().Be(ModelingEvolution.AutoUpdater.Extensions.ConfigurationExtensions.DefaultDockerHost).And.Be("172.17.0.1");
-        config.AppsPackageName().Should().Be("rocketwelder-apps");
-        config.AppsPort().Should().Be(8095);
-        config.AppsInternalBaseUrl().Should().Be(new Uri("http://172.17.0.1:8095/"));
+        Config().DockerHostAddress().Should().Be(ModelingEvolution.AutoUpdater.Extensions.ConfigurationExtensions.DefaultDockerHost).And.Be("172.17.0.1");
     }
 
     [Fact]
@@ -588,14 +804,5 @@ public class AppsConfigurationTests
     {
         Config(("SshHost", "10.0.0.9"), ("HostAddress", "10.0.0.8")).DockerHostAddress().Should().Be("10.0.0.9");
         Config(("HostAddress", "10.0.0.8")).DockerHostAddress().Should().Be("10.0.0.8");
-    }
-
-    [Theory]
-    [InlineData("http://127.0.0.1:9000/", "http://127.0.0.1:9000/")]
-    [InlineData("ftp://127.0.0.1/", "http://172.17.0.1:8095/")]
-    [InlineData("not a url", "http://172.17.0.1:8095/")]
-    public void AppsInternalBaseUrl_OnlyAnHttpUrlOverridesTheDefault(string configured, string expected)
-    {
-        Config(("Apps:InternalBaseUrl", configured)).AppsInternalBaseUrl().Should().Be(new Uri(expected));
     }
 }

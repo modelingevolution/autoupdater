@@ -14,6 +14,7 @@ public static class WebApplicationExtensions
             app.UseExceptionHandler("/Error");
         }
 
+        app.UseAppsGate();
         app.UseStaticFiles();
         app.UseAntiforgery();
         app.MapStaticAssets();

@@ -1,5 +1,6 @@
 using ModelingEvolution.AutoUpdater;
 using ModelingEvolution.AutoUpdater.Host;
+using ModelingEvolution.AutoUpdater.Host.Api.Apps;
 using ModelingEvolution.AutoUpdater.Host.Components;
 using ModelingEvolution.AutoUpdater.Host.Extensions;
 using ModelingEvolution.AutoUpdater.Extensions;
@@ -46,6 +47,7 @@ public class Program
         builder.Services
             .AddMudServices()
             .AddAutoUpdaterHost()
+            .AddApps(builder.Configuration)
             .AddApiServices()
             .AddOpenApi()
             .AddRazorComponents()
