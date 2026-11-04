@@ -434,12 +434,12 @@ public sealed class AppsImageIntegrationTests(AppsImageFixture image) : IClassFi
         var tag = $"apps-test:{Guid.NewGuid():N}";
         try
         {
-            // The last file changes. Only the layers before it are asserted: a layer after a changed one is rebuilt, and
-            // its parent directories then carry the new build time (README, "carry an app forward unchanged").
-            var android = Path.Combine(dir.FullName, AppsImageFixture.AndroidFile);
-            await File.WriteAllBytesAsync(android, RandomNumberGenerator.GetBytes(64 * 1024));
+            // The first file changes, so every layer after it is rebuilt, by the builder publish-apps.sh always uses (the same
+            // one as for a push): each must still come out byte-identical.
+            var windows = Path.Combine(dir.FullName, AppsImageFixture.WindowsFile);
+            await File.WriteAllBytesAsync(windows, RandomNumberGenerator.GetBytes(64 * 1024));
             await AppsImageFixture.Publish(["--release", "1.0.1", "--local-tag", tag,
-                .. AppsImageFixture.AppArguments(image.WindowsPath, image.LinuxPath, android, androidVersion: "1.0.1")]);
+                .. AppsImageFixture.AppArguments(windows, image.LinuxPath, image.AndroidPath)]);
 
             var first = await Layers(image.Tag);
             var second = await Layers(tag);
@@ -447,9 +447,8 @@ public sealed class AppsImageIntegrationTests(AppsImageFixture image) : IClassFi
             // Layer order: base, windows, linux, android, their three guides, the icon, then manifest.json.
             second.Should().HaveCount(first.Length);
             second[..^8].Should().Equal(first[..^8], "the base did not change");
-            second[^8].Should().Be(first[^8], "the windows file did not change");
-            second[^7].Should().Be(first[^7], "the linux file did not change");
-            second[^6].Should().NotBe(first[^6], "the android file changed");
+            second[^8].Should().NotBe(first[^8], "the windows file changed");
+            second[^7..^1].Should().Equal(first[^7..^1], "linux, android, the guides and the icon did not change");
             second[^1].Should().NotBe(first[^1], "the manifest changed");
         }
         finally
@@ -507,7 +506,8 @@ public sealed class AppsImageIntegrationTests(AppsImageFixture image) : IClassFi
             if (pushes)
             {
                 run.ExitCode.Should().Be(0, run.StandardError);
-                calls.Should().Contain("buildx build --platform");
+                calls.Should().Contain("buildx build --builder apps-publish --platform linux/amd64,linux/arm64 " +
+                    "--output type=image,name=docker.example.test/example/apps:9.9.9,push=true,rewrite-timestamp=true");
             }
             else
             {

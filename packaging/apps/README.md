@@ -107,11 +107,18 @@ out, including an icon that is not a PNG. It needs bash, docker with buildx, `sh
 Then pin the release in the compose package (`compose/release.sh 1.2.0` in the product's copy). Stations see the new
 version on their Packages page. Nothing downloads until an operator starts it there, or uses "Update all".
 
-To carry an app forward unchanged, pass the same file again: each file is its own layer, and its mtime is derived from
-its SHA-256. A layer stays the same only while nothing before it in the image changed: a rebuilt layer also carries its
-parent directories, stamped with the build time. So when one app changes, the files and guides after it are downloaded
-again; put the app that changes most often last. A changed file gets another mtime, so its `ETag` and `Last-Modified` change too: a browser revalidates instead of reusing an older installer, and an
-`If-Range` resume started on an older build gets the whole new file rather than a mix of the two.
+To carry an app forward unchanged, pass the same file again: each file, guide and icon is its own layer, its mtime is
+derived from its SHA-256, and the image is built with `SOURCE_DATE_EPOCH` and `rewrite-timestamp`, so the parent
+directories in a layer carry a fixed time instead of the build time. An unchanged file keeps its layer even when an app
+before it changed, and stations do not download it again. A changed file gets another mtime, so its `ETag` and
+`Last-Modified` change too: a browser revalidates instead of reusing an older installer, and an `If-Range` resume
+started on an older build gets the whole new file rather than a mix of the two.
+
+The script builds with its own buildx builder, `apps-publish` (docker-container driver, created on first use;
+`--builder NAME` picks another). Docker's default builder ignores `rewrite-timestamp` with the classic image store, so
+the same release would get different layers on different machines. The builder runs as a container; remove it with
+`docker buildx rm apps-publish`. Pushing both platforms builds the arm64 image under emulation: Docker Desktop has it;
+on Linux, install it once with `docker run --privileged --rm tonistiigi/binfmt --install arm64`.
 
 `publish-apps.sh` refuses a release tag that already exists, and also refuses when it cannot tell (a refused login, no
 network): only a clear "not found" from the registry lets it push. `--overwrite` skips that check.
