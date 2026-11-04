@@ -70,11 +70,12 @@ get_current_version() {
 
 # Fetch the semver release tags for the image from the Harbor API.
 fetch_versions() {
-    # The credentials go to curl through a config file descriptor, never on its command line, where any user's ps sees them.
+    # The credentials go to curl as a config on stdin, never on its command line, where any user's ps sees them.
+    # (stdin rather than <(...): a Windows curl cannot open a /dev/fd path.)
     local url="$HARBOR_API/projects/$HARBOR_PROJECT/repositories/$HARBOR_REPO/artifacts?page_size=100&with_tag=true"
     local body
     if [ -n "${HARBOR_USERNAME:-}" ] && [ -n "${HARBOR_PASSWORD:-}" ]; then
-        body=$(curl -fsSL -K <(printf 'user = "%s:%s"\n' "$HARBOR_USERNAME" "$HARBOR_PASSWORD") "$url")
+        body=$(printf 'user = "%s:%s"\n' "$HARBOR_USERNAME" "$HARBOR_PASSWORD" | curl -fsSL -K - "$url")
     else
         body=$(curl -fsSL "$url")
     fi
