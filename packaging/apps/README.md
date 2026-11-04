@@ -6,7 +6,7 @@ Apps page only reads the container's manifest and shows download links; it has n
 
 | Path | What it is |
 |---|---|
-| `image/` | Dockerfile, nginx config and the start-up check. alpine + nginx; about 5 MB on top of the files. |
+| `image/` | Dockerfile, nginx config and the start-up check. alpine + nginx. Measured locally: 18.9 MB as reported by `docker images`, with 2.1 MB of test files in it; the base layers are pulled once. |
 | `publish-apps.sh` | Builds and pushes the image from a laptop. |
 | `compose/` | The AutoUpdater package. Becomes the `rocketwelder-apps-compose` repo. |
 
