@@ -14,8 +14,8 @@
 # as "Not available yet". It writes manifest.json (schemaVersion 2), copies each guide and icon next to it, builds a
 # multi-arch image with one layer per file, pushes it, and prints the next step: pin the release in the AutoUpdater
 # package that deploys the image.
-# Runs in Git Bash, WSL and Linux. Needs docker with buildx, sha256sum, stat, iconv, od. Pushing more than one platform
-# needs a builder that can: Docker Desktop's containerd image store, or `docker buildx create --use --driver docker-container`.
+# Runs in Git Bash, WSL and Linux. Needs docker with buildx, sha256sum, stat, iconv, od. It builds with its own buildx
+# builder (docker-container driver, created on first use) so that a file's layer stays the same between releases.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -25,6 +25,9 @@ RELEASE=""
 LOCAL_TAG=""
 OVERWRITE=false
 DRY_RUN=false
+# The docker driver ignores rewrite-timestamp with the classic image store; a docker-container builder applies it on
+# every Docker setup, for --local-tag and for the push alike.
+BUILDER="apps-publish"
 # Each file's mtime comes from its SHA-256: a layer's digest covers mtimes, so an unchanged file keeps its layer (a
 # station does not download it again), while a changed file gets another mtime, hence another ETag and Last-Modified
 # from nginx (no stale installer from a browser cache, no resumed download joining two builds).
@@ -66,6 +69,7 @@ Options:
   --platforms LIST            Default: $PLATFORMS
   --overwrite                 Replace a release tag that already exists (default: refuse)
   --local-tag TAG             Build for this machine only and load as TAG. Nothing is pushed.
+  --builder NAME              The buildx builder (default: $BUILDER; created with the docker-container driver if missing)
   --dry-run                   Validate, write the manifest, print it, and stop
 EOF
 }
@@ -103,6 +107,7 @@ while [ $# -gt 0 ]; do
         --guide) i="$(current_download --guide)"; D_GUIDE[$i]="${2:?}"; shift 2 ;;
         --platforms) PLATFORMS="${2:?}"; shift 2 ;;
         --local-tag) LOCAL_TAG="${2:?}"; shift 2 ;;
+        --builder) BUILDER="${2:?}"; shift 2 ;;
         --overwrite) OVERWRITE=true; shift ;;
         --dry-run) DRY_RUN=true; shift ;;
         -h|--help) usage; exit 0 ;;
@@ -257,8 +262,33 @@ cat "$STAGE/manifest.json"
 [ "$DRY_RUN" = false ] || exit 0
 
 cd "$STAGE"
+# Another run may be creating or starting the same builder at this moment: whichever create wins, all of them use it.
+builder_ready=false
+for _ in 1 2 3 4 5; do
+    if docker buildx inspect --bootstrap "$BUILDER" > /dev/null 2>&1; then builder_ready=true; break; fi
+    docker buildx create --name "$BUILDER" --driver docker-container > /dev/null 2>&1 || sleep 2
+done
+[ "$builder_ready" = true ] || docker buildx inspect --bootstrap "$BUILDER" > /dev/null \
+    || die "could not start the buildx builder $BUILDER (above)"
+# Only a builder that applies rewrite-timestamp keeps unchanged layers: not the docker driver (it ignores it with the
+# classic image store), and not BuildKit before 0.13.
+builder_info="$(docker buildx inspect "$BUILDER")"
+driver="$(sed -n 's/^Driver:[[:space:]]*//p' <<< "$builder_info" | head -n 1)"
+buildkit="$(sed -n 's/^BuildKit version:[[:space:]]*v\{0,1\}//p' <<< "$builder_info" | head -n 1)"
+case "$driver" in
+    docker-container|remote|kubernetes) ;;
+    *) die "builder $BUILDER uses the '$driver' driver, which can ignore rewrite-timestamp: use a docker-container builder (leave out --builder, and the script makes one)" ;;
+esac
+if ! [[ "$buildkit" =~ ^([0-9]+)\.([0-9]+) ]] || { [ "${BASH_REMATCH[1]}" -eq 0 ] && [ "${BASH_REMATCH[2]}" -lt 13 ]; }; then
+    die "builder $BUILDER runs BuildKit '$buildkit'; rewrite-timestamp needs 0.13 or later (docker buildx rm $BUILDER, and run again)"
+fi
+# A COPY --link layer also holds its parent directories, stamped with the build time. With rewrite-timestamp every mtime
+# later than SOURCE_DATE_EPOCH is clamped to it, so a file's layer depends only on the file: when one app changes, the
+# layers of the others stay the same and stations do not download them again. The files' own mtimes (from their hash,
+# above) are earlier, so they stay as they are.
+export SOURCE_DATE_EPOCH=$((MTIME_BASE + 16#FFFFFFF))
 if [ -n "$LOCAL_TAG" ]; then
-    docker buildx build --quiet --load --tag "$LOCAL_TAG" . > /dev/null
+    docker buildx build --builder "$BUILDER" --quiet --output "type=docker,name=$LOCAL_TAG,rewrite-timestamp=true" . > /dev/null
     echo "Built $LOCAL_TAG for this machine. Nothing was pushed."
     exit 0
 fi
@@ -278,7 +308,7 @@ if [ "$OVERWRITE" = false ]; then
     fi
 fi
 
-docker buildx build --platform "$PLATFORMS" --tag "$IMAGE" --push .
+docker buildx build --builder "$BUILDER" --platform "$PLATFORMS" --output "type=image,name=$IMAGE,push=true,rewrite-timestamp=true" .
 
 cat <<EOF
 

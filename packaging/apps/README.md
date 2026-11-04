@@ -107,11 +107,46 @@ out, including an icon that is not a PNG. It needs bash, docker with buildx, `sh
 Then pin the release in the compose package (`compose/release.sh 1.2.0` in the product's copy). Stations see the new
 version on their Packages page. Nothing downloads until an operator starts it there, or uses "Update all".
 
-To carry an app forward unchanged, pass the same file again: each file is its own layer, and its mtime is derived from
-its SHA-256. A layer stays the same only while nothing before it in the image changed: a rebuilt layer also carries its
-parent directories, stamped with the build time. So when one app changes, the files and guides after it are downloaded
-again; put the app that changes most often last. A changed file gets another mtime, so its `ETag` and `Last-Modified` change too: a browser revalidates instead of reusing an older installer, and an
-`If-Range` resume started on an older build gets the whole new file rather than a mix of the two.
+To carry an app forward unchanged, pass the same file again: each file, guide and icon is its own layer, its mtime is
+derived from its SHA-256, and the image is built with `SOURCE_DATE_EPOCH` and `rewrite-timestamp`, so the parent
+directories in a layer carry a fixed time instead of the build time. An unchanged file keeps its layer even when an app
+before it changed, and stations do not download it again. A changed file gets another mtime, so its `ETag` and
+`Last-Modified` change too: a browser revalidates instead of reusing an older installer, and an `If-Range` resume
+started on an older build gets the whole new file rather than a mix of the two.
+
+The script builds with its own buildx builder, `apps-publish` (docker-container driver, created on first use;
+`--builder NAME` picks another). Docker's default builder ignores `rewrite-timestamp` with the classic image store, so
+the same release would get different layers on different machines. The script refuses a builder that would ignore
+`rewrite-timestamp`, i.e. one with the `docker` driver or BuildKit older than 0.13, so `--builder default` cannot
+quietly bring the problem back. Pushing both platforms builds the arm64 image under emulation. Docker Desktop has it;
+on Linux, install it once with `docker run --privileged --rm tonistiigi/binfmt --install arm64`.
+
+The builder is a container of its own, with its own cache:
+- **Disk.** Every installer you publish stays in the builder's cache, outside what `docker system prune` cleans. It
+  grows by the size of each new installer. Clear it with `docker buildx prune --builder apps-publish` (`--all` for
+  everything). The layers stay identical without the cache: their content and times are fixed.
+- **Stop and remove.** `docker buildx stop apps-publish` frees the container between releases, and the next run
+  starts it again. `docker buildx rm apps-publish` removes it with its cache.
+- **Registry settings.** The builder does not use the Docker daemon's registry settings. `insecure-registries`,
+  plain-HTTP registries and certificates added to Docker Desktop or `daemon.json` do not apply to the push. The check
+  that the tag does not exist yet runs on the client, so with such a registry it passes, and the push fails after the
+  build. For a registry like that, create the builder yourself with a BuildKit config, then publish with
+  `--builder NAME`:
+
+  ```toml
+  # buildkitd.toml
+  [registry."registry.local:5000"]
+    http = true                        # plain HTTP
+    insecure = true                    # or: a self-signed certificate
+    ca = ["/etc/certs/registry-ca.pem"]  # or: trust this CA
+  ```
+
+  ```bash
+  docker buildx create --name apps-publish-local --driver docker-container --buildkitd-config buildkitd.toml
+  ./publish-apps.sh --builder apps-publish-local ...
+  ```
+
+  A `ca` path is read inside the builder container: `docker buildx create` copies the files the config names into it.
 
 `publish-apps.sh` refuses a release tag that already exists, and also refuses when it cannot tell (a refused login, no
 network): only a clear "not found" from the registry lets it push. `--overwrite` skips that check.
