@@ -243,6 +243,33 @@ public class AppsCatalogClientTests
     }
 
     [Fact]
+    public async Task GetRecentAsync_RemembersAReachableCatalog_ButAFailureOnlyBriefly()
+    {
+        var sha = new string('d', 64);
+        var containerUp = false;
+        var reads = 0;
+        var client = Client((request, _) =>
+        {
+            Interlocked.Increment(ref reads);
+            if (!containerUp) throw new HttpRequestException("refused");
+            return Task.FromResult(request.RequestUri!.AbsolutePath == "/manifest.json"
+                ? Ok($$"""{"apps":[{"platform":"windows","version":"1","file":"a.msi","size":1,"sha256":"{{sha}}"}]}""")
+                : Ok("""{"state":"verified","blocked":[]}"""));
+        });
+        var maxAge = TimeSpan.FromSeconds(10);
+
+        (await client.GetRecentAsync(maxAge)).Reachable.Should().BeFalse();
+        containerUp = true;
+        (await client.GetRecentAsync(maxAge)).Reachable.Should().BeFalse("a failure is remembered for a moment");
+        await Task.Delay(AppsCatalogClient.UnreachableMaxAge + TimeSpan.FromMilliseconds(200));
+        (await client.GetRecentAsync(maxAge)).Reachable.Should().BeTrue("well before the 10 s a good catalog is kept");
+
+        var readsSoFar = reads;
+        (await client.GetRecentAsync(maxAge)).Reachable.Should().BeTrue();
+        reads.Should().Be(readsSoFar, "a reachable catalog is reused for its full age");
+    }
+
+    [Fact]
     public async Task GetAsync_ManifestOkButNoVerification_OffersNothingAsVerified()
     {
         var sha = new string('c', 64);

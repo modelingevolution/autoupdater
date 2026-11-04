@@ -1,7 +1,17 @@
+using System.Buffers;
 using Microsoft.AspNetCore.Http.Features;
 using ModelingEvolution.AutoUpdater.Apps;
 
 namespace ModelingEvolution.AutoUpdater.Host.Api.Apps;
+
+/// <summary>The proxy's limits. Defaults suit a station; tests pass smaller ones.</summary>
+/// <param name="MaxConcurrentDownloads">Downloads in flight at once; one more gets 503 with Retry-After at once.</param>
+/// <param name="HeadersTimeout">How long to wait for the container's response headers.</param>
+/// <param name="IdleTimeout">How long the container may send nothing in the middle of a body before the download is aborted.</param>
+public sealed record AppsFileProxyLimits(int MaxConcurrentDownloads, TimeSpan HeadersTimeout, TimeSpan IdleTimeout)
+{
+    public static readonly AppsFileProxyLimits Default = new(16, TimeSpan.FromSeconds(15), TimeSpan.FromSeconds(30));
+}
 
 /// <summary>
 /// Serves the apps container's files on the AutoUpdater's own origin, so a browser downloads from the page it opened and the
@@ -12,10 +22,12 @@ namespace ModelingEvolution.AutoUpdater.Host.Api.Apps;
 /// Only a name in the current verified catalog is fetched; anything else is a 404 and the container is never asked for it.
 /// The container still applies its own rules (fail closed, 503 for a file that failed its check), and its answer is passed
 /// through as it is.
+/// Downloads use their own HTTP client and are capped (<see cref="AppsFileProxyLimits.MaxConcurrentDownloads"/>, far below
+/// nginx's 256 connections), so however many slow downloads are open, the Apps page's catalog reads still get through.
 /// </remarks>
 public sealed class AppsFileProxy
 {
-    public static readonly TimeSpan DefaultHeadersTimeout = TimeSpan.FromSeconds(15);
+    public const int RetryAfterSeconds = 30;
 
     /// <summary>How old the catalog used to check a name may be. The Apps page refreshes it every 10 s while it is open.</summary>
     private static readonly TimeSpan CatalogMaxAge = TimeSpan.FromSeconds(10);
@@ -35,14 +47,16 @@ public sealed class AppsFileProxy
 
     private readonly AppsCatalogClient _catalog;
     private readonly ILogger<AppsFileProxy> _log;
-    private readonly TimeSpan _headersTimeout;
+    private readonly AppsFileProxyLimits _limits;
+    private readonly HttpClient _files = AppsCatalogClient.CreateHttpClient();
+    private readonly SemaphoreSlim _slots;
 
-    /// <param name="headersTimeout">How long to wait for the container's response headers. The body has no limit.</param>
-    public AppsFileProxy(AppsCatalogClient catalog, ILogger<AppsFileProxy> log, TimeSpan? headersTimeout = null)
+    public AppsFileProxy(AppsCatalogClient catalog, ILogger<AppsFileProxy> log, AppsFileProxyLimits? limits = null)
     {
         _catalog = catalog;
         _log = log;
-        _headersTimeout = headersTimeout ?? DefaultHeadersTimeout;
+        _limits = limits ?? AppsFileProxyLimits.Default;
+        _slots = new SemaphoreSlim(_limits.MaxConcurrentDownloads, _limits.MaxConcurrentDownloads);
     }
 
     public async Task HandleAsync(HttpContext context, string name)
@@ -76,6 +90,26 @@ public sealed class AppsFileProxy
             return;
         }
 
+        if (!_slots.Wait(0))
+        {
+            _log.LogWarning("Refused a download of {File}: {Max} downloads are already running", name, _limits.MaxConcurrentDownloads);
+            context.Response.StatusCode = StatusCodes.Status503ServiceUnavailable;
+            context.Response.Headers.RetryAfter = RetryAfterSeconds.ToString();
+            return;
+        }
+
+        try
+        {
+            await ProxyAsync(context, name, aborted);
+        }
+        finally
+        {
+            _slots.Release();
+        }
+    }
+
+    private async Task ProxyAsync(HttpContext context, string name, CancellationToken aborted)
+    {
         var head = HttpMethods.IsHead(context.Request.Method);
         using var request = new HttpRequestMessage(head ? HttpMethod.Head : HttpMethod.Get, _catalog.Options.FileUrl(name));
         foreach (var header in ForwardedRequestHeaders)
@@ -84,13 +118,14 @@ public sealed class AppsFileProxy
                 request.Headers.TryAddWithoutValidation(header, (IEnumerable<string?>)values);
         }
 
-        // Waiting for the headers is limited; once they are here, only the browser leaving ends the transfer.
+        // One timer, linked to the browser leaving: first the limit on waiting for headers, then, re-armed before each read,
+        // the limit on the container sending nothing.
         using var limit = CancellationTokenSource.CreateLinkedTokenSource(aborted);
-        limit.CancelAfter(_headersTimeout);
+        limit.CancelAfter(_limits.HeadersTimeout);
         HttpResponseMessage response;
         try
         {
-            response = await _catalog.Http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, limit.Token);
+            response = await _files.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, limit.Token);
         }
         catch (OperationCanceledException) when (aborted.IsCancellationRequested)
         {
@@ -98,7 +133,7 @@ public sealed class AppsFileProxy
         }
         catch (OperationCanceledException)
         {
-            _log.LogWarning("The apps container did not answer for {File} within {Timeout}", name, _headersTimeout);
+            _log.LogWarning("The apps container did not answer for {File} within {Timeout}", name, _limits.HeadersTimeout);
             context.Response.StatusCode = StatusCodes.Status504GatewayTimeout;
             return;
         }
@@ -121,32 +156,79 @@ public sealed class AppsFileProxy
                 return;
             }
 
-            context.Response.StatusCode = status;
-            foreach (var header in ReturnedResponseHeaders)
+            if (!TryCopyHeaders(response, context.Response))
             {
-                if (response.Headers.TryGetValues(header, out var values) || response.Content.Headers.TryGetValues(header, out values))
-                    context.Response.Headers[header] = values.ToArray();
+                _log.LogWarning("The apps container sent a header value that cannot be passed on, for {File}", name);
+                context.Response.Headers.Clear();
+                context.Response.StatusCode = StatusCodes.Status502BadGateway;
+                return;
             }
 
-            if (response.Content.Headers.ContentLength is { } length) context.Response.ContentLength = length;
+            context.Response.StatusCode = status;
             if (head || status == StatusCodes.Status304NotModified) return;
 
             context.Features.Get<IHttpResponseBodyFeature>()?.DisableBuffering();
-            try
+            await CopyBodyAsync(context, response, name, limit, aborted);
+        }
+    }
+
+    /// <summary>The allow-listed headers. False if one has a value Kestrel refuses (a control or non-ASCII character).</summary>
+    private static bool TryCopyHeaders(HttpResponseMessage from, HttpResponse to)
+    {
+        try
+        {
+            foreach (var header in ReturnedResponseHeaders)
             {
-                await using var body = await response.Content.ReadAsStreamAsync(aborted);
-                await body.CopyToAsync(context.Response.Body, CopyBufferBytes, aborted);
+                if (from.Headers.TryGetValues(header, out var values) || from.Content.Headers.TryGetValues(header, out values))
+                    to.Headers[header] = values.ToArray();
             }
-            catch (Exception ex) when (aborted.IsCancellationRequested && ex is OperationCanceledException or IOException)
+
+            if (from.Content.Headers.ContentLength is { } length) to.ContentLength = length;
+            return true;
+        }
+        catch (InvalidOperationException)
+        {
+            return false;
+        }
+    }
+
+    private async Task CopyBodyAsync(HttpContext context, HttpResponseMessage response, string name, CancellationTokenSource idle,
+        CancellationToken aborted)
+    {
+        var buffer = ArrayPool<byte>.Shared.Rent(CopyBufferBytes);
+        try
+        {
+            idle.CancelAfter(_limits.IdleTimeout);
+            await using var body = await response.Content.ReadAsStreamAsync(idle.Token);
+            while (true)
             {
-                // The browser left. Disposing the response ends the request to the container.
+                idle.CancelAfter(_limits.IdleTimeout);
+                var read = await body.ReadAsync(buffer.AsMemory(0, CopyBufferBytes), idle.Token);
+                // The idle limit is the container's; a browser slow to take the bytes is Kestrel's business, not a stall.
+                idle.CancelAfter(Timeout.InfiniteTimeSpan);
+                if (read == 0) return;
+                await context.Response.Body.WriteAsync(buffer.AsMemory(0, read), aborted);
             }
-            catch (Exception ex) when (ex is IOException or HttpRequestException)
-            {
-                // The container stopped part way. Abort, so the browser sees a broken download, not a short complete one.
-                _log.LogWarning(ex, "The apps container stopped sending {File} part way", name);
-                context.Abort();
-            }
+        }
+        catch (Exception ex) when (aborted.IsCancellationRequested && ex is OperationCanceledException or IOException)
+        {
+            // The browser left. Disposing the response ends the request to the container.
+        }
+        catch (OperationCanceledException)
+        {
+            // The container stopped sending without closing. Abort, so the browser sees a broken download it can resume.
+            _log.LogWarning("The apps container sent nothing for {Timeout} in the middle of {File}", _limits.IdleTimeout, name);
+            context.Abort();
+        }
+        catch (Exception ex) when (ex is IOException or HttpRequestException)
+        {
+            // The container stopped part way. Abort, so the browser sees a broken download, not a short complete one.
+            _log.LogWarning(ex, "The apps container stopped sending {File} part way", name);
+            context.Abort();
+        }
+        finally
+        {
+            ArrayPool<byte>.Shared.Return(buffer);
         }
     }
 }

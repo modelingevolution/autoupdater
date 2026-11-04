@@ -23,6 +23,8 @@ public sealed class TestWebServer : IAsyncDisposable
 {
     private readonly WebApplication _app;
 
+    public IServiceProvider Services => _app.Services;
+
     private TestWebServer(WebApplication app, Uri baseAddress)
     {
         _app = app;
@@ -45,10 +47,10 @@ public sealed class TestWebServer : IAsyncDisposable
     }
 
     /// <summary>The AutoUpdater's /apps/files/{name} endpoint, reading the catalog from and proxying to <paramref name="container"/>.</summary>
-    public static Task<TestWebServer> StartProxyAsync(Uri container, TimeSpan? headersTimeout = null) => StartAsync(
+    public static Task<TestWebServer> StartProxyAsync(Uri container, AppsFileProxyLimits? limits = null) => StartAsync(
         services => services
             .AddSingleton(new AppsCatalogClient(AppsCatalogClient.CreateHttpClient(), new AppsOptions("rocketwelder-apps", container.Port, container)))
-            .AddSingleton(sp => new AppsFileProxy(sp.GetRequiredService<AppsCatalogClient>(), sp.GetRequiredService<ILogger<AppsFileProxy>>(), headersTimeout)),
+            .AddSingleton(sp => new AppsFileProxy(sp.GetRequiredService<AppsCatalogClient>(), sp.GetRequiredService<ILogger<AppsFileProxy>>(), limits)),
         app => app.MapAppsEndpoints());
 
     public async ValueTask DisposeAsync()
@@ -92,6 +94,62 @@ public sealed class FakeAppsContainer : IAsyncDisposable
     }
 
     public ValueTask DisposeAsync() => _server.DisposeAsync();
+}
+
+/// <summary>
+/// A container that writes its file response as raw bytes, for answers Kestrel would refuse to send (a header value with a
+/// control or non-ASCII character).
+/// </summary>
+public sealed class RawFakeContainer : IAsyncDisposable
+{
+    private readonly TcpListener _listener = new(IPAddress.Loopback, 0);
+    private readonly CancellationTokenSource _stop = new();
+    private Task _loop = Task.CompletedTask;
+
+    public Uri BaseAddress => new($"http://127.0.0.1:{((IPEndPoint)_listener.LocalEndpoint).Port}/");
+
+    public static Task<RawFakeContainer> StartAsync(string fileName, string fileResponse)
+    {
+        var container = new RawFakeContainer();
+        container._listener.Start();
+        var manifest = $$"""{"apps":[{"platform":"windows","version":"1","file":"{{fileName}}","size":1,"sha256":"{{new string('a', 64)}}"}]}""";
+        container._loop = container.ServeAsync(path => path switch
+        {
+            "/manifest.json" => Ok(manifest),
+            "/verification.json" => Ok("""{"state":"verified","blocked":[]}"""),
+            _ => Encoding.Latin1.GetBytes(fileResponse),
+        });
+        return Task.FromResult(container);
+
+        static byte[] Ok(string body) => Encoding.Latin1.GetBytes(
+            $"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {Encoding.UTF8.GetByteCount(body)}\r\nConnection: close\r\n\r\n{body}");
+    }
+
+    private async Task ServeAsync(Func<string, byte[]> respond)
+    {
+        try
+        {
+            while (true)
+            {
+                using var socket = await _listener.AcceptTcpClientAsync(_stop.Token);
+                var stream = socket.GetStream();
+                var reader = new StreamReader(stream, Encoding.Latin1);
+                var path = (await reader.ReadLineAsync(_stop.Token) ?? "").Split(' ').ElementAtOrDefault(1) ?? "";
+                while (!string.IsNullOrEmpty(await reader.ReadLineAsync(_stop.Token))) { }
+                await stream.WriteAsync(respond(path), _stop.Token);
+            }
+        }
+        catch (Exception ex) when (ex is OperationCanceledException or ObjectDisposedException or SocketException)
+        {
+        }
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        await _stop.CancelAsync();
+        _listener.Stop();
+        await _loop;
+    }
 }
 
 public sealed class AppsFileProxyTests(AppsImageFixture image) : IClassFixture<AppsImageFixture>
@@ -322,7 +380,7 @@ public sealed class AppsFileProxyTests(AppsImageFixture image) : IClassFixture<A
             Files = [("windows", "a.msi")],
             Serve = async (context, _) => await Task.Delay(TimeSpan.FromSeconds(30), context.RequestAborted),
         }.StartAsync();
-        await using var proxy = await TestWebServer.StartProxyAsync(container.BaseAddress, headersTimeout: TimeSpan.FromSeconds(1));
+        await using var proxy = await TestWebServer.StartProxyAsync(container.BaseAddress, AppsFileProxyLimits.Default with { HeadersTimeout = TimeSpan.FromSeconds(1) });
         using var client = ClientFor(proxy);
         var started = DateTime.UtcNow;
 
@@ -351,7 +409,7 @@ public sealed class AppsFileProxyTests(AppsImageFixture image) : IClassFixture<A
                 }
             },
         }.StartAsync();
-        await using var proxy = await TestWebServer.StartProxyAsync(container.BaseAddress, headersTimeout: TimeSpan.FromSeconds(1));
+        await using var proxy = await TestWebServer.StartProxyAsync(container.BaseAddress, AppsFileProxyLimits.Default with { HeadersTimeout = TimeSpan.FromSeconds(1) });
         using var client = ClientFor(proxy);
 
         using var response = await client.GetAsync(AppsOptions.DownloadPath("a.msi"));
@@ -422,6 +480,132 @@ public sealed class AppsFileProxyTests(AppsImageFixture image) : IClassFixture<A
         gate.Task.IsCompleted.Should().BeFalse("the first megabyte arrived while the container still held the rest");
         gate.SetResult();
         await body.ReadExactlyAsync(new byte[1024 * 1024], timeout.Token);
+    }
+
+    [Fact]
+    public async Task DownloadsBeyondTheCap_Get503WithRetryAfter_AndTheCatalogStillReads()
+    {
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var container = await new FakeAppsContainer
+        {
+            Files = [("windows", "hold.msi")],
+            Serve = async (context, _) =>
+            {
+                context.Response.ContentLength = 2048;
+                await context.Response.Body.WriteAsync(new byte[1024], context.RequestAborted);
+                await context.Response.Body.FlushAsync(context.RequestAborted);
+                await release.Task.WaitAsync(context.RequestAborted);
+                await context.Response.Body.WriteAsync(new byte[1024], context.RequestAborted);
+            },
+        }.StartAsync();
+        await using var proxy = await TestWebServer.StartProxyAsync(container.BaseAddress, AppsFileProxyLimits.Default with { MaxConcurrentDownloads = 2 });
+        using var client = ClientFor(proxy);
+        var path = AppsOptions.DownloadPath("hold.msi");
+
+        // Fill the cap with downloads held open part way.
+        var held = new List<HttpResponseMessage>();
+        for (var i = 0; i < 2; i++)
+        {
+            var response = await client.GetAsync(path, HttpCompletionOption.ResponseHeadersRead);
+            await (await response.Content.ReadAsStreamAsync()).ReadExactlyAsync(new byte[1024]);
+            held.Add(response);
+        }
+
+        using var refused = await client.GetAsync(path);
+        var catalog = await proxy.Services.GetRequiredService<AppsCatalogClient>().GetAsync();
+
+        refused.StatusCode.Should().Be(HttpStatusCode.ServiceUnavailable);
+        refused.Headers.RetryAfter!.Delta.Should().Be(TimeSpan.FromSeconds(AppsFileProxy.RetryAfterSeconds));
+        container.FileRequests.Should().Be(2, "the refused download never reached the container");
+        catalog.Reachable.Should().BeTrue();
+        catalog.Files.Should().ContainSingle(f => f.FileName == "hold.msi" && f.Verified);
+
+        // A browser that leaves gives its slot back.
+        held[0].Dispose();
+        var admitted = false;
+        for (var attempt = 0; attempt < 50 && !admitted; attempt++)
+        {
+            await Task.Delay(100);
+            using var next = await client.GetAsync(path, HttpCompletionOption.ResponseHeadersRead);
+            admitted = next.StatusCode == HttpStatusCode.OK;
+        }
+        admitted.Should().BeTrue("the slot of the download that ended is free again");
+
+        release.SetResult();
+        foreach (var response in held.Skip(1)) response.Dispose();
+    }
+
+    [Fact]
+    public async Task ContainerGoesSilentMidBody_TheDownloadIsAborted_AfterTheIdleLimit()
+    {
+        await using var container = await new FakeAppsContainer
+        {
+            Files = [("windows", "stall.msi")],
+            Serve = async (context, _) =>
+            {
+                context.Response.ContentLength = 2048;
+                await context.Response.Body.WriteAsync(new byte[1024], context.RequestAborted);
+                await context.Response.Body.FlushAsync(context.RequestAborted);
+                await Task.Delay(TimeSpan.FromMinutes(5), context.RequestAborted);
+            },
+        }.StartAsync();
+        await using var proxy = await TestWebServer.StartProxyAsync(container.BaseAddress, AppsFileProxyLimits.Default with { IdleTimeout = TimeSpan.FromSeconds(1) });
+        using var client = ClientFor(proxy);
+
+        using var response = await client.GetAsync(AppsOptions.DownloadPath("stall.msi"), HttpCompletionOption.ResponseHeadersRead);
+        await using var body = await response.Content.ReadAsStreamAsync();
+        await body.ReadExactlyAsync(new byte[1024]);
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+        var rest = async () => await body.ReadExactlyAsync(new byte[1024], timeout.Token);
+
+        // Aborted (an I/O error the browser can resume from), not left hanging until the 15 s guard.
+        (await rest.Should().ThrowAsync<Exception>()).Which.Should().NotBeAssignableTo<OperationCanceledException>();
+    }
+
+    [Fact]
+    public async Task SlowBrowser_IsNotMistakenForAnIdleContainer()
+    {
+        // The container has everything ready; the browser stops reading for 3 s (longer than the 1 s idle limit) with far
+        // more left than the socket buffers hold, so the proxy's write blocks. That is the browser's pace, not a stall.
+        const long size = 64L * 1024 * 1024;
+        await using var container = await new FakeAppsContainer
+        {
+            Files = [("windows", "a.msi")],
+            Serve = async (context, _) =>
+            {
+                context.Response.ContentLength = size;
+                var chunk = new byte[64 * 1024];
+                for (long sent = 0; sent < size; sent += chunk.Length)
+                    await context.Response.Body.WriteAsync(chunk, context.RequestAborted);
+            },
+        }.StartAsync();
+        await using var proxy = await TestWebServer.StartProxyAsync(container.BaseAddress, AppsFileProxyLimits.Default with { IdleTimeout = TimeSpan.FromSeconds(1) });
+        using var client = ClientFor(proxy);
+
+        using var response = await client.GetAsync(AppsOptions.DownloadPath("a.msi"), HttpCompletionOption.ResponseHeadersRead);
+        await using var body = await response.Content.ReadAsStreamAsync();
+        var buffer = new byte[64 * 1024];
+        long received = await body.ReadAsync(buffer);
+        await Task.Delay(TimeSpan.FromSeconds(3));
+        int read;
+        while ((read = await body.ReadAsync(buffer)) > 0) received += read;
+
+        received.Should().Be(size);
+    }
+
+    [Theory]
+    [InlineData("ETag: \"a\u0001b\"")]
+    [InlineData("Content-Disposition: attachment; filename=\"résumé.msi\"")]
+    public async Task ContainerHeaderValueThatCannotBePassedOn_IsABadGateway(string badHeader)
+    {
+        await using var container = await RawFakeContainer.StartAsync("a.msi",
+            $"HTTP/1.1 200 OK\r\nContent-Length: 1\r\n{badHeader}\r\nConnection: close\r\n\r\nx");
+        await using var proxy = await TestWebServer.StartProxyAsync(container.BaseAddress);
+        using var client = ClientFor(proxy);
+
+        using var response = await client.GetAsync(AppsOptions.DownloadPath("a.msi"));
+
+        response.StatusCode.Should().Be(HttpStatusCode.BadGateway);
     }
 
     [Fact]

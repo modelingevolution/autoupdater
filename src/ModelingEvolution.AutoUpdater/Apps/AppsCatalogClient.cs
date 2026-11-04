@@ -37,10 +37,7 @@ public sealed class AppsCatalogClient
     {
     }
 
-    /// <param name="http">
-    /// Used as given, also by the file proxy. Each catalog read has its own 3 s limit; a file download has none overall
-    /// (a large file takes as long as it takes), only the proxy's limit on waiting for the response headers.
-    /// </param>
+    /// <param name="http">Used as given, for catalog reads only; each has its own 3 s limit. The file proxy has its own client.</param>
     public AppsCatalogClient(HttpClient http, AppsOptions options)
     {
         _http = http;
@@ -49,13 +46,11 @@ public sealed class AppsCatalogClient
 
     public AppsOptions Options => _options;
 
-    /// <summary>The client to the container, for the file proxy.</summary>
-    public HttpClient Http => _http;
-
     /// <summary>
     /// No redirects and no proxy: the AutoUpdater talks to one container, and a container that answers with a redirect
     /// must not make it fetch some other address. No overall timeout, so a large download is not cut off; connecting is
-    /// limited to 5 s, and every caller limits its own wait for the response.
+    /// limited to 5 s, and every caller limits its own wait. The catalog and the file proxy each make their own, so busy
+    /// downloads never hold up a catalog read.
     /// </summary>
     public static HttpClient CreateHttpClient() =>
         new(new SocketsHttpHandler
@@ -83,7 +78,8 @@ public sealed class AppsCatalogClient
 
     /// <summary>
     /// The last catalog read, if it is younger than <paramref name="maxAge"/>; otherwise reads it now (one read at a time,
-    /// however many callers wait). The Apps page's own refresh keeps it fresh while the page is open.
+    /// however many callers wait). The Apps page's own refresh keeps it fresh while the page is open. A failed read is
+    /// remembered for at most <see cref="UnreachableMaxAge"/>, so a container that comes back is used again at once.
     /// </summary>
     public async Task<AppsCatalog> GetRecentAsync(TimeSpan maxAge, CancellationToken cancellationToken = default)
     {
@@ -100,10 +96,14 @@ public sealed class AppsCatalogClient
         }
     }
 
+    public static readonly TimeSpan UnreachableMaxAge = TimeSpan.FromSeconds(1);
+
     private AppsCatalog? Fresh(TimeSpan maxAge)
     {
         var last = Volatile.Read(ref _last);
-        return last != null && Environment.TickCount64 - last.ReadAtMs < maxAge.TotalMilliseconds ? last.Catalog : null;
+        if (last == null) return null;
+        var limit = last.Catalog.Reachable ? maxAge : (maxAge < UnreachableMaxAge ? maxAge : UnreachableMaxAge);
+        return Environment.TickCount64 - last.ReadAtMs < limit.TotalMilliseconds ? last.Catalog : null;
     }
 
     private async Task<string?> ReadDocumentAsync(string name, CancellationToken cancellationToken)

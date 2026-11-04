@@ -673,8 +673,9 @@ public sealed class AppsImageIntegrationTests(AppsImageFixture image) : IClassFi
 
     /// <summary>
     /// The compose package as a station runs it: the port is bound to the Docker bridge's gateway, reachable from a container
-    /// on another bridge network (where the AutoUpdater runs) and from nowhere else. Needs Docker Engine on Linux: Docker
-    /// Desktop cannot bind a host port to that address.
+    /// on another bridge network (where the AutoUpdater runs), and nothing listens on the LAN address. It proves the bind, not
+    /// the routed case: a LAN host that routes 172.17.0.0/16 to the station could still reach the port (README: tidying, not a
+    /// security boundary). Needs Docker Engine on Linux: Docker Desktop cannot bind a host port to that address.
     /// </summary>
     [LinuxDockerEngineFact]
     public async Task ComposePort_IsOnTheBridgeGateway_ReachableFromAContainer_NotFromTheLan()

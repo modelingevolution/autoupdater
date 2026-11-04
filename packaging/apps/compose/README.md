@@ -28,4 +28,11 @@ The container is not reachable from the LAN. Its port is bound to the Docker bri
 (`APPS_BIND_ADDRESS`, default `172.17.0.1`), which is where the AutoUpdater container reaches the host (its `SshHost`,
 set by `install-updater.sh` from docker0). Browsers download through the AutoUpdater at `/apps/files/<name>`, on the
 AutoUpdater's own address and port. If a station's docker0 has another address, set `APPS_BIND_ADDRESS` to it in the
-package's `.env`; the AutoUpdater already uses that address.
+package's `.env`; the AutoUpdater already uses that address. Otherwise the bind fails ("cannot assign requested
+address") and the update with it.
+
+This bind keeps the port tidy, off the LAN for ordinary traffic. It is not a security boundary: Docker turns on IP
+forwarding, so a host on the station's network segment that routes 172.17.0.0/16 (or 172.17.0.1) to the station can still
+reach the port. What it would reach is the same public set the AutoUpdater's `/apps/files/` already serves to anyone
+on the LAN: the manifest, the verification result, `/health` and the verified files. The CI test proves the bind (nothing
+listens on the LAN address), not that routed case.
