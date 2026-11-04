@@ -270,6 +270,18 @@ for _ in 1 2 3 4 5; do
 done
 [ "$builder_ready" = true ] || docker buildx inspect --bootstrap "$BUILDER" > /dev/null \
     || die "could not start the buildx builder $BUILDER (above)"
+# Only a builder that applies rewrite-timestamp keeps unchanged layers: not the docker driver (it ignores it with the
+# classic image store), and not BuildKit before 0.13.
+builder_info="$(docker buildx inspect "$BUILDER")"
+driver="$(sed -n 's/^Driver:[[:space:]]*//p' <<< "$builder_info" | head -n 1)"
+buildkit="$(sed -n 's/^BuildKit version:[[:space:]]*v\{0,1\}//p' <<< "$builder_info" | head -n 1)"
+case "$driver" in
+    docker-container|remote|kubernetes) ;;
+    *) die "builder $BUILDER uses the '$driver' driver, which can ignore rewrite-timestamp: use a docker-container builder (leave out --builder, and the script makes one)" ;;
+esac
+if ! [[ "$buildkit" =~ ^([0-9]+)\.([0-9]+) ]] || { [ "${BASH_REMATCH[1]}" -eq 0 ] && [ "${BASH_REMATCH[2]}" -lt 13 ]; }; then
+    die "builder $BUILDER runs BuildKit '$buildkit'; rewrite-timestamp needs 0.13 or later (docker buildx rm $BUILDER, and run again)"
+fi
 # A COPY --link layer also holds its parent directories, stamped with the build time. With rewrite-timestamp every mtime
 # later than SOURCE_DATE_EPOCH is clamped to it, so a file's layer depends only on the file: when one app changes, the
 # layers of the others stay the same and stations do not download them again. The files' own mtimes (from their hash,

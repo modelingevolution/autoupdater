@@ -465,15 +465,11 @@ public sealed class AppsImageIntegrationTests(AppsImageFixture image) : IClassFi
     }
 
     /// <summary>
-    /// publish-apps.sh against a stub docker that answers the tag lookup as told and records whether a push was attempted.
+    /// publish-apps.sh against a stub docker: it answers the builder and tag lookups as told, and records every call.
+    /// Returns the run and the calls.
     /// </summary>
-    [Theory]
-    [InlineData(1, "ERROR: docker.example.test/example/apps:9.9.9: not found", true, "")]
-    [InlineData(1, "ERROR: failed to authorize: failed to fetch oauth token: 401 Unauthorized", false, "could not check")]
-    [InlineData(1, "ERROR: unauthorized: authentication required (repository not found)", false, "could not check")]
-    [InlineData(1, "ERROR: dial tcp: lookup docker.example.test: no such host", false, "could not check")]
-    [InlineData(0, "Name: docker.example.test/example/apps:9.9.9", false, "already exists")]
-    public async Task PublishScript_PushesOnlyWhenTheRegistrySaysTheTagIsNotFound(int inspectExit, string inspectOutput, bool pushes, string refusal)
+    private static async Task<(BufferedCommandResult Run, string Calls)> PublishWithStubDocker(int inspectExit, string inspectOutput,
+        string driver = "docker-container", string buildkit = "v0.34.2", params string[] extra)
     {
         var dir = Directory.CreateTempSubdirectory("apps-publish-stub-");
         try
@@ -484,6 +480,7 @@ public sealed class AppsImageIntegrationTests(AppsImageFixture image) : IClassFi
                 #!/bin/sh
                 echo "$*" >> "$STUB_LOG"
                 if [ "$1 $2 $3" = "buildx imagetools inspect" ]; then echo "$STUB_INSPECT_OUTPUT" >&2; exit "$STUB_INSPECT_EXIT"; fi
+                if [ "$1 $2" = "buildx inspect" ]; then printf 'Name: x\nDriver: %s\nNodes:\nBuildKit version: %s\n' "$STUB_DRIVER" "$STUB_BUILDKIT"; fi
                 exit 0
                 """.Replace("\r", ""));
             if (!OperatingSystem.IsWindows())
@@ -491,30 +488,19 @@ public sealed class AppsImageIntegrationTests(AppsImageFixture image) : IClassFi
             var app = Path.Combine(dir.FullName, "a.exe");
             await File.WriteAllBytesAsync(app, [1, 2, 3]);
 
-            var run = await AppsImageFixture.PublishCommand("--release", "9.9.9", "--image", "docker.example.test/example/apps",
-                    "--app", "viewer", "--name", "Example Viewer", "--download", "--platform", "windows", "--arch", "x64", "--file", app, "--version", "1.0.0")
+            var run = await AppsImageFixture.PublishCommand(["--release", "9.9.9", "--image", "docker.example.test/example/apps", .. extra,
+                    "--app", "viewer", "--name", "Example Viewer", "--download", "--platform", "windows", "--arch", "x64", "--file", app, "--version", "1.0.0"])
                 .WithEnvironmentVariables(e => e
                     .Set("PATH", bin + Path.PathSeparator + Environment.GetEnvironmentVariable("PATH"))
                     .Set("STUB_LOG", AppsImageFixture.ForBash(log))
                     .Set("STUB_INSPECT_EXIT", inspectExit.ToString())
-                    .Set("STUB_INSPECT_OUTPUT", inspectOutput))
+                    .Set("STUB_INSPECT_OUTPUT", inspectOutput)
+                    .Set("STUB_DRIVER", driver)
+                    .Set("STUB_BUILDKIT", buildkit))
                 .WithValidation(CommandResultValidation.None)
                 .ExecuteBufferedAsync();
 
-            var calls = await File.ReadAllTextAsync(log);
-            calls.Should().Contain("buildx imagetools inspect docker.example.test/example/apps:9.9.9", "the stub docker must be the one called");
-            if (pushes)
-            {
-                run.ExitCode.Should().Be(0, run.StandardError);
-                calls.Should().Contain("buildx build --builder apps-publish --platform linux/amd64,linux/arm64 " +
-                    "--output type=image,name=docker.example.test/example/apps:9.9.9,push=true,rewrite-timestamp=true");
-            }
-            else
-            {
-                run.ExitCode.Should().NotBe(0);
-                run.StandardError.Should().Contain(refusal);
-                calls.Should().NotContain("buildx build");
-            }
+            return (run, File.Exists(log) ? await File.ReadAllTextAsync(log) : "");
         }
         finally
         {
@@ -522,6 +508,43 @@ public sealed class AppsImageIntegrationTests(AppsImageFixture image) : IClassFi
         }
     }
 
+    [Theory]
+    [InlineData(1, "ERROR: docker.example.test/example/apps:9.9.9: not found", true, "")]
+    [InlineData(1, "ERROR: failed to authorize: failed to fetch oauth token: 401 Unauthorized", false, "could not check")]
+    [InlineData(1, "ERROR: unauthorized: authentication required (repository not found)", false, "could not check")]
+    [InlineData(1, "ERROR: dial tcp: lookup docker.example.test: no such host", false, "could not check")]
+    [InlineData(0, "Name: docker.example.test/example/apps:9.9.9", false, "already exists")]
+    public async Task PublishScript_PushesOnlyWhenTheRegistrySaysTheTagIsNotFound(int inspectExit, string inspectOutput, bool pushes, string refusal)
+    {
+        var (run, calls) = await PublishWithStubDocker(inspectExit, inspectOutput);
+
+        calls.Should().Contain("buildx imagetools inspect docker.example.test/example/apps:9.9.9", "the stub docker must be the one called");
+        if (pushes)
+        {
+            run.ExitCode.Should().Be(0, run.StandardError);
+            calls.Should().Contain("buildx build --builder apps-publish --platform linux/amd64,linux/arm64 " +
+                "--output type=image,name=docker.example.test/example/apps:9.9.9,push=true,rewrite-timestamp=true");
+        }
+        else
+        {
+            run.ExitCode.Should().NotBe(0);
+            run.StandardError.Should().Contain(refusal);
+            calls.Should().NotContain("buildx build");
+        }
+    }
+
+    [Theory]
+    [InlineData("docker", "v0.34.0", "uses the 'docker' driver")]
+    [InlineData("docker-container", "v0.12.5", "needs 0.13 or later")]
+    [InlineData("docker-container", "", "needs 0.13 or later")]
+    public async Task PublishScript_RefusesABuilderThatWouldIgnoreRewriteTimestamp(string driver, string buildkit, string refusal)
+    {
+        var (run, calls) = await PublishWithStubDocker(1, "ERROR: not found", driver, buildkit, "--builder", "default");
+
+        run.ExitCode.Should().NotBe(0);
+        run.StandardError.Should().Contain(refusal);
+        calls.Should().NotContain("buildx build").And.NotContain("imagetools");
+    }
     /// <summary>A dry run validates and prints the manifest; the AutoUpdater reads back exactly what was given.</summary>
     [Fact]
     public async Task PublishScript_DryRunManifest_IsWhatTheAutoUpdaterReads()
