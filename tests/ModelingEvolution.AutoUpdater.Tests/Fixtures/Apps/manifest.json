@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 2,
+  "release": "1.2.0",
+  "apps": [
+    {
+      "id": "example-viewer",
+      "name": "Example Viewer",
+      "icon": "example-viewer.png",
+      "downloads": [
+        { "platform": "windows", "architecture": "x64",   "version": "2.1.0", "file": "ExampleViewer-2.1.0.msi", "size": 48234496, "guide": "windows.md" },
+        { "platform": "linux",   "architecture": "arm64", "version": "2.1.0", "file": "example-viewer_2.1.0_arm64.deb", "size": 292076, "guide": "linux.md", "label": "Kiosk devices" },
+        { "platform": "android", "architecture": "arm64", "version": "2.1.0-preview", "file": "ExampleViewer-2.1.0-preview.apk", "size": 2432848, "guide": "android.md", "preview": true }
+      ]
+    }
+  ]
+}

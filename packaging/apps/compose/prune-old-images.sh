@@ -4,7 +4,12 @@
 # new image is pulled and before the old container stops, so "two" means the new one and the running one.
 #
 # Housekeeping only: it must never fail an update, so it always exits 0, and it never forces a removal.
-REPOSITORY="${APPS_IMAGE_REPOSITORY:-docker.modelingevolution.com/rocketwelder/rocketwelder-apps}"
+# The repository is read from the package's docker-compose.yml next to this script; APPS_IMAGE_REPOSITORY overrides it.
+REPOSITORY="${APPS_IMAGE_REPOSITORY:-$(sed -n 's/^[[:space:]]*image:[[:space:]]*\([^[:space:]]*\):[^:/[:space:]]*$/\1/p' "$(dirname "$0")/docker-compose.yml" 2>/dev/null | head -1)}"
+if [ -z "$REPOSITORY" ]; then
+    echo "prune-old-images: no image found in docker-compose.yml, nothing pruned"
+    exit 0
+fi
 KEEP="${APPS_KEEP_IMAGES:-2}"
 
 docker image ls "$REPOSITORY" --format '{{.Tag}}' 2>/dev/null \

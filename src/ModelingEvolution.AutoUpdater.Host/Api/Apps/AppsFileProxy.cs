@@ -19,18 +19,15 @@ public sealed record AppsFileProxyLimits(int MaxConcurrentDownloads, TimeSpan He
 /// arrives, never held in memory, and the request to the container ends when the browser goes away.
 /// </summary>
 /// <remarks>
-/// Only a name in the current verified catalog is fetched; anything else is a 404 and the container is never asked for it.
-/// The container still applies its own rules (fail closed, 503 for a file that failed its check), and its answer is passed
-/// through as it is.
-/// Downloads use their own HTTP client and are capped (<see cref="AppsFileProxyLimits.MaxConcurrentDownloads"/>, far below
-/// nginx's 256 connections), so however many slow downloads are open, the Apps page's catalog reads still get through.
+/// Only a name listed in the image's manifest.json, read afresh for each request, is fetched; anything else is a 404 and
+/// the container is never asked for it. The container's answer is passed through as it is.
+/// Downloads use their own HTTP client and are capped (<see cref="AppsFileProxyLimits.MaxConcurrentDownloads"/>, 16); the
+/// catalog's reads have their own (<see cref="AppsCatalogClient.MaxConnections"/>, 8). Together that is far below nginx's
+/// 256 connections, however many browsers are open, so a catalog read always gets through.
 /// </remarks>
 public sealed class AppsFileProxy
 {
     public const int RetryAfterSeconds = 30;
-
-    /// <summary>How old the catalog used to check a name may be. The Apps page refreshes it every 10 s while it is open.</summary>
-    private static readonly TimeSpan CatalogMaxAge = TimeSpan.FromSeconds(10);
 
     private const int CopyBufferBytes = 64 * 1024;
 
@@ -48,7 +45,7 @@ public sealed class AppsFileProxy
     private readonly AppsCatalogClient _catalog;
     private readonly ILogger<AppsFileProxy> _log;
     private readonly AppsFileProxyLimits _limits;
-    private readonly HttpClient _files = AppsCatalogClient.CreateHttpClient();
+    private readonly HttpClient _files;
     private readonly SemaphoreSlim _slots;
 
     public AppsFileProxy(AppsCatalogClient catalog, ILogger<AppsFileProxy> log, AppsFileProxyLimits? limits = null)
@@ -57,6 +54,7 @@ public sealed class AppsFileProxy
         _log = log;
         _limits = limits ?? AppsFileProxyLimits.Default;
         _slots = new SemaphoreSlim(_limits.MaxConcurrentDownloads, _limits.MaxConcurrentDownloads);
+        _files = AppsCatalogClient.CreateHttpClient(_limits.MaxConcurrentDownloads);
     }
 
     public async Task HandleAsync(HttpContext context, string name)
@@ -71,7 +69,7 @@ public sealed class AppsFileProxy
         AppsCatalog catalog;
         try
         {
-            catalog = await _catalog.GetRecentAsync(CatalogMaxAge, aborted);
+            catalog = await _catalog.GetAsync(aborted);
         }
         catch (OperationCanceledException) when (aborted.IsCancellationRequested)
         {
@@ -84,7 +82,7 @@ public sealed class AppsFileProxy
             return;
         }
 
-        if (!catalog.Files.Any(f => f.Verified && f.FileName == name))
+        if (!catalog.Files.Any(f => f.FileName == name))
         {
             context.Response.StatusCode = StatusCodes.Status404NotFound;
             return;
@@ -230,17 +228,5 @@ public sealed class AppsFileProxy
         {
             ArrayPool<byte>.Shared.Return(buffer);
         }
-    }
-}
-
-public static class AppsEndpoints
-{
-    /// <summary>GET and HEAD <c>/apps/files/{name}</c>: the apps container's file, through <see cref="AppsFileProxy"/>.</summary>
-    public static IEndpointRouteBuilder MapAppsEndpoints(this IEndpointRouteBuilder app)
-    {
-        app.MapMethods("/apps/files/{name}", [HttpMethods.Get, HttpMethods.Head],
-                (HttpContext context, string name, AppsFileProxy proxy) => proxy.HandleAsync(context, name))
-            .ExcludeFromDescription();
-        return app;
     }
 }

@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# RocketWelder Apps Compose — release script.
+# Apps compose package: release script.
 # Pins the version (update-version.sh set), commits and pushes master, then creates and
 # pushes the git tag that AutoUpdater detects.
 
@@ -16,13 +16,13 @@ FORMAT="text"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 print_usage() {
-    echo -e "${BLUE}RocketWelder Apps Compose Release Script${NC}"
+    echo -e "${BLUE}Apps Compose Release Script${NC}"
     echo
     echo "Usage: ./release.sh [VERSION] [OPTIONS]"
     echo
     echo "Arguments:"
     echo "  VERSION     Semantic version X.Y.Z (e.g., 0.2.0)."
-    echo "              If omitted, uses the version pinned in rocketwelder-apps.version."
+    echo "              If omitted, uses the version pinned in apps.version."
     echo
     echo "Options:"
     echo "  -m, --message TEXT    Commit message (default: 'release: vX.Y.Z')"
@@ -48,10 +48,10 @@ validate_version() {
 }
 
 get_pinned_version() {
-    if [[ -f "$SCRIPT_DIR/rocketwelder-apps.version" ]]; then
-        tr -d '[:space:]' < "$SCRIPT_DIR/rocketwelder-apps.version"
+    if [[ -f "$SCRIPT_DIR/apps.version" ]]; then
+        tr -d '[:space:]' < "$SCRIPT_DIR/apps.version"
     else
-        print_error "rocketwelder-apps.version file not found"
+        print_error "apps.version file not found"
         return 1
     fi
 }
@@ -107,7 +107,7 @@ main() {
         exit 0
     fi
 
-    print_info "🚀 Releasing RocketWelder Apps Compose $version"
+    print_info "🚀 Releasing apps compose package $version"
 
     # Pin the image tag + version file (idempotent — no-op if already pinned).
     "$SCRIPT_DIR/update-version.sh" set "$version" || { print_error "update-version.sh set failed"; exit 1; }
@@ -117,7 +117,7 @@ main() {
     chmod +x "$SCRIPT_DIR/up-$version.sh"
 
     # Only the files a release changes, never whatever else happens to be in the tree.
-    local release_files=(rocketwelder-apps.version docker-compose.yml docker-compose.x64.yml docker-compose.arm64.yml "up-$version.sh")
+    local release_files=(apps.version docker-compose.yml docker-compose.x64.yml docker-compose.arm64.yml "up-$version.sh")
     if [[ -n $(git -C "$SCRIPT_DIR" status --porcelain -- "${release_files[@]}") ]]; then
         print_info "Committing changes..."
         git -C "$SCRIPT_DIR" add -- "${release_files[@]}"

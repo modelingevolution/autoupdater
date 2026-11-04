@@ -24,11 +24,7 @@ public static class ConfigurationExtensions
         logger.LogInformation("VPN Configuration:");
         logger.LogInformation("  VpnProviderAccess: {VpnProviderAccess}", configuration.VpnProviderAccess());
 
-        // Apps page
-        logger.LogInformation("Apps Configuration:");
-        logger.LogInformation("  Apps:PackageName: {AppsPackageName}", configuration.AppsPackageName());
-        logger.LogInformation("  Apps:Port: {AppsPort}", configuration.AppsPort());
-        logger.LogInformation("  Apps:InternalBaseUrl: {AppsInternalBaseUrl}", configuration.AppsInternalBaseUrl());
+        // The Apps settings are logged by the host from the one AppsSettings it registered (AppsSettings.Log).
 
         // Environment Information
         logger.LogInformation("Environment:");
@@ -38,7 +34,7 @@ public static class ConfigurationExtensions
         logger.LogInformation("=========================================");
     }
     
-    // Extension methods for common configuration values following the rocket-welder pattern
+    // Extension methods for common configuration values 
     public static string SshUser(this IConfiguration configuration) => 
         configuration.GetValue<string>("SshUser") ?? string.Empty;
     
@@ -71,16 +67,31 @@ public static class ConfigurationExtensions
     public static string SshHost(this IConfiguration configuration) =>
         configuration.GetValue<string>("SshHost") ?? string.Empty;
 
-    private const string HostAddressKey = "HostAddress";
+    private const string AppsEnabledKey = "Apps:Enabled";
+    private const string AppsSourceUrlKey = "Apps:SourceUrl";
+    private const string AppsTitleKey = "Apps:Title";
     private const string AppsPackageNameKey = "Apps:PackageName";
-    private const string AppsPortKey = "Apps:Port";
-    private const string AppsInternalBaseUrlKey = "Apps:InternalBaseUrl";
+
+    /// <summary><c>Apps:Enabled</c> as configured, or null when unset. Validated by <see cref="AppsSettings(IConfiguration)"/>.</summary>
+    public static string? AppsEnabled(this IConfiguration configuration) => configuration.GetValue<string>(AppsEnabledKey);
+
+    /// <summary><c>Apps:SourceUrl</c> as configured, or null when unset.</summary>
+    public static string? AppsSourceUrl(this IConfiguration configuration) => configuration.GetValue<string>(AppsSourceUrlKey);
+
+    /// <summary><c>Apps:Title</c> as configured, or null when unset.</summary>
+    public static string? AppsTitle(this IConfiguration configuration) => configuration.GetValue<string>(AppsTitleKey);
+
+    /// <summary><c>Apps:PackageName</c> as configured, or null when unset.</summary>
+    public static string? AppsPackageName(this IConfiguration configuration) => configuration.GetValue<string>(AppsPackageNameKey);
+
+    /// <summary>The Apps page's settings, validated. Read once at startup; the host registers the result.</summary>
+    public static Apps.AppsSettings AppsSettings(this IConfiguration configuration) => Apps.AppsSettings.Create(
+        configuration.AppsEnabled(), configuration.AppsSourceUrl(), configuration.AppsTitle(), configuration.AppsPackageName());
+
+    private const string HostAddressKey = "HostAddress";
 
     /// <summary>The Docker host's address on the default bridge, as seen from inside a container.</summary>
     public const string DefaultDockerHost = "172.17.0.1";
-
-    public const string DefaultAppsPackageName = "rocketwelder-apps";
-    public const int DefaultAppsPort = 8095;
 
     /// <summary>The host the AutoUpdater container reaches: SshHost, else HostAddress, else the Docker bridge.</summary>
     public static string DockerHostAddress(this IConfiguration configuration)
@@ -90,25 +101,4 @@ public static class ConfigurationExtensions
         var hostAddress = configuration.GetValue<string>(HostAddressKey);
         return string.IsNullOrWhiteSpace(hostAddress) ? DefaultDockerHost : hostAddress;
     }
-
-    /// <summary>The package whose container serves the apps (packaging/apps/compose).</summary>
-    public static string AppsPackageName(this IConfiguration configuration)
-    {
-        var name = configuration.GetValue<string>(AppsPackageNameKey);
-        return string.IsNullOrWhiteSpace(name) ? DefaultAppsPackageName : name;
-    }
-
-    /// <summary>The LAN port the apps container publishes; browsers download from it.</summary>
-    public static int AppsPort(this IConfiguration configuration) =>
-        int.TryParse(configuration.GetValue<string>(AppsPortKey), System.Globalization.NumberStyles.None,
-            System.Globalization.CultureInfo.InvariantCulture, out var port) && port is > 0 and < 65536
-            ? port
-            : DefaultAppsPort;
-
-    /// <summary>Where the AutoUpdater reads the apps manifest: configured, else the Docker host at the apps port.</summary>
-    public static Uri AppsInternalBaseUrl(this IConfiguration configuration) =>
-        Uri.TryCreate(configuration.GetValue<string>(AppsInternalBaseUrlKey), UriKind.Absolute, out var configured)
-            && (configured.Scheme == Uri.UriSchemeHttp || configured.Scheme == Uri.UriSchemeHttps)
-            ? configured
-            : new UriBuilder(Uri.UriSchemeHttp, configuration.DockerHostAddress(), configuration.AppsPort()).Uri;
 }

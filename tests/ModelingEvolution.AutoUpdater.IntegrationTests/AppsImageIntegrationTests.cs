@@ -15,48 +15,55 @@ using Xunit;
 namespace ModelingEvolution.AutoUpdater.IntegrationTests;
 
 /// <summary>
-/// Builds the apps image through the real publish script, with dummy files, and runs it the way the compose package does.
+/// Builds an apps image through the real publish script, with dummy files and the example guides, and runs it the way the
+/// compose package does.
 /// </summary>
 public sealed class AppsImageFixture : IAsyncLifetime
 {
     private const int ContainerPort = 8080;
-    public const string WindowsFile = "RocketWelderPlayer-1.0.0.msi";
-    public const string AndroidFile = "RocketWelderPlayer-1.0.0-arm64-v8a.apk";
-    public const string LinuxFile = "native-player_1.0.0_arm64.deb";
+    public const string WindowsFile = "ExampleViewer-1.0.0.msi";
+    public const string AndroidFile = "ExampleViewer-1.0.0-arm64-v8a.apk";
+    public const string LinuxFile = "example-viewer_1.0.0_arm64.deb";
 
     private readonly string _workDir = Directory.CreateTempSubdirectory("apps-image-").FullName;
     private IContainer _healthy = null!;
-    private IContainer _tampered = null!;
-    private IContainer _noCheck = null!;
+    private IContainer _scratch = null!;
 
-    public string Tag { get; } = $"rocketwelder-apps-test:{Guid.NewGuid():N}";
+    public string Tag { get; } = $"apps-test:{Guid.NewGuid():N}";
     public byte[] WindowsBytes { get; } = RandomNumberGenerator.GetBytes(2 * 1024 * 1024);
     public HttpClient Healthy { get; private set; } = null!;
-    public HttpClient Tampered { get; private set; } = null!;
-    /// <summary>The image started without its start-up check, as another entrypoint would.</summary>
-    public HttpClient NoCheck { get; private set; } = null!;
     public IContainer HealthyContainer => _healthy;
     public string WindowsPath => Path.Combine(_workDir, WindowsFile);
     public string LinuxPath => Path.Combine(_workDir, LinuxFile);
+    public string AndroidPath => Path.Combine(_workDir, AndroidFile);
     /// <summary>Its root filesystem is writable and its /tmp allows exec, unlike the compose-restricted one.</summary>
-    public IContainer ScratchContainer => _tampered;
+    public IContainer ScratchContainer => _scratch;
     public int HealthyPort => _healthy.GetMappedPublicPort(ContainerPort);
-    public int TamperedPort => _tampered.GetMappedPublicPort(ContainerPort);
+    public int ScratchPort => _scratch.GetMappedPublicPort(ContainerPort);
+
+    public static string Guide(string name) => Path.Combine(PackagingDirectory, "example", name);
+    public static string Icon => Path.Combine(PackagingDirectory, "example", "example-viewer.png");
+
+    /// <summary>
+    /// The example app with its icon and three downloads (one labelled, one preview), then a second app with one download
+    /// listed without a file, in page order.
+    /// </summary>
+    public static string[] AppArguments(string windows, string linux, string android, string androidVersion = "1.0.0") =>
+    [
+        "--app", "example-viewer", "--name", "Example Viewer", "--icon", Icon,
+        "--download", "--platform", "windows", "--arch", "x64", "--file", windows, "--version", "1.0.0", "--guide", Guide("windows.md"),
+        "--download", "--platform", "linux", "--arch", "arm64", "--label", "Kiosk devices", "--file", linux, "--version", "1.0.0", "--guide", Guide("linux.md"),
+        "--download", "--platform", "android", "--arch", "arm64", "--preview", "--file", android, "--version", androidVersion, "--guide", Guide("android.md"),
+        "--app", "example-web", "--name", "Example Viewer for the web", "--download", "--platform", "ios", "--arch", "any",
+    ];
 
     public async Task InitializeAsync()
     {
-        var windows = Path.Combine(_workDir, WindowsFile);
-        var android = Path.Combine(_workDir, AndroidFile);
-        var linux = Path.Combine(_workDir, LinuxFile);
-        await File.WriteAllBytesAsync(windows, WindowsBytes);
-        await File.WriteAllBytesAsync(android, RandomNumberGenerator.GetBytes(64 * 1024));
-        await File.WriteAllBytesAsync(linux, RandomNumberGenerator.GetBytes(64 * 1024));
+        await File.WriteAllBytesAsync(WindowsPath, WindowsBytes);
+        await File.WriteAllBytesAsync(AndroidPath, RandomNumberGenerator.GetBytes(64 * 1024));
+        await File.WriteAllBytesAsync(LinuxPath, RandomNumberGenerator.GetBytes(64 * 1024));
 
-        await Publish(
-            "--release", "1.0.0", "--local-tag", Tag,
-            "--windows", windows, "--windows-version", "1.0.0",
-            "--android", android, "--android-version", "1.0.0",
-            "--linux", linux, "--linux-version", "1.0.0");
+        await Publish(["--release", "1.0.0", "--local-tag", Tag, .. AppArguments(WindowsPath, LinuxPath, AndroidPath)]);
 
         // Same restrictions as packaging/apps/compose/docker-compose.yml.
         _healthy = new ContainerBuilder()
@@ -72,37 +79,22 @@ public sealed class AppsImageFixture : IAsyncLifetime
             .WithWaitStrategy(Wait.ForUnixContainer().UntilHttpRequestIsSucceeded(r => r.ForPort(ContainerPort).ForPath("/health")))
             .Build();
 
-        // The files on disk no longer match the manifest: one is altered, one nobody listed. Copied before it starts.
-        _tampered = new ContainerBuilder()
+        _scratch = new ContainerBuilder()
             .WithImage(Tag)
             .WithPortBinding(ContainerPort, true)
-            .WithResourceMapping(RandomNumberGenerator.GetBytes(1024), $"/srv/apps/files/{AndroidFile}")
-            .WithResourceMapping(Encoding.UTF8.GetBytes("nobody listed me"), "/srv/apps/files/unlisted.bin")
             .WithWaitStrategy(Wait.ForUnixContainer().UntilHttpRequestIsSucceeded(r => r.ForPort(ContainerPort).ForPath("/health")))
             .Build();
 
-        _noCheck = new ContainerBuilder()
-            .WithImage(Tag)
-            .WithPortBinding(ContainerPort, true)
-            .WithEntrypoint("nginx", "-e", "/dev/stderr", "-g", "daemon off;")
-            .WithWaitStrategy(Wait.ForUnixContainer().UntilHttpRequestIsSucceeded(r => r.ForPort(ContainerPort).ForPath("/health")))
-            .Build();
-
-        await Task.WhenAll(_healthy.StartAsync(), _tampered.StartAsync(), _noCheck.StartAsync());
+        await Task.WhenAll(_healthy.StartAsync(), _scratch.StartAsync());
 
         Healthy = new HttpClient { BaseAddress = new Uri($"http://127.0.0.1:{HealthyPort}/") };
-        Tampered = new HttpClient { BaseAddress = new Uri($"http://127.0.0.1:{TamperedPort}/") };
-        NoCheck = new HttpClient { BaseAddress = new Uri($"http://127.0.0.1:{_noCheck.GetMappedPublicPort(ContainerPort)}/") };
     }
 
     public async Task DisposeAsync()
     {
         Healthy?.Dispose();
-        Tampered?.Dispose();
-        NoCheck?.Dispose();
         if (_healthy != null) await _healthy.DisposeAsync();
-        if (_tampered != null) await _tampered.DisposeAsync();
-        if (_noCheck != null) await _noCheck.DisposeAsync();
+        if (_scratch != null) await _scratch.DisposeAsync();
         await Cli.Wrap("docker").WithArguments(["image", "rm", "-f", Tag]).WithValidation(CommandResultValidation.None).ExecuteBufferedAsync();
         Directory.Delete(_workDir, recursive: true);
     }
@@ -138,14 +130,14 @@ public sealed class AppsImageFixture : IAsyncLifetime
     /// <summary>publish-apps.sh, for a caller that sets the environment or checks the exit code itself.</summary>
     public static Command PublishCommand(params string[] args) => Cli.Wrap(Bash)
         .WithWorkingDirectory(PackagingDirectory)
-        .WithArguments(new[] { "./publish-apps.sh" }.Concat(args.Select(ForBash)));
+        .WithArguments(new[] { "./publish-apps.sh" }.Concat(args.Select(a => File.Exists(a) ? ForBash(a) : a)));
 
     public static string ForBash(string path) => path.Replace('\\', '/');
 
     /// <summary>docker exec as root, which the image's own user cannot do; only for the writable scratch container.</summary>
     public async Task ExecAsRoot(string script)
     {
-        await Cli.Wrap("docker").WithArguments(["exec", "-u", "0", _tampered.Id, "sh", "-c", script]).ExecuteBufferedAsync();
+        await Cli.Wrap("docker").WithArguments(["exec", "-u", "0", _scratch.Id, "sh", "-c", script]).ExecuteBufferedAsync();
     }
 }
 
@@ -177,27 +169,92 @@ public sealed class AppsImageIntegrationTests(AppsImageFixture image) : IClassFi
 
     private static int StatusOf(string rawResponse) => int.Parse(rawResponse.Split(' ')[1]);
 
+    private AppsCatalogClient Client() => new(new HttpClient(), new AppsOptions(new Uri($"http://127.0.0.1:{image.HealthyPort}/")));
+
     [Fact]
-    public async Task Download_ReturnsTheExactBytes_MatchingTheManifestHash()
+    public async Task Manifest_ListsEveryAppAndDownloadInTheGivenOrder()
     {
-        var catalog = await new AppsCatalogClient(new HttpClient(), new AppsOptions("rocketwelder-apps", image.HealthyPort, new Uri($"http://127.0.0.1:{image.HealthyPort}/"))).GetAsync();
-        var file = catalog.Find("windows")!;
+        var catalog = await Client().GetAsync();
 
-        var bytes = await image.Healthy.GetByteArrayAsync($"files/{file.FileName}");
-
-        Hash(bytes).Should().Be(file.Sha256).And.Be(Hash(image.WindowsBytes));
-        file.Size.Should().Be(image.WindowsBytes.Length);
-        file.Verified.Should().BeTrue();
+        catalog.Reachable.Should().BeTrue();
+        catalog.Apps.Select(a => a.Id).Should().Equal("example-viewer", "example-web");
+        var viewer = catalog.Apps[0];
+        viewer.Name.Should().Be("Example Viewer");
+        viewer.Icon.Should().Be("example-viewer.png");
+        viewer.Downloads.Should().HaveCount(3);
+        viewer.Downloads[0].Should().Be(new AppDownload(AppPlatform.Windows, AppArchitecture.X64, null, false,
+            new AppFile("1.0.0", AppsImageFixture.WindowsFile, image.WindowsBytes.Length), "windows.md"));
+        viewer.Downloads[1].Label.Should().Be("Kiosk devices");
+        viewer.Downloads[2].Preview.Should().BeTrue();
+        catalog.Apps[1].Downloads.Should().Equal(new AppDownload(AppPlatform.Ios, AppArchitecture.Any, null, false, null, null));
     }
 
     [Fact]
-    public async Task Manifest_ListsEveryAppThePublishScriptWasGiven()
+    public async Task Icon_IsServedAsPng_ExactlyAsPublished_AndPassesTheAutoUpdatersCheck()
     {
-        var catalog = await new AppsCatalogClient(new HttpClient(), new AppsOptions("rocketwelder-apps", image.HealthyPort, new Uri($"http://127.0.0.1:{image.HealthyPort}/"))).GetAsync();
+        using var response = await image.Healthy.GetAsync("icons/example-viewer.png");
 
-        catalog.Release.Should().Be("1.0.0");
-        catalog.Files.Select(f => f.Platform).Should().BeEquivalentTo("windows", "linux", "android");
-        catalog.Files.Should().OnlyContain(f => f.Verified);
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        response.Content.Headers.ContentType!.MediaType.Should().Be("image/png");
+        response.Headers.GetValues("X-Content-Type-Options").Should().Contain("nosniff");
+        (await response.Content.ReadAsByteArrayAsync()).Should().Equal(await File.ReadAllBytesAsync(AppsImageFixture.Icon));
+        (await Client().GetIconAsync("example-viewer.png")).Should().NotBeNull();
+    }
+
+    [Theory]
+    [InlineData("/icons/")]
+    [InlineData("/icons/missing.png")]
+    [InlineData("/icons/example-viewer.svg")]
+    [InlineData("/icons/a%2fexample-viewer.png")]
+    public async Task Icon_OnlyAPlainPngName_IsServed(string path)
+    {
+        StatusOf(await RawGet(path)).Should().BeOneOf(400, 404);
+    }
+
+    [Fact]
+    public async Task Download_ReturnsTheExactBytes()
+    {
+        var file = (await Client().GetAsync()).Files.Single(f => f.FileName == AppsImageFixture.WindowsFile);
+
+        var bytes = await image.Healthy.GetByteArrayAsync($"files/{file.FileName}");
+
+        Hash(bytes).Should().Be(Hash(image.WindowsBytes));
+        file.Size.Should().Be(image.WindowsBytes.Length);
+    }
+
+    [Theory]
+    [InlineData("windows.md")]
+    [InlineData("android.md")]
+    public async Task Guide_IsServedAsUtf8Markdown_ExactlyAsPublished(string name)
+    {
+        using var response = await image.Healthy.GetAsync($"guides/{name}");
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        response.Content.Headers.ContentType!.MediaType.Should().Be("text/markdown");
+        response.Content.Headers.ContentType.CharSet.Should().Be("utf-8");
+        response.Headers.GetValues("X-Content-Type-Options").Should().Contain("nosniff");
+        (await response.Content.ReadAsByteArrayAsync()).Should().Equal(await File.ReadAllBytesAsync(AppsImageFixture.Guide(name)));
+    }
+
+    [Fact]
+    public async Task Guide_ThroughTheClient_IsTheMarkdown()
+    {
+        (await Client().GetGuideAsync("linux.md"))!.Text.Should().Be(await File.ReadAllTextAsync(AppsImageFixture.Guide("linux.md")));
+    }
+
+    [Theory]
+    [InlineData("/guides/")]
+    [InlineData("/guides/missing.md")]
+    [InlineData("/guides/windows.txt")]
+    [InlineData("/guides/.md")]
+    [InlineData("/guides/a%2fwindows.md")]
+    [InlineData("/windows.md")]
+    public async Task Guide_OnlyAListedPlainMdName_IsServed(string path)
+    {
+        var response = await RawGet(path);
+
+        StatusOf(response).Should().BeOneOf(400, 404);
+        response.Should().NotContain("schemaVersion");
     }
 
     [Theory]
@@ -260,7 +317,8 @@ public sealed class AppsImageIntegrationTests(AppsImageFixture image) : IClassFi
     [InlineData("/../../../../etc/passwd")]
     [InlineData("/etc/passwd")]
     [InlineData("//etc/passwd")]
-    public async Task Traversal_NeverReadsOutsideTheFilesDirectory(string path)
+    [InlineData("/guides/..%2f..%2f..%2fetc%2fpasswd")]
+    public async Task Traversal_NeverReadsOutsideTheServedDirectories(string path)
     {
         var response = await RawGet(path);
 
@@ -273,50 +331,18 @@ public sealed class AppsImageIntegrationTests(AppsImageFixture image) : IClassFi
     [InlineData("/files")]
     [InlineData("/")]
     [InlineData("/SHA256SUMS")]
+    [InlineData("/verification.json")]
     public async Task EverythingElse_Is404_WithNoDirectoryListing(string path)
     {
         StatusOf(await RawGet(path)).Should().Be(404);
     }
 
-    [Fact]
-    public async Task HashMismatch_FileIsNotServed_AndTheOthersStillAre()
-    {
-        using var altered = await image.Tampered.GetAsync($"files/{AppsImageFixture.AndroidFile}", HttpCompletionOption.ResponseHeadersRead);
-        altered.StatusCode.Should().Be(HttpStatusCode.ServiceUnavailable);
-
-        using var intact = await image.Tampered.GetAsync($"files/{AppsImageFixture.WindowsFile}", HttpCompletionOption.ResponseHeadersRead);
-        intact.StatusCode.Should().Be(HttpStatusCode.OK);
-    }
-
-    [Fact]
-    public async Task UnlistedFile_IsNotServed()
-    {
-        using var response = await image.Tampered.GetAsync("files/unlisted.bin", HttpCompletionOption.ResponseHeadersRead);
-
-        response.StatusCode.Should().Be(HttpStatusCode.ServiceUnavailable);
-    }
-
-    [Fact]
-    public async Task HashMismatch_ReachesTheCatalog_AsNotVerified()
-    {
-        var catalog = AppsManifest.Parse(
-            await image.Tampered.GetStringAsync("manifest.json"),
-            await image.Tampered.GetStringAsync("verification.json"));
-
-        catalog.Find("android")!.Verified.Should().BeFalse();
-        catalog.Find("windows")!.Verified.Should().BeTrue();
-    }
-
     private static long DerivedMtime(string sha256) => 946684800 + Convert.ToInt64(sha256[..7], 16);
-
-    private async Task<AppFile> ManifestEntry(string platform) =>
-        (await new AppsCatalogClient(new HttpClient(), new AppsOptions("rocketwelder-apps", image.HealthyPort, new Uri($"http://127.0.0.1:{image.HealthyPort}/"))).GetAsync())
-            .Find(platform)!;
 
     [Fact]
     public async Task Container_RunsAsANonRootUser()
     {
-        // The uid of the process the container started (verify-files.sh, then nginx in its place), not just of an exec.
+        // The uid of the process the container started (nginx), not just of an exec.
         var uid = await image.HealthyContainer.ExecAsync(["awk", "/^Uid:/ { print $2 }", "/proc/1/status"]);
 
         uid.Stdout.Trim().Should().NotBeEmpty().And.NotBe("0");
@@ -325,35 +351,34 @@ public sealed class AppsImageIntegrationTests(AppsImageFixture image) : IClassFi
     [Fact]
     public async Task Download_SaysNoCache_AndItsValidatorsComeFromTheFileHash()
     {
-        var file = await ManifestEntry("windows");
-        var mtime = DerivedMtime(file.Sha256);
+        var mtime = DerivedMtime(Hash(image.WindowsBytes));
 
-        using var response = await image.Healthy.GetAsync($"files/{file.FileName}", HttpCompletionOption.ResponseHeadersRead);
+        using var response = await image.Healthy.GetAsync($"files/{AppsImageFixture.WindowsFile}", HttpCompletionOption.ResponseHeadersRead);
 
         response.Headers.CacheControl!.NoCache.Should().BeTrue();
         response.Content.Headers.LastModified.Should().Be(DateTimeOffset.FromUnixTimeSeconds(mtime));
         // The latest possible derived date (base + 16^7 s) is still in the past: RFC 9110 forbids a future Last-Modified.
         DateTimeOffset.FromUnixTimeSeconds(946684800 + 0xFFFFFFF).Should().BeBefore(response.Headers.Date!.Value);
-        response.Headers.ETag!.Tag.Should().Be($"\"{mtime:x}-{file.Size:x}\"");
+        response.Headers.ETag!.Tag.Should().Be($"\"{mtime:x}-{image.WindowsBytes.Length:x}\"");
     }
 
     [Fact]
     public async Task ResumeWithTheValidatorOfAnotherBuild_GetsTheWholeFile_NeverAMix()
     {
-        var file = await ManifestEntry("windows");
-        using var current = new HttpRequestMessage(HttpMethod.Get, $"files/{file.FileName}");
+        var size = image.WindowsBytes.Length;
+        using var current = new HttpRequestMessage(HttpMethod.Get, $"files/{AppsImageFixture.WindowsFile}");
         current.Headers.Range = new RangeHeaderValue(1000, 1999);
-        current.Headers.IfRange = new RangeConditionHeaderValue(new EntityTagHeaderValue($"\"{DerivedMtime(file.Sha256):x}-{file.Size:x}\""));
-        using var older = new HttpRequestMessage(HttpMethod.Get, $"files/{file.FileName}");
+        current.Headers.IfRange = new RangeConditionHeaderValue(new EntityTagHeaderValue($"\"{DerivedMtime(Hash(image.WindowsBytes)):x}-{size:x}\""));
+        using var older = new HttpRequestMessage(HttpMethod.Get, $"files/{AppsImageFixture.WindowsFile}");
         older.Headers.Range = new RangeHeaderValue(1000, 1999);
-        older.Headers.IfRange = new RangeConditionHeaderValue(new EntityTagHeaderValue($"\"5e0be100-{file.Size:x}\""));
+        older.Headers.IfRange = new RangeConditionHeaderValue(new EntityTagHeaderValue($"\"5e0be100-{size:x}\""));
 
         using var sameBuild = await image.Healthy.SendAsync(current);
         using var otherBuild = await image.Healthy.SendAsync(older);
 
         sameBuild.StatusCode.Should().Be(HttpStatusCode.PartialContent);
         otherBuild.StatusCode.Should().Be(HttpStatusCode.OK);
-        Hash(await otherBuild.Content.ReadAsByteArrayAsync()).Should().Be(file.Sha256);
+        Hash(await otherBuild.Content.ReadAsByteArrayAsync()).Should().Be(Hash(image.WindowsBytes));
     }
 
     [Fact]
@@ -369,86 +394,34 @@ public sealed class AppsImageIntegrationTests(AppsImageFixture image) : IClassFi
     }
 
     [Fact]
-    public async Task RestartAfterAFileChanged_DoesNotServeItOnAnOldMarker()
-    {
-        // No tmpfs: /tmp lives in the container's writable layer and survives a restart, as with a plain docker run.
-        var container = new ContainerBuilder()
-            .WithImage(image.Tag)
-            .WithPortBinding(8080, true)
-            .WithWaitStrategy(Wait.ForUnixContainer().UntilHttpRequestIsSucceeded(r => r.ForPort(8080).ForPath("/health")))
-            .Build();
-        await using (container)
-        {
-            await container.StartAsync();
-            (await StatusAfterStart()).Should().Be(200, "the file matched at the first start, so it has a marker");
-
-            await Cli.Wrap("docker").WithArguments(["exec", "-u", "0", container.Id, "sh", "-c",
-                $"printf changed > /srv/apps/files/{AppsImageFixture.WindowsFile}"]).ExecuteBufferedAsync();
-            await container.StopAsync();
-            await container.StartAsync();
-
-            (await StatusAfterStart()).Should().Be(503);
-        }
-
-        async Task<int> StatusAfterStart() =>
-            StatusOf(await RawRequest(container.GetMappedPublicPort(8080), "HEAD", $"/files/{AppsImageFixture.WindowsFile}"));
-    }
-
-    [Fact]
     public async Task PercentEncodedName_ReachesTheSameFile()
     {
-        // %52 is "R": nginx decodes before matching, so the encoded form is the same file under the same rules.
-        var response = await RawGet($"/files/%52{AppsImageFixture.WindowsFile[1..]}");
+        // %45 is "E": nginx decodes before matching, so the encoded form is the same file under the same rules.
+        var response = await RawGet($"/files/%45{AppsImageFixture.WindowsFile[1..]}");
 
         StatusOf(response).Should().Be(200);
     }
 
-    [Theory]
-    [InlineData("HEAD", "")]
-    [InlineData("GET", "Range: bytes=0-99\r\n")]
-    [InlineData("GET", "Range: bytes=-1\r\n")]
-    public async Task BlockedFile_Is503_ForEveryWayOfAskingForIt(string method, string headers)
+    [Fact]
+    public async Task Symlink_IsRefused()
     {
-        var response = await RawRequest(image.TamperedPort, method, $"/files/{AppsImageFixture.AndroidFile}", headers);
+        await image.ExecAsRoot("ln -sf /etc/passwd /srv/apps/files/link.bin && ln -sf /etc/passwd /srv/apps/guides/link.md");
 
-        StatusOf(response).Should().Be(503);
+        var file = await RawRequest(image.ScratchPort, "GET", "/files/link.bin");
+        var guide = await RawRequest(image.ScratchPort, "GET", "/guides/link.md");
+
+        StatusOf(file).Should().Be(403);
+        StatusOf(guide).Should().Be(403);
+        file.Should().NotContain("root:");
+        guide.Should().NotContain("root:");
     }
 
     [Fact]
-    public async Task BlockedFile_PercentEncoded_Is503()
+    public async Task DotFile_Is404_EvenWhenItExists()
     {
-        // %52 is "R", the first letter of the Android file's name.
-        var response = await RawRequest(image.TamperedPort, "GET", $"/files/%52{AppsImageFixture.AndroidFile[1..]}");
+        await image.ExecAsRoot("printf secret > /srv/apps/files/.hidden");
 
-        StatusOf(response).Should().Be(503);
-    }
-
-    [Fact]
-    public async Task ContainerStartedWithoutItsCheck_ServesNoFile()
-    {
-        using var response = await image.NoCheck.GetAsync($"files/{AppsImageFixture.WindowsFile}", HttpCompletionOption.ResponseHeadersRead);
-
-        response.StatusCode.Should().Be(HttpStatusCode.ServiceUnavailable);
-    }
-
-    [Fact]
-    public async Task Symlink_IsRefused_EvenWithAnOkMarker()
-    {
-        // As if the check had passed it: the link exists and carries a marker, so only nginx's own rule stands in the way.
-        await image.ExecAsRoot("ln -sf /etc/passwd /srv/apps/files/link.bin && touch /tmp/apps-state/ok/link.bin");
-
-        var response = await RawRequest(image.TamperedPort, "GET", "/files/link.bin");
-
-        StatusOf(response).Should().Be(403);
-        response.Should().NotContain("root:");
-    }
-
-    [Fact]
-    public async Task DotFile_Is404_EvenWhenItExistsWithAnOkMarker()
-    {
-        await image.ExecAsRoot("printf secret > /srv/apps/files/.hidden && touch /tmp/apps-state/ok/.hidden");
-
-        var response = await RawRequest(image.TamperedPort, "GET", "/files/.hidden");
+        var response = await RawRequest(image.ScratchPort, "GET", "/files/.hidden");
 
         StatusOf(response).Should().Be(404);
         response.Should().NotContain("secret");
@@ -458,26 +431,26 @@ public sealed class AppsImageIntegrationTests(AppsImageFixture image) : IClassFi
     public async Task UnchangedFiles_KeepTheirLayers_WhenAnotherAppChanges()
     {
         var dir = Directory.CreateTempSubdirectory("apps-layers-");
-        var tag = $"rocketwelder-apps-test:{Guid.NewGuid():N}";
+        var tag = $"apps-test:{Guid.NewGuid():N}";
         try
         {
+            // The last file changes. Only the layers before it are asserted: a layer after a changed one is rebuilt, and
+            // its parent directories then carry the new build time (README, "carry an app forward unchanged").
             var android = Path.Combine(dir.FullName, AppsImageFixture.AndroidFile);
             await File.WriteAllBytesAsync(android, RandomNumberGenerator.GetBytes(64 * 1024));
-            await AppsImageFixture.Publish(
-                "--release", "1.0.1", "--local-tag", tag,
-                "--windows", image.WindowsPath, "--windows-version", "1.0.0",
-                "--android", android, "--android-version", "1.0.1",
-                "--linux", image.LinuxPath, "--linux-version", "1.0.0");
+            await AppsImageFixture.Publish(["--release", "1.0.1", "--local-tag", tag,
+                .. AppsImageFixture.AppArguments(image.WindowsPath, image.LinuxPath, android, androidVersion: "1.0.1")]);
 
             var first = await Layers(image.Tag);
             var second = await Layers(tag);
 
-            // Layer order: base, windows, linux, android, then manifest + SHA256SUMS.
+            // Layer order: base, windows, linux, android, their three guides, the icon, then manifest.json.
             second.Should().HaveCount(first.Length);
-            second[..^4].Should().Equal(first[..^4], "the base did not change");
-            second[^4].Should().Be(first[^4], "the windows file did not change");
-            second[^3].Should().Be(first[^3], "the linux file did not change");
-            second[^2].Should().NotBe(first[^2], "the android file changed");
+            second[..^8].Should().Equal(first[..^8], "the base did not change");
+            second[^8].Should().Be(first[^8], "the windows file did not change");
+            second[^7].Should().Be(first[^7], "the linux file did not change");
+            second[^6].Should().NotBe(first[^6], "the android file changed");
+            second[^1].Should().NotBe(first[^1], "the manifest changed");
         }
         finally
         {
@@ -496,11 +469,11 @@ public sealed class AppsImageIntegrationTests(AppsImageFixture image) : IClassFi
     /// publish-apps.sh against a stub docker that answers the tag lookup as told and records whether a push was attempted.
     /// </summary>
     [Theory]
-    [InlineData(1, "ERROR: docker.example.test/rocketwelder/rocketwelder-apps:9.9.9: not found", true, "")]
+    [InlineData(1, "ERROR: docker.example.test/example/apps:9.9.9: not found", true, "")]
     [InlineData(1, "ERROR: failed to authorize: failed to fetch oauth token: 401 Unauthorized", false, "could not check")]
     [InlineData(1, "ERROR: unauthorized: authentication required (repository not found)", false, "could not check")]
     [InlineData(1, "ERROR: dial tcp: lookup docker.example.test: no such host", false, "could not check")]
-    [InlineData(0, "Name: docker.example.test/rocketwelder/rocketwelder-apps:9.9.9", false, "already exists")]
+    [InlineData(0, "Name: docker.example.test/example/apps:9.9.9", false, "already exists")]
     public async Task PublishScript_PushesOnlyWhenTheRegistrySaysTheTagIsNotFound(int inspectExit, string inspectOutput, bool pushes, string refusal)
     {
         var dir = Directory.CreateTempSubdirectory("apps-publish-stub-");
@@ -519,7 +492,8 @@ public sealed class AppsImageIntegrationTests(AppsImageFixture image) : IClassFi
             var app = Path.Combine(dir.FullName, "a.exe");
             await File.WriteAllBytesAsync(app, [1, 2, 3]);
 
-            var run = await AppsImageFixture.PublishCommand("--release", "9.9.9", "--registry", "docker.example.test", "--windows", app, "--windows-version", "1.0.0")
+            var run = await AppsImageFixture.PublishCommand("--release", "9.9.9", "--image", "docker.example.test/example/apps",
+                    "--app", "viewer", "--name", "Example Viewer", "--download", "--platform", "windows", "--arch", "x64", "--file", app, "--version", "1.0.0")
                 .WithEnvironmentVariables(e => e
                     .Set("PATH", bin + Path.PathSeparator + Environment.GetEnvironmentVariable("PATH"))
                     .Set("STUB_LOG", AppsImageFixture.ForBash(log))
@@ -529,7 +503,7 @@ public sealed class AppsImageIntegrationTests(AppsImageFixture image) : IClassFi
                 .ExecuteBufferedAsync();
 
             var calls = await File.ReadAllTextAsync(log);
-            calls.Should().Contain("buildx imagetools inspect docker.example.test/rocketwelder/rocketwelder-apps:9.9.9", "the stub docker must be the one called");
+            calls.Should().Contain("buildx imagetools inspect docker.example.test/example/apps:9.9.9", "the stub docker must be the one called");
             if (pushes)
             {
                 run.ExitCode.Should().Be(0, run.StandardError);
@@ -541,6 +515,130 @@ public sealed class AppsImageIntegrationTests(AppsImageFixture image) : IClassFi
                 run.StandardError.Should().Contain(refusal);
                 calls.Should().NotContain("buildx build");
             }
+        }
+        finally
+        {
+            dir.Delete(recursive: true);
+        }
+    }
+
+    /// <summary>A dry run validates and prints the manifest; the AutoUpdater reads back exactly what was given.</summary>
+    [Fact]
+    public async Task PublishScript_DryRunManifest_IsWhatTheAutoUpdaterReads()
+    {
+        var run = await AppsImageFixture.Publish(["--release", "2.0.0", "--dry-run",
+            .. AppsImageFixture.AppArguments(image.WindowsPath, image.LinuxPath, image.AndroidPath),
+            "--app", "quoted", "--name", "Viewer \"quoted\" \\ edition",
+            "--download", "--platform", "macos", "--arch", "any", "--label", "Label \"q\" \\ x"]);
+
+        var catalog = AppsManifest.Parse(run.StandardOutput);
+
+        catalog.Reachable.Should().BeTrue(run.StandardOutput);
+        catalog.Apps.Select(a => a.Id).Should().Equal("example-viewer", "example-web", "quoted");
+        catalog.Apps[2].Name.Should().Be("Viewer \"quoted\" \\ edition");
+        catalog.Apps[2].Downloads.Single().Label.Should().Be("Label \"q\" \\ x");
+        catalog.Apps[0].Downloads.Select(d => d.Guide).Should().Equal("windows.md", "linux.md", "android.md");
+        catalog.Apps[0].Icon.Should().Be("example-viewer.png");
+    }
+
+    public static TheoryData<string[], string> RefusedPublishes()
+    {
+        var file = Path.Combine(Path.GetTempPath(), "apps-refuse-a.exe");
+        File.WriteAllBytes(file, [1, 2, 3]);
+        var svg = Path.Combine(Path.GetTempPath(), "apps-refuse-icon.png");
+        File.WriteAllText(svg, "<svg xmlns=\"http://www.w3.org/2000/svg\" onload=\"alert(1)\"/>");
+        var huge = Path.Combine(Path.GetTempPath(), "apps-refuse-huge.png");
+        File.WriteAllBytes(huge, [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, .. new byte[256 * 1024]]);
+        string[] download = ["--download", "--platform", "windows", "--arch", "x64"];
+        return new TheoryData<string[], string>
+        {
+            { ["--app", "viewer", "--name", new string('x', 81)], "longer than 80" },
+            { ["--app", "viewer", "--name", "tab\there"], "control or layout character" },
+            { ["--app", "viewer", "--name", "   "], "blank" },
+            { ["--app", "Viewer", "--name", "x"], "id not allowed" },
+            { ["--app", "viewer", "--name", "x", "--app", "viewer", "--name", "y"], "given twice" },
+            { ["--name", "x"], "must follow an --app" },
+            { ["--app", "viewer", "--name", "x", "--platform", "windows"], "must follow a --download" },
+            { ["--app", "viewer", "--name", "x", "--download", "--platform", "beos", "--arch", "x64"], "--platform must be one of" },
+            { ["--app", "viewer", "--name", "x", "--download", "--platform", "windows", "--arch", "riscv"], "--arch must be one of" },
+            { ["--app", "viewer", "--name", "x", "--download", "--arch", "x64"], "--platform must be one of" },
+            { ["--app", "viewer", "--name", "x", .. download, "--label", new string('x', 41)], "longer than 40" },
+            { ["--app", "viewer", "--name", "x", .. download, .. download], "same platform, architecture and label" },
+            { ["--app", "viewer", "--name", "x", .. download, "--label", "Kiosk", .. download, "--label", "kiosk"], "same platform, architecture and label" },
+            { ["--app", "viewer", "--name", "x", .. download, "--label", "Kiosk devices", .. download, "--label", " KIOSK devices  "], "same platform, architecture and label" },
+            { ["--app", "viewer", "--name", "x", .. Enumerable.Range(0, 9).SelectMany(i => download.Append("--label").Append($"v{i}"))], "at most 8 downloads" },
+            { ["--app", "viewer", "--name", "x", .. download, "--version", "1.0.0"], "--version given without --file" },
+            { ["--app", "viewer", "--name", "x", .. download, "--file", file], "--version is missing" },
+            { ["--app", "viewer", "--name", "x", .. download, "--guide", file], "guide name not allowed" },
+            { ["--app", "viewer", "--name", "x", "--icon", file], "icon name not allowed" },
+            { ["--app", "viewer", "--name", "x", "--icon", svg], "icon is not a PNG" },
+            { ["--app", "viewer", "--name", "x", "--icon", huge], "icon must be 1 to 262144 bytes" },
+            { [.. Enumerable.Range(0, 17).SelectMany(i => new[] { "--app", $"app-{i}", "--name", "x" })], "at most 16 apps" },
+        };
+    }
+
+    [Theory]
+    [MemberData(nameof(RefusedPublishes))]
+    public async Task PublishScript_RefusesWhatThePageWouldDrop(string[] apps, string error)
+    {
+        var run = await AppsImageFixture.PublishCommand(["--release", "1.0.0", "--dry-run", .. apps])
+            .WithValidation(CommandResultValidation.None).ExecuteBufferedAsync();
+
+        run.ExitCode.Should().NotBe(0);
+        run.StandardError.Should().Contain(error);
+    }
+
+    [Theory]
+    [InlineData("invalid-utf8", "not valid UTF-8")]
+    [InlineData("too-large", "must be 1 to 16384 bytes")]
+    [InlineData("empty", "must be 1 to 16384 bytes")]
+    public async Task PublishScript_RefusesAGuideTheAutoUpdaterWouldNotRead(string kind, string error)
+    {
+        var dir = Directory.CreateTempSubdirectory("apps-guide-");
+        try
+        {
+            var guide = Path.Combine(dir.FullName, "viewer.md");
+            await File.WriteAllBytesAsync(guide, kind switch
+            {
+                "invalid-utf8" => [0x23, 0x20, 0xFF, 0xFE],
+                "too-large" => Enumerable.Repeat((byte)'a', 16385).ToArray(),
+                _ => [],
+            });
+
+            var run = await AppsImageFixture.PublishCommand("--release", "1.0.0", "--dry-run", "--app", "viewer", "--name", "x", "--download", "--platform", "windows", "--arch", "x64", "--guide", guide)
+                .WithValidation(CommandResultValidation.None).ExecuteBufferedAsync();
+
+            run.ExitCode.Should().NotBe(0);
+            run.StandardError.Should().Contain(error);
+        }
+        finally
+        {
+            dir.Delete(recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task PublishScript_PushWithoutAnImage_IsRefused()
+    {
+        var run = await AppsImageFixture.PublishCommand("--release", "1.0.0", "--app", "viewer", "--name", "x")
+            .WithValidation(CommandResultValidation.None).ExecuteBufferedAsync();
+
+        run.ExitCode.Should().NotBe(0);
+        run.StandardError.Should().Contain("--image REGISTRY/REPOSITORY is required");
+    }
+
+    [Fact]
+    public async Task PublishScript_RefusesAFileNameThatIsNotAPlainName()
+    {
+        var dir = Directory.CreateTempSubdirectory("apps-publish-");
+        try
+        {
+            var bad = Path.Combine(dir.FullName, "has space.exe");
+            await File.WriteAllBytesAsync(bad, [1, 2, 3]);
+
+            var publish = () => AppsImageFixture.Publish("--release", "1.0.0", "--dry-run", "--app", "viewer", "--name", "x", "--download", "--platform", "windows", "--arch", "x64", "--file", bad, "--version", "1.0.0");
+
+            await publish.Should().ThrowAsync<Exception>().Where(e => e.Message.Contains("file name not allowed"));
         }
         finally
         {
@@ -595,7 +693,7 @@ public sealed class AppsImageIntegrationTests(AppsImageFixture image) : IClassFi
     }
 
     /// <summary>update-version.sh list with curl and jq replaced by exported shell functions, which win over any binary on
-    /// PATH (Git Bash puts its own curl first). Returns the exit code, all output and the curl config piped in, if any.</summary>
+    /// PATH (Git Bash puts its own curl first). Returns the exit code, all output, the curl config and URL piped in, if any.</summary>
     private static async Task<(int ExitCode, string Output, string? CurlConfig)> ListVersions(
         int curlExit, string curlStderr, string? user = null, string? password = null)
     {
@@ -642,14 +740,15 @@ public sealed class AppsImageIntegrationTests(AppsImageFixture image) : IClassFi
 
     [Theory]
     [InlineData(22, "curl: (22) The requested URL returned error: 401")]
-    [InlineData(6, "curl: (6) Could not resolve host: docker.modelingevolution.com")]
-    [InlineData(7, "curl: (7) Failed to connect to docker.modelingevolution.com port 443: Connection refused")]
+    [InlineData(6, "curl: (6) Could not resolve host: registry.example.com")]
+    [InlineData(7, "curl: (7) Failed to connect to registry.example.com port 443: Connection refused")]
     public async Task UpdateVersionList_RegistryRefusesOrIsUnreachable_SaysSo(int curlExit, string curlError)
     {
         var (exitCode, output, _) = await ListVersions(curlExit, curlError);
 
         exitCode.Should().NotBe(0);
-        output.Should().Contain("Cannot reach the Harbor registry API").And.NotContain("No release tags found");
+        output.Should().Contain("Cannot reach the Harbor registry API at https://registry.example.com/api/v2.0")
+            .And.NotContain("No release tags found");
     }
 
     [Fact]
@@ -664,10 +763,10 @@ public sealed class AppsImageIntegrationTests(AppsImageFixture image) : IClassFi
     [Fact]
     public async Task UpdateVersionList_CredentialsWithQuoteAndBackslash_ReachCurlEscaped()
     {
-        var (exitCode, output, config) = await ListVersions(0, "", user: "robot$rocketwelder+pull", password: "a\"b\\c");
+        var (exitCode, output, config) = await ListVersions(0, "", user: "robot$example+pull", password: "a\"b\\c");
 
         exitCode.Should().Be(0, output);
-        config.Should().Be("user = \"robot$rocketwelder+pull:a\\\"b\\\\c\"\n");
+        config.Should().Be("user = \"robot$example+pull:a\\\"b\\\\c\"\n");
         output.Should().NotContain("a\"b\\c");
     }
 
@@ -685,7 +784,7 @@ public sealed class AppsImageIntegrationTests(AppsImageFixture image) : IClassFi
         var dir = Directory.CreateTempSubdirectory("apps-compose-");
         var compose = Path.Combine(AppsImageFixture.PackagingDirectory, "compose", "docker-compose.yml");
         await File.WriteAllTextAsync(Path.Combine(dir.FullName, "override.yml"),
-            $"services:\n  rocketwelder-apps:\n    image: {image.Tag}\n    container_name: {project}\n");
+            $"services:\n  apps:\n    image: {image.Tag}\n    container_name: {project}\n");
         Command Compose(params string[] args) => Cli.Wrap("docker")
             .WithArguments(new[] { "compose", "-p", project, "-f", compose, "-f", Path.Combine(dir.FullName, "override.yml") }.Concat(args))
             .WithEnvironmentVariables(e => e.Set("APPS_PORT", port.ToString()));
@@ -726,45 +825,56 @@ public sealed class AppsImageIntegrationTests(AppsImageFixture image) : IClassFi
         release.StandardError.Should().Contain("needs a message");
     }
 
-    [Fact]
-    public async Task Prune_KeepsTheTwoNewestByVersion_AndAlwaysExitsZero()
+    private const string PruneStubDocker = """
+        #!/bin/sh
+        if [ "$1 $2" = "image ls" ]; then echo "$3" > /tmp/prune/listed; printf '1.9.0\n1.10.0\n1.2.0\nlatest\n<none>\n0.1.0\n'; exit 0; fi
+        if [ "$1 $2" = "image rm" ]; then echo "$3" >> /tmp/prune/removed; case "$3" in *:1.2.0) exit 1 ;; esac; exit 0; fi
+        exit 1
+        """;
+
+    private async Task<(long ExitCode, string Listed, string[] Removed)> Prune(string environment, bool withCompose)
     {
-        // A stub docker that lists tags and records removals. The real script runs inside the image's shell.
-        const string stub = """
-            #!/bin/sh
-            if [ "$1 $2" = "image ls" ]; then printf '1.9.0\n1.10.0\n1.2.0\nlatest\n<none>\n0.1.0\n'; exit 0; fi
-            if [ "$1 $2" = "image rm" ]; then echo "$3" >> /tmp/prune/removed; [ "$3" != "repo:1.2.0" ]; exit $?; fi
-            exit 1
-            """;
         var script = await File.ReadAllTextAsync(Path.Combine(AppsImageFixture.PackagingDirectory, "compose", "prune-old-images.sh"));
+        var compose = await File.ReadAllTextAsync(Path.Combine(AppsImageFixture.PackagingDirectory, "compose", "docker-compose.yml"));
 
-        await image.ScratchContainer.ExecAsync(["mkdir", "-p", "/tmp/prune/bin"]);
-        await image.ScratchContainer.CopyAsync(Encoding.UTF8.GetBytes(stub.Replace("\r", "")), "/tmp/prune/bin/docker", fileMode: (UnixFileModes)Convert.ToInt32("755", 8));
-        await image.ScratchContainer.CopyAsync(Encoding.UTF8.GetBytes(script.Replace("\r", "")), "/tmp/prune/prune.sh", fileMode: (UnixFileModes)Convert.ToInt32("755", 8));
+        await image.ScratchContainer.ExecAsync(["sh", "-c", "rm -rf /tmp/prune && mkdir -p /tmp/prune/bin /tmp/prune/pkg"]);
+        await image.ScratchContainer.CopyAsync(Encoding.UTF8.GetBytes(PruneStubDocker.Replace("\r", "")), "/tmp/prune/bin/docker", fileMode: (UnixFileModes)Convert.ToInt32("755", 8));
+        await image.ScratchContainer.CopyAsync(Encoding.UTF8.GetBytes(script.Replace("\r", "")), "/tmp/prune/pkg/prune-old-images.sh", fileMode: (UnixFileModes)Convert.ToInt32("755", 8));
+        if (withCompose)
+            await image.ScratchContainer.CopyAsync(Encoding.UTF8.GetBytes(compose.Replace("\r", "")), "/tmp/prune/pkg/docker-compose.yml", fileMode: (UnixFileModes)Convert.ToInt32("644", 8));
 
-        var run = await image.ScratchContainer.ExecAsync(["sh", "-c", "PATH=/tmp/prune/bin:$PATH APPS_IMAGE_REPOSITORY=repo sh /tmp/prune/prune.sh"]);
-        var removed = await image.ScratchContainer.ExecAsync(["cat", "/tmp/prune/removed"]);
-
-        run.ExitCode.Should().Be(0, "removing 1.2.0 failed in the stub, and that must not fail the update");
-        removed.Stdout.Split('\n', StringSplitOptions.RemoveEmptyEntries).Should().Equal("repo:1.2.0", "repo:0.1.0");
+        var run = await image.ScratchContainer.ExecAsync(["sh", "-c", $"PATH=/tmp/prune/bin:$PATH {environment} sh /tmp/prune/pkg/prune-old-images.sh"]);
+        var listed = await image.ScratchContainer.ExecAsync(["sh", "-c", "cat /tmp/prune/listed 2>/dev/null"]);
+        var removed = await image.ScratchContainer.ExecAsync(["sh", "-c", "cat /tmp/prune/removed 2>/dev/null"]);
+        return (run.ExitCode, listed.Stdout.Trim(), removed.Stdout.Split('\n', StringSplitOptions.RemoveEmptyEntries));
     }
 
     [Fact]
-    public async Task PublishScript_RefusesAFileNameThatIsNotAPlainName()
+    public async Task Prune_KeepsTheTwoNewestByVersion_AndAlwaysExitsZero()
     {
-        var dir = Directory.CreateTempSubdirectory("apps-publish-");
-        try
-        {
-            var bad = Path.Combine(dir.FullName, "has space.exe");
-            await File.WriteAllBytesAsync(bad, [1, 2, 3]);
+        var (exitCode, _, removed) = await Prune("APPS_IMAGE_REPOSITORY=repo", withCompose: false);
 
-            var publish = () => AppsImageFixture.Publish("--release", "1.0.0", "--dry-run", "--windows", bad, "--windows-version", "1.0.0");
+        exitCode.Should().Be(0, "removing 1.2.0 failed in the stub, and that must not fail the update");
+        removed.Should().Equal("repo:1.2.0", "repo:0.1.0");
+    }
 
-            await publish.Should().ThrowAsync<Exception>().Where(e => e.Message.Contains("file name not allowed"));
-        }
-        finally
-        {
-            dir.Delete(recursive: true);
-        }
+    [Fact]
+    public async Task Prune_ReadsTheRepositoryFromThePackagesComposeFile()
+    {
+        var (exitCode, listed, removed) = await Prune("", withCompose: true);
+
+        exitCode.Should().Be(0);
+        listed.Should().Be("registry.example.com/example/apps");
+        removed.Should().Equal("registry.example.com/example/apps:1.2.0", "registry.example.com/example/apps:0.1.0");
+    }
+
+    [Fact]
+    public async Task Prune_NoComposeFileAndNoOverride_RemovesNothing_AndExitsZero()
+    {
+        var (exitCode, listed, removed) = await Prune("", withCompose: false);
+
+        exitCode.Should().Be(0);
+        listed.Should().BeEmpty();
+        removed.Should().BeEmpty();
     }
 }
