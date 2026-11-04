@@ -29,6 +29,8 @@ public class PackageStatusInitializationService(DockerComposeConfigurationModel 
             catch (Exception ex)
             {
                 logger.LogError(ex, "Failed to initialize package {PackageName} status", pck.FriendlyName);
+                // The check ended without publishing its result: do not leave the package showing "checking" forever.
+                readModel.AbandonVersionCheck(pck.FriendlyName);
             }
         }
 

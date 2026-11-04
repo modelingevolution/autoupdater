@@ -8,6 +8,9 @@ ROOT=/srv/apps
 SUMS="$ROOT/SHA256SUMS"
 STATE=/tmp/apps-state
 
+# Start from nothing: without the compose tmpfs, /tmp survives a restart, and a marker from the last start must not vouch
+# for a file that has changed since.
+rm -rf "$STATE"
 mkdir -p "$STATE/ok"
 
 # The names come from the image and match the publish script's rule ([A-Za-z0-9._+~-], no quote or backslash), so

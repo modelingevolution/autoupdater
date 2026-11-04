@@ -404,81 +404,97 @@ public class AppGuidesTests
 
 public class AppsFailureTextTests
 {
-    private const string SeeLog = " The AutoUpdater's log has the details.";
-    private const string Credentials = "The registry or repository refused this station's credentials.";
-    private const string Network = "The station could not reach the registry or the network.";
-    private const string NotFound = "The release was not found in the registry.";
-    private const string Generic = "The update failed.";
+    private const string SeeLog = " Details are in the AutoUpdater log.";
+    private const string Neutral = "The update failed. Details are in the AutoUpdater log.";
+    private const string Credentials = "The registry refused this station's credentials." + SeeLog;
+    private const string Network = "The station could not reach the registry." + SeeLog;
+    private const string NotFound = "The release was not found in the registry." + SeeLog;
+    private const string Disk = "The station ran out of disk space." + SeeLog;
+    private const string Busy = "Another update is already running." + SeeLog;
 
-    private static readonly string[] AllSentences =
-    [
-        "The station ran out of disk space.", "Another update is already running.", Credentials, NotFound, Network, Generic,
-    ];
+    private static readonly string[] AllSentences = [Neutral, Credentials, Network, NotFound, Disk, Busy];
 
-    // Every string the review named, plus the shapes the earlier pattern-based sanitizer handled. The page never shows any
-    // part of the failure text, so each one must come out as exactly one fixed sentence.
-    [Theory]
-    [InlineData("HARBOR_PASSWORD=hunter2 rejected", Generic)]
-    [InlineData("access_token=abc123def failed", Generic)]
-    [InlineData("api_key=abc123 failed", Generic)]
-    [InlineData("""{"password":"hunter2"}""", Generic)]
-    [InlineData("docker login -u robot --password hunter2 failed", Credentials)]
-    [InlineData("X-Registry-Auth: eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJyb2JvdCJ9 rejected", Generic)]
-    [InlineData("token:abc auth=xyz", Generic)]
-    [InlineData("Authorization: Basic dXNlcjpwYXNz was rejected", Generic)]
-    [InlineData("clone of https://user:s3cret@github.com/x/y.git failed", Generic)]
-    [InlineData("lookup saturn on 127.0.0.11:53: no such host", Network)]
-    [InlineData("dial tcp [fd00::1:2]:443: connect: connection refused", Network)]
-    [InlineData("ssh: connect to host fe80::1%eth0 port 22: Connection timed out", Network)]
-    [InlineData("ssh: connect to host neuron-7 port 22: Connection refused", Network)]
-    [InlineData("dial tcp 192.168.30.29:443: i/o timeout", Network)]
-    [InlineData("git@github.com:modelingevolution/rocketwelder-apps-compose.git: Permission denied (publickey)", Credentials)]
-    [InlineData("failed to pull docker.modelingevolution.com/rocketwelder/rocketwelder-apps:1.2.0: denied", Credentials)]
-    [InlineData("docker.modelingevolution.com/rocketwelder/rocketwelder-apps:1.2.0: manifest unknown", NotFound)]
-    public void Describe_AnyFailure_IsOneFixedSentenceInItsCategory(string failure, string expected)
+    [Fact]
+    public void Neutral_IsTheAgreedSentence()
     {
-        Describe(failure).Should().Be(expected + SeeLog);
+        AppsFailureText.Neutral.Should().Be(Neutral);
     }
 
+    // Only a signal with one meaning names a cause.
+    [Theory]
+    [InlineData("Error response from daemon: Head \"https://docker.example.test/v2/rocketwelder/rocketwelder-apps/manifests/1.2.0\": unauthorized: authentication required", Credentials)]
+    [InlineData("failed to authorize: failed to fetch oauth token: unexpected status: 401 Unauthorized", Credentials)]
+    [InlineData("unauthorized: authentication required (repository not found)", Credentials)]
+    [InlineData("Error response from daemon: manifest for docker.example.test/rocketwelder/rocketwelder-apps:1.2.0 not found: manifest unknown: manifest unknown", NotFound)]
+    [InlineData("docker.example.test/rocketwelder/rocketwelder-apps:1.2.0: manifest unknown", NotFound)]
+    [InlineData("name unknown: repository name not known to registry", NotFound)]
+    [InlineData("Get \"https://docker.example.test/v2/\": dial tcp: lookup docker.example.test on 127.0.0.11:53: no such host", Network)]
+    [InlineData("Get \"https://docker.example.test/v2/\": dial tcp 192.0.2.10:443: connect: connection refused", Network)]
+    [InlineData("dial tcp [fd00::1:2]:443: connect: connection refused", Network)]
+    [InlineData("write /var/lib/docker/tmp/GetImageBlob123: no space left on device", Disk)]
+    [InlineData("Update already in progress", Busy)]
+    public void Describe_UnambiguousSignal_NamesItsCause(string failure, string expected)
+    {
+        AppsFailureText.Describe(failure).Should().Be(expected);
+    }
+
+    // Each of these would have matched a looser word ("denied", "not found", "network", "timed out") and named the wrong cause.
+    [Theory]
+    [InlineData("Got permission denied while trying to connect to the Docker daemon socket at unix:///var/run/docker.sock: connect: permission denied")]
+    [InlineData("open /data/rocketwelder-apps/.env: permission denied")]
+    [InlineData("deploy@station: Permission denied (publickey).")]
+    [InlineData("git@github.com:modelingevolution/rocketwelder-apps-compose.git: Permission denied (publickey)")]
+    [InlineData("bash: docker: command not found")]
+    [InlineData("sudo: up-1.2.0.sh: command not found")]
+    [InlineData("network rocketwelder_default not found")]
+    [InlineData("Error response from daemon: network 3f2a9c not found")]
+    [InlineData("no such service: rocketwelder-apps")]
+    [InlineData("SSH command timed out after 300 seconds: docker compose up -d")]
+    [InlineData("ssh: connect to host neuron-7 port 22: Connection timed out")]
+    [InlineData("ssh: connect to host neuron-7 port 22: Connection refused")]
+    [InlineData("dial tcp 192.168.30.29:443: i/o timeout")]
+    [InlineData("Error response from daemon: pull access denied for x, repository does not exist or may require 'docker login'")]
+    [InlineData("failed to pull docker.example.test/rocketwelder/rocketwelder-apps:1.2.0: denied")]
+    [InlineData("docker login -u robot --password hunter2 failed")]
+    public void Describe_AmbiguousOrLocalFailure_IsNeutral(string failure)
+    {
+        AppsFailureText.Describe(failure).Should().Be(Neutral);
+    }
+
+    // The page never repeats any part of the failure: whatever comes in, one fixed sentence goes out.
     [Theory]
     [InlineData("HARBOR_PASSWORD=hunter2 rejected", "hunter2")]
     [InlineData("access_token=abc123def failed", "abc123def")]
     [InlineData("api_key=abc123 failed", "abc123")]
     [InlineData("""{"password":"hunter2"}""", "hunter2")]
     [InlineData("docker login -u robot --password hunter2 failed", "hunter2")]
-    [InlineData("lookup saturn on 127.0.0.11:53: no such host", "saturn")]
+    [InlineData("dial tcp: lookup saturn on 127.0.0.11:53: no such host", "saturn")]
     [InlineData("dial tcp [fd00::1:2]:443: connect: connection refused", "fd00")]
     [InlineData("ssh: connect to host fe80::1%eth0 port 22: Connection timed out", "fe80")]
     [InlineData("git@github.com:modelingevolution/rocketwelder-apps-compose.git: Permission denied", "modelingevolution")]
     [InlineData("ssh: connect to host neuron-7 port 22: Connection refused", "neuron-7")]
     [InlineData("X-Registry-Auth: eyJhbGciOiJIUzI1NiJ9 rejected", "eyJ")]
     [InlineData("token:abc auth=xyz", "xyz")]
+    [InlineData("Authorization: Basic dXNlcjpwYXNz unauthorized: denied", "dXNlcjpwYXNz")]
+    [InlineData("clone of https://user:s3cret@github.com/x/y.git failed", "s3cret")]
+    [InlineData("Get \"http://172.17.0.1:8095/manifest.json\": EOF", "172.17.0.1")]
+    [InlineData("failed reading nginx.conf and appsettings.Production.json", "appsettings")]
     public void Describe_NeverRepeatsAnyPartOfTheFailure(string failure, string secret)
     {
-        var text = Describe(failure);
+        var text = AppsFailureText.Describe(failure);
 
         text.Should().NotContainEquivalentOf(secret);
-        AllSentences.Select(s => s + SeeLog).Should().Contain(text);
-    }
-
-    [Theory]
-    [InlineData("write /var/lib/docker/tmp: no space left on device", "The station ran out of disk space.")]
-    [InlineData("Update already in progress", "Another update is already running.")]
-    public void Describe_KnownCondition_SaysWhatHappened(string failure, string expected)
-    {
-        Describe(failure).Should().Be(expected + SeeLog);
+        AllSentences.Should().Contain(text);
     }
 
     [Theory]
     [InlineData(null)]
     [InlineData("")]
     [InlineData("  ")]
-    public void Describe_NoMessage_StillSaysSomething(string? failure)
+    public void Describe_NoMessage_IsNeutral(string? failure)
     {
-        Describe(failure).Should().Be(Generic + SeeLog);
+        AppsFailureText.Describe(failure).Should().Be(Neutral);
     }
-
-    private static string Describe(string? failure) => AppsFailureText.Describe(failure);
 }
 
 public class AppsConfigurationTests

@@ -298,7 +298,7 @@ public sealed class AppsImageIntegrationTests(AppsImageFixture image) : IClassFi
         catalog.Find("windows")!.Verified.Should().BeTrue();
     }
 
-    private static long DerivedMtime(string sha256) => 1577836800 + Convert.ToInt64(sha256[..7], 16);
+    private static long DerivedMtime(string sha256) => 946684800 + Convert.ToInt64(sha256[..7], 16);
 
     private async Task<AppFile> ManifestEntry(string platform) =>
         (await new AppsCatalogClient(new HttpClient(), new AppsOptions("rocketwelder-apps", image.HealthyPort, new Uri($"http://127.0.0.1:{image.HealthyPort}/"))).GetAsync())
@@ -323,6 +323,8 @@ public sealed class AppsImageIntegrationTests(AppsImageFixture image) : IClassFi
 
         response.Headers.CacheControl!.NoCache.Should().BeTrue();
         response.Content.Headers.LastModified.Should().Be(DateTimeOffset.FromUnixTimeSeconds(mtime));
+        // The latest possible derived date (base + 16^7 s) is still in the past: RFC 9110 forbids a future Last-Modified.
+        DateTimeOffset.FromUnixTimeSeconds(946684800 + 0xFFFFFFF).Should().BeBefore(response.Headers.Date!.Value);
         response.Headers.ETag!.Tag.Should().Be($"\"{mtime:x}-{file.Size:x}\"");
     }
 
@@ -343,6 +345,44 @@ public sealed class AppsImageIntegrationTests(AppsImageFixture image) : IClassFi
         sameBuild.StatusCode.Should().Be(HttpStatusCode.PartialContent);
         otherBuild.StatusCode.Should().Be(HttpStatusCode.OK);
         Hash(await otherBuild.Content.ReadAsByteArrayAsync()).Should().Be(file.Sha256);
+    }
+
+    [Fact]
+    public async Task MultipleRanges_AreIgnored_AndTheWholeFileIsSent()
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Get, $"files/{AppsImageFixture.WindowsFile}");
+        request.Headers.TryAddWithoutValidation("Range", "bytes=0-1,5-6");
+
+        using var response = await image.Healthy.SendAsync(request);
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        Hash(await response.Content.ReadAsByteArrayAsync()).Should().Be(Hash(image.WindowsBytes));
+    }
+
+    [Fact]
+    public async Task RestartAfterAFileChanged_DoesNotServeItOnAnOldMarker()
+    {
+        // No tmpfs: /tmp lives in the container's writable layer and survives a restart, as with a plain docker run.
+        var container = new ContainerBuilder()
+            .WithImage(image.Tag)
+            .WithPortBinding(8080, true)
+            .WithWaitStrategy(Wait.ForUnixContainer().UntilHttpRequestIsSucceeded(r => r.ForPort(8080).ForPath("/health")))
+            .Build();
+        await using (container)
+        {
+            await container.StartAsync();
+            (await StatusAfterStart()).Should().Be(200, "the file matched at the first start, so it has a marker");
+
+            await Cli.Wrap("docker").WithArguments(["exec", "-u", "0", container.Id, "sh", "-c",
+                $"printf changed > /srv/apps/files/{AppsImageFixture.WindowsFile}"]).ExecuteBufferedAsync();
+            await container.StopAsync();
+            await container.StartAsync();
+
+            (await StatusAfterStart()).Should().Be(503);
+        }
+
+        async Task<int> StatusAfterStart() =>
+            StatusOf(await RawRequest(container.GetMappedPublicPort(8080), "HEAD", $"/files/{AppsImageFixture.WindowsFile}"));
     }
 
     [Fact]
@@ -543,6 +583,83 @@ public sealed class AppsImageIntegrationTests(AppsImageFixture image) : IClassFi
             foreach (var file in dir.EnumerateFiles("*", SearchOption.AllDirectories)) file.Attributes = FileAttributes.Normal;
             dir.Delete(recursive: true);
         }
+    }
+
+    /// <summary>update-version.sh list with curl and jq replaced by exported shell functions, which win over any binary on
+    /// PATH (Git Bash puts its own curl first). Returns the exit code, all output and the curl config piped in, if any.</summary>
+    private static async Task<(int ExitCode, string Output, string? CurlConfig)> ListVersions(
+        int curlExit, string curlStderr, string? user = null, string? password = null)
+    {
+        var dir = Directory.CreateTempSubdirectory("apps-list-");
+        try
+        {
+            var config = Path.Combine(dir.FullName, "curl-config");
+            const string script = """
+                curl() {
+                    for a in "$@"; do if [ "$a" = "-K" ]; then cat > "$STUB_CFG"; fi; done
+                    if [ "$STUB_CURL_EXIT" = 0 ]; then echo '[{"tags":[{"name":"1.2.0"}]}]'; fi
+                    if [ -n "${STUB_CURL_ERR:-}" ]; then echo "$STUB_CURL_ERR" >&2; fi
+                    return "$STUB_CURL_EXIT"
+                }
+                jq() {
+                    local in; in=$(cat)
+                    case "$in" in *tags*) printf '1.2.0\nlatest\n' ;; esac
+                    return 0
+                }
+                export -f curl jq
+                exec ./update-version.sh list
+                """;
+
+            var run = await Cli.Wrap(AppsImageFixture.Bash)
+                .WithWorkingDirectory(Path.Combine(AppsImageFixture.PackagingDirectory, "compose"))
+                .WithArguments(["-c", script.Replace("\r", "")])
+                .WithEnvironmentVariables(e =>
+                {
+                    e.Set("STUB_CFG", AppsImageFixture.ForBash(config))
+                        .Set("STUB_CURL_EXIT", curlExit.ToString())
+                        .Set("STUB_CURL_ERR", curlStderr);
+                    if (user != null) e.Set("HARBOR_USERNAME", user).Set("HARBOR_PASSWORD", password);
+                })
+                .WithValidation(CommandResultValidation.None)
+                .ExecuteBufferedAsync();
+            var piped = File.Exists(config) ? await File.ReadAllTextAsync(config) : null;
+            return (run.ExitCode, run.StandardOutput + run.StandardError, piped);
+        }
+        finally
+        {
+            dir.Delete(recursive: true);
+        }
+    }
+
+    [Theory]
+    [InlineData(22, "curl: (22) The requested URL returned error: 401")]
+    [InlineData(6, "curl: (6) Could not resolve host: docker.modelingevolution.com")]
+    [InlineData(7, "curl: (7) Failed to connect to docker.modelingevolution.com port 443: Connection refused")]
+    public async Task UpdateVersionList_RegistryRefusesOrIsUnreachable_SaysSo(int curlExit, string curlError)
+    {
+        var (exitCode, output, _) = await ListVersions(curlExit, curlError);
+
+        exitCode.Should().NotBe(0);
+        output.Should().Contain("Cannot reach the Harbor registry API").And.NotContain("No release tags found");
+    }
+
+    [Fact]
+    public async Task UpdateVersionList_RegistryAnswers_ListsTheReleaseTags()
+    {
+        var (exitCode, output, _) = await ListVersions(0, "");
+
+        exitCode.Should().Be(0, output);
+        output.Should().Contain("1.2.0");
+    }
+
+    [Fact]
+    public async Task UpdateVersionList_CredentialsWithQuoteAndBackslash_ReachCurlEscaped()
+    {
+        var (exitCode, output, config) = await ListVersions(0, "", user: "robot$rocketwelder+pull", password: "a\"b\\c");
+
+        exitCode.Should().Be(0, output);
+        config.Should().Be("user = \"robot$rocketwelder+pull:a\\\"b\\\\c\"\n");
+        output.Should().NotContain("a\"b\\c");
     }
 
     [Fact]

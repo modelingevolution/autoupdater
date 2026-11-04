@@ -3,6 +3,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using ModelingEvolution.AutoUpdater.Common;
+using ModelingEvolution.AutoUpdater.Common.Events;
 using ModelingEvolution.AutoUpdater.Host.Models;
 using ModelingEvolution.AutoUpdater.Host.Services;
 using ModelingEvolution.AutoUpdater.Services;
@@ -20,6 +21,42 @@ public class PackageStatusStartupTests
 {
     [Fact]
     public async Task StartupVersionCheck_ReachesTheReadModel_WithoutAPageResolvingItFirst()
+    {
+        await using var provider = BuildAndStart(hub: null, out var started);
+        await started;
+
+        var state = provider.GetRequiredService<PackageStateReadModel>().GetPackageState(new PackageName("rocketwelder-apps"))!;
+        state.CurrentVersion.Should().Be(PackageVersion.Parse("1.0.0"));
+        state.IsUpgradeAvailable.Should().BeTrue();
+        state.StatusText.Should().NotBe("Version unknown");
+        state.IsCheckingForUpdates.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task StartupVersionCheck_ThatThrowsBeforeItsResult_DoesNotLeaveThePackageChecking()
+    {
+        await using var provider = BuildAndStart(new ResultLosingEventHub(), out var started);
+        await started;
+
+        var state = provider.GetRequiredService<PackageStateReadModel>().GetPackageState(new PackageName("rocketwelder-apps"))!;
+        state.IsCheckingForUpdates.Should().BeFalse();
+        state.OperationMessage.Should().Be("Version check failed. Details are in the AutoUpdater log.");
+    }
+
+    /// <summary>Delivers subscriptions normally but fails to publish the version-check result, as a crashed check would.</summary>
+    private sealed class ResultLosingEventHub : IEventHub
+    {
+        private readonly EventHub _inner = new(Microsoft.Extensions.Logging.Abstractions.NullLogger<EventHub>.Instance);
+
+        public Task PublishAsync<TEvent>(TEvent eventData) where TEvent : class =>
+            eventData is VersionCheckCompletedEvent ? throw new InvalidOperationException("lost") : _inner.PublishAsync(eventData);
+
+        public IEventSubscription Subscribe<TEvent>(Func<TEvent, Task> handler) where TEvent : class => _inner.Subscribe(handler);
+        public IEventSubscription Subscribe<TEvent>(Action<TEvent> handler) where TEvent : class => _inner.Subscribe(handler);
+        public void Unsubscribe(IEventSubscription subscription) => _inner.Unsubscribe(subscription);
+    }
+
+    private static ServiceProvider BuildAndStart(IEventHub? hub, out Task started)
     {
         var configuration = new ConfigurationBuilder()
             .AddInMemoryCollection(new Dictionary<string, string?>
@@ -40,7 +77,7 @@ public class PackageStatusStartupTests
         var services = new ServiceCollection()
             .AddLogging()
             .AddSingleton<IConfiguration>(configuration)
-            .AddSingleton<IEventHub, EventHub>()
+            .AddSingleton<IEventHub>(sp => hub ?? ActivatorUtilities.CreateInstance<EventHub>(sp))
             .AddSingleton<DockerComposeConfigurationModel>()
             .AddSingleton<PackageStateReadModel>()
             .AddSingleton(git)
@@ -53,17 +90,16 @@ public class PackageStatusStartupTests
             .AddSingleton(Substitute.For<IProgressService>())
             .AddSingleton<UpdateHost>()
             .AddHostedService<PackageStatusInitializationService>();
-        await using var provider = services.BuildServiceProvider();
+        var provider = services.BuildServiceProvider();
 
         // As the generic host: resolve every hosted service, then start them.
-        foreach (var hosted in provider.GetServices<IHostedService>().ToList())
-        {
-            await hosted.StartAsync(CancellationToken.None);
-        }
+        var hostedServices = provider.GetServices<IHostedService>().ToList();
+        started = StartAll(hostedServices);
+        return provider;
 
-        var state = provider.GetRequiredService<PackageStateReadModel>().GetPackageState(new PackageName("rocketwelder-apps"))!;
-        state.CurrentVersion.Should().Be(PackageVersion.Parse("1.0.0"));
-        state.IsUpgradeAvailable.Should().BeTrue();
-        state.StatusText.Should().NotBe("Version unknown");
+        static async Task StartAll(List<IHostedService> hostedServices)
+        {
+            foreach (var hosted in hostedServices) await hosted.StartAsync(CancellationToken.None);
+        }
     }
 }

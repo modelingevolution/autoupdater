@@ -195,6 +195,19 @@ namespace ModelingEvolution.AutoUpdater.Host.Models
             }
         }
 
+        /// <summary>
+        /// Ends a version check that stopped without publishing its result, so the package does not stay in "checking".
+        /// Does nothing if the result already arrived.
+        /// </summary>
+        public void AbandonVersionCheck(PackageName packageName)
+        {
+            if (_packageIndex.TryGetValue(packageName, out var item) && item.State.IsCheckingForUpdates)
+            {
+                item.State.IsCheckingForUpdates = false;
+                item.State.OperationMessage = "Version check failed. Details are in the AutoUpdater log.";
+            }
+        }
+
         public void Dispose()
         {
             _subscriptions?.Dispose();

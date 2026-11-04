@@ -68,16 +68,30 @@ get_current_version() {
     fi
 }
 
+# A curl config line `user = "..."`. Inside double quotes curl treats \ and " as escapes, so both are escaped here; a
+# line break cannot be expressed and is refused.
+curl_config_user() {
+    local value="$1"
+    case "$value" in
+        *$'\n'*|*$'\r'*) log_error "HARBOR_USERNAME/HARBOR_PASSWORD must not contain a line break" >&2; return 1 ;;
+    esac
+    value="${value//\\/\\\\}"
+    value="${value//\"/\\\"}"
+    printf 'user = "%s"\n' "$value"
+}
+
 # Fetch the semver release tags for the image from the Harbor API.
 fetch_versions() {
     # The credentials go to curl as a config on stdin, never on its command line, where any user's ps sees them.
     # (stdin rather than <(...): a Windows curl cannot open a /dev/fd path.)
     local url="$HARBOR_API/projects/$HARBOR_PROJECT/repositories/$HARBOR_REPO/artifacts?page_size=100&with_tag=true"
     local body
+    # "|| return 1": a failed curl (401, unreachable) inside $(...) would otherwise give an empty body, which reads as
+    # "no release tags" instead of a failure.
     if [ -n "${HARBOR_USERNAME:-}" ] && [ -n "${HARBOR_PASSWORD:-}" ]; then
-        body=$(printf 'user = "%s:%s"\n' "$HARBOR_USERNAME" "$HARBOR_PASSWORD" | curl -fsSL -K - "$url")
+        body=$(curl_config_user "$HARBOR_USERNAME:$HARBOR_PASSWORD" | curl -fsSL -K - "$url") || return 1
     else
-        body=$(curl -fsSL "$url")
+        body=$(curl -fsSL "$url") || return 1
     fi
     # No release tag yet is an empty list, not a failure (grep exits 1 on no match, which pipefail would turn into one).
     jq -r '.[].tags[]?.name' <<< "$body" | { grep -E '^[0-9]+\.[0-9]+\.[0-9]+$' || true; }

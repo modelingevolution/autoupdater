@@ -25,7 +25,9 @@ downloads until an operator starts it there, or uses "Update all".
 
 An app left out of the command shows as "Not available yet". To carry an app forward unchanged, pass the same file again:
 each file is its own layer, and its mtime is derived from its SHA-256, so an unchanged file keeps its layer and a station
-does not download it twice. A changed file gets another mtime, so its `ETag` and `Last-Modified` change too: a browser
+does not download it twice. (Proven on one builder: `UnchangedFiles_KeepTheirLayers_WhenAnotherAppChanges` compares the
+uncompressed layer IDs of two builds on the same BuildKit. That a cold builder on another laptop produces the same
+compressed layer, which is what a station downloads, is expected but not tested.) A changed file gets another mtime, so its `ETag` and `Last-Modified` change too: a browser
 revalidates (`Cache-Control: no-cache`) instead of reusing an older installer, and an `If-Range` resume started on an
 older build gets the whole new file rather than a mix of the two.
 

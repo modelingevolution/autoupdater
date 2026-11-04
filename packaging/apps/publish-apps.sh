@@ -24,7 +24,8 @@ DRY_RUN=false
 # Each file's mtime comes from its SHA-256: a layer's digest covers mtimes, so an unchanged file keeps its layer (a
 # station does not download it again), while a changed file gets another mtime, hence another ETag and Last-Modified
 # from nginx (no stale installer from a browser cache, no resumed download joining two builds).
-MTIME_BASE=1577836800   # 2020-01-01T00:00:00Z; plus up to 16^7 s (about 8.5 years) from the hash
+MTIME_BASE=946684800   # 2000-01-01T00:00:00Z; plus up to 16^7 s (about 8.5 years, so at most mid-2008) from the hash:
+#                        never in the future, which RFC 9110 forbids for Last-Modified
 
 declare -A FILE=() VERSION=()
 PLATFORM_NAMES=(windows linux android)
