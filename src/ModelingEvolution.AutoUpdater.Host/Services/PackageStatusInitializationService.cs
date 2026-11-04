@@ -1,11 +1,19 @@
 using ModelingEvolution.AutoUpdater;
+using ModelingEvolution.AutoUpdater.Host.Models;
 
 namespace ModelingEvolution.AutoUpdater.Host.Services;
 
 /// <summary>
 /// Hosted service to initialize static dependencies for DockerComposeConfiguration
 /// </summary>
-public class PackageStatusInitializationService(DockerComposeConfigurationModel model, UpdateHost uh, ILogger<DockerComposeConfiguration> logger) : IHostedService
+/// <remarks>
+/// It takes <paramref name="readModel"/> only so the read model exists, and has subscribed, before the startup version
+/// checks publish their results. A lazily created read model missed them, and every page showed "Version unknown" after a
+/// restart until someone pressed refresh.
+/// </remarks>
+#pragma warning disable CS9113 // The parameter is unread on purpose: see remarks.
+public class PackageStatusInitializationService(DockerComposeConfigurationModel model, UpdateHost uh, PackageStateReadModel readModel, ILogger<DockerComposeConfiguration> logger) : IHostedService
+#pragma warning restore CS9113
 {
     public async Task StartAsync(CancellationToken cancellationToken)
     {
