@@ -24,17 +24,7 @@ public static class ConfigurationExtensions
         logger.LogInformation("VPN Configuration:");
         logger.LogInformation("  VpnProviderAccess: {VpnProviderAccess}", configuration.VpnProviderAccess());
 
-        // Apps page
-        var apps = ModelingEvolution.AutoUpdater.Apps.AppsSettings.From(configuration);
-        logger.LogInformation("Apps Configuration:");
-        logger.LogInformation("  Apps:Enabled: {AppsEnabled}", apps.Enabled);
-        if (apps.Options is { } options)
-        {
-            logger.LogInformation("  Apps:SourceUrl: {AppsSourceUrl}", options.SourceUrl);
-            logger.LogInformation("  Apps:Title: {AppsTitle}", options.Title);
-            logger.LogInformation("  Apps:PackageName: {AppsPackageName}", options.PackageName ?? "Not set");
-        }
-        if (apps.Error != null) logger.LogError("Apps configuration error: {AppsError}", apps.Error);
+        // The Apps settings are logged by the host from the one AppsSettings it registered (AppsSettings.Log).
 
         // Environment Information
         logger.LogInformation("Environment:");
@@ -76,6 +66,27 @@ public static class ConfigurationExtensions
     
     public static string SshHost(this IConfiguration configuration) =>
         configuration.GetValue<string>("SshHost") ?? string.Empty;
+
+    private const string AppsEnabledKey = "Apps:Enabled";
+    private const string AppsSourceUrlKey = "Apps:SourceUrl";
+    private const string AppsTitleKey = "Apps:Title";
+    private const string AppsPackageNameKey = "Apps:PackageName";
+
+    /// <summary><c>Apps:Enabled</c> as configured, or null when unset. Validated by <see cref="AppsSettings(IConfiguration)"/>.</summary>
+    public static string? AppsEnabled(this IConfiguration configuration) => configuration.GetValue<string>(AppsEnabledKey);
+
+    /// <summary><c>Apps:SourceUrl</c> as configured, or null when unset.</summary>
+    public static string? AppsSourceUrl(this IConfiguration configuration) => configuration.GetValue<string>(AppsSourceUrlKey);
+
+    /// <summary><c>Apps:Title</c> as configured, or null when unset.</summary>
+    public static string? AppsTitle(this IConfiguration configuration) => configuration.GetValue<string>(AppsTitleKey);
+
+    /// <summary><c>Apps:PackageName</c> as configured, or null when unset.</summary>
+    public static string? AppsPackageName(this IConfiguration configuration) => configuration.GetValue<string>(AppsPackageNameKey);
+
+    /// <summary>The Apps page's settings, validated. Read once at startup; the host registers the result.</summary>
+    public static Apps.AppsSettings AppsSettings(this IConfiguration configuration) => Apps.AppsSettings.Create(
+        configuration.AppsEnabled(), configuration.AppsSourceUrl(), configuration.AppsTitle(), configuration.AppsPackageName());
 
     private const string HostAddressKey = "HostAddress";
 

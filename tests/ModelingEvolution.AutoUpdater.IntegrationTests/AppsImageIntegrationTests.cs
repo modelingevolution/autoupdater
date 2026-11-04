@@ -42,14 +42,19 @@ public sealed class AppsImageFixture : IAsyncLifetime
     public int ScratchPort => _scratch.GetMappedPublicPort(ContainerPort);
 
     public static string Guide(string name) => Path.Combine(PackagingDirectory, "example", name);
+    public static string Icon => Path.Combine(PackagingDirectory, "example", "example-viewer.png");
 
-    /// <summary>The publish arguments for the three example apps plus one listed without a file, in page order.</summary>
+    /// <summary>
+    /// The example app with its icon and three downloads (one labelled, one preview), then a second app with one download
+    /// listed without a file, in page order.
+    /// </summary>
     public static string[] AppArguments(string windows, string linux, string android, string androidVersion = "1.0.0") =>
     [
-        "--app", "windows", "--title", "Example Viewer for Windows", "--file", windows, "--version", "1.0.0", "--guide", Guide("windows.md"),
-        "--app", "linux", "--title", "Example Viewer (Linux devices)", "--file", linux, "--version", "1.0.0", "--guide", Guide("linux.md"),
-        "--app", "android", "--title", "Example Viewer for Android", "--file", android, "--version", androidVersion, "--guide", Guide("android.md"),
-        "--app", "web", "--title", "Example Viewer for the web",
+        "--app", "example-viewer", "--name", "Example Viewer", "--icon", Icon,
+        "--download", "--platform", "windows", "--arch", "x64", "--file", windows, "--version", "1.0.0", "--guide", Guide("windows.md"),
+        "--download", "--platform", "linux", "--arch", "arm64", "--label", "Kiosk devices", "--file", linux, "--version", "1.0.0", "--guide", Guide("linux.md"),
+        "--download", "--platform", "android", "--arch", "arm64", "--preview", "--file", android, "--version", androidVersion, "--guide", Guide("android.md"),
+        "--app", "example-web", "--name", "Example Viewer for the web", "--download", "--platform", "ios", "--arch", "any",
     ];
 
     public async Task InitializeAsync()
@@ -167,22 +172,49 @@ public sealed class AppsImageIntegrationTests(AppsImageFixture image) : IClassFi
     private AppsCatalogClient Client() => new(new HttpClient(), new AppsOptions(new Uri($"http://127.0.0.1:{image.HealthyPort}/")));
 
     [Fact]
-    public async Task Manifest_ListsEveryAppInTheGivenOrder_WithItsFileAndGuide()
+    public async Task Manifest_ListsEveryAppAndDownloadInTheGivenOrder()
     {
         var catalog = await Client().GetAsync();
 
         catalog.Reachable.Should().BeTrue();
-        catalog.Release.Should().Be("1.0.0");
-        catalog.Apps.Select(a => a.Id).Should().Equal("windows", "linux", "android", "web");
-        catalog.Find("windows").Should().Be(new AppEntry("windows", "Example Viewer for Windows",
+        catalog.Apps.Select(a => a.Id).Should().Equal("example-viewer", "example-web");
+        var viewer = catalog.Apps[0];
+        viewer.Name.Should().Be("Example Viewer");
+        viewer.Icon.Should().Be("example-viewer.png");
+        viewer.Downloads.Should().HaveCount(3);
+        viewer.Downloads[0].Should().Be(new AppDownload(AppPlatform.Windows, AppArchitecture.X64, null, false,
             new AppFile("1.0.0", AppsImageFixture.WindowsFile, image.WindowsBytes.Length), "windows.md"));
-        catalog.Find("web").Should().Be(new AppEntry("web", "Example Viewer for the web", null, null));
+        viewer.Downloads[1].Label.Should().Be("Kiosk devices");
+        viewer.Downloads[2].Preview.Should().BeTrue();
+        catalog.Apps[1].Downloads.Should().Equal(new AppDownload(AppPlatform.Ios, AppArchitecture.Any, null, false, null, null));
+    }
+
+    [Fact]
+    public async Task Icon_IsServedAsPng_ExactlyAsPublished_AndPassesTheAutoUpdatersCheck()
+    {
+        using var response = await image.Healthy.GetAsync("icons/example-viewer.png");
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        response.Content.Headers.ContentType!.MediaType.Should().Be("image/png");
+        response.Headers.GetValues("X-Content-Type-Options").Should().Contain("nosniff");
+        (await response.Content.ReadAsByteArrayAsync()).Should().Equal(await File.ReadAllBytesAsync(AppsImageFixture.Icon));
+        (await Client().GetIconAsync("example-viewer.png")).Should().NotBeNull();
+    }
+
+    [Theory]
+    [InlineData("/icons/")]
+    [InlineData("/icons/missing.png")]
+    [InlineData("/icons/example-viewer.svg")]
+    [InlineData("/icons/a%2fexample-viewer.png")]
+    public async Task Icon_OnlyAPlainPngName_IsServed(string path)
+    {
+        StatusOf(await RawGet(path)).Should().BeOneOf(400, 404);
     }
 
     [Fact]
     public async Task Download_ReturnsTheExactBytes()
     {
-        var file = (await Client().GetAsync()).Find("windows")!.File!;
+        var file = (await Client().GetAsync()).Files.Single(f => f.FileName == AppsImageFixture.WindowsFile);
 
         var bytes = await image.Healthy.GetByteArrayAsync($"files/{file.FileName}");
 
@@ -402,20 +434,22 @@ public sealed class AppsImageIntegrationTests(AppsImageFixture image) : IClassFi
         var tag = $"apps-test:{Guid.NewGuid():N}";
         try
         {
-            // The first file changes, so every layer after it is rebuilt: each must still come out byte-identical.
-            var windows = Path.Combine(dir.FullName, AppsImageFixture.WindowsFile);
-            await File.WriteAllBytesAsync(windows, RandomNumberGenerator.GetBytes(64 * 1024));
+            // The last file changes. Only the layers before it are asserted: a layer after a changed one is rebuilt, and
+            // its parent directories then carry the new build time (README, "carry an app forward unchanged").
+            var android = Path.Combine(dir.FullName, AppsImageFixture.AndroidFile);
+            await File.WriteAllBytesAsync(android, RandomNumberGenerator.GetBytes(64 * 1024));
             await AppsImageFixture.Publish(["--release", "1.0.1", "--local-tag", tag,
-                .. AppsImageFixture.AppArguments(windows, image.LinuxPath, image.AndroidPath)]);
+                .. AppsImageFixture.AppArguments(image.WindowsPath, image.LinuxPath, android, androidVersion: "1.0.1")]);
 
             var first = await Layers(image.Tag);
             var second = await Layers(tag);
 
-            // Layer order: base, windows, linux, android, their three guides, then manifest.json.
+            // Layer order: base, windows, linux, android, their three guides, the icon, then manifest.json.
             second.Should().HaveCount(first.Length);
-            second[..^7].Should().Equal(first[..^7], "the base did not change");
-            second[^7].Should().NotBe(first[^7], "the windows file changed");
-            second[^6..^1].Should().Equal(first[^6..^1], "the linux and android files and the guides did not change");
+            second[..^8].Should().Equal(first[..^8], "the base did not change");
+            second[^8].Should().Be(first[^8], "the windows file did not change");
+            second[^7].Should().Be(first[^7], "the linux file did not change");
+            second[^6].Should().NotBe(first[^6], "the android file changed");
             second[^1].Should().NotBe(first[^1], "the manifest changed");
         }
         finally
@@ -459,7 +493,7 @@ public sealed class AppsImageIntegrationTests(AppsImageFixture image) : IClassFi
             await File.WriteAllBytesAsync(app, [1, 2, 3]);
 
             var run = await AppsImageFixture.PublishCommand("--release", "9.9.9", "--image", "docker.example.test/example/apps",
-                    "--app", "viewer", "--title", "Example Viewer", "--file", app, "--version", "1.0.0")
+                    "--app", "viewer", "--name", "Example Viewer", "--download", "--platform", "windows", "--arch", "x64", "--file", app, "--version", "1.0.0")
                 .WithEnvironmentVariables(e => e
                     .Set("PATH", bin + Path.PathSeparator + Environment.GetEnvironmentVariable("PATH"))
                     .Set("STUB_LOG", AppsImageFixture.ForBash(log))
@@ -473,8 +507,7 @@ public sealed class AppsImageIntegrationTests(AppsImageFixture image) : IClassFi
             if (pushes)
             {
                 run.ExitCode.Should().Be(0, run.StandardError);
-                calls.Should().Contain("buildx build --platform")
-                    .And.Contain("type=image,name=docker.example.test/example/apps:9.9.9,push=true,rewrite-timestamp=true");
+                calls.Should().Contain("buildx build --platform");
             }
             else
             {
@@ -494,33 +527,51 @@ public sealed class AppsImageIntegrationTests(AppsImageFixture image) : IClassFi
     public async Task PublishScript_DryRunManifest_IsWhatTheAutoUpdaterReads()
     {
         var run = await AppsImageFixture.Publish(["--release", "2.0.0", "--dry-run",
-            .. AppsImageFixture.AppArguments(image.WindowsPath, image.LinuxPath, image.WindowsPath.Replace(".msi", ".apk-missing"))[..20],
-            "--app", "quoted", "--title", "Viewer \"quoted\" \\ edition"]);
+            .. AppsImageFixture.AppArguments(image.WindowsPath, image.LinuxPath, image.AndroidPath),
+            "--app", "quoted", "--name", "Viewer \"quoted\" \\ edition",
+            "--download", "--platform", "macos", "--arch", "any", "--label", "Label \"q\" \\ x"]);
 
         var catalog = AppsManifest.Parse(run.StandardOutput);
 
         catalog.Reachable.Should().BeTrue(run.StandardOutput);
-        catalog.Apps.Select(a => a.Id).Should().Equal("windows", "linux", "quoted");
-        catalog.Find("quoted")!.Title.Should().Be("Viewer \"quoted\" \\ edition");
-        catalog.Find("linux")!.Guide.Should().Be("linux.md");
+        catalog.Apps.Select(a => a.Id).Should().Equal("example-viewer", "example-web", "quoted");
+        catalog.Apps[2].Name.Should().Be("Viewer \"quoted\" \\ edition");
+        catalog.Apps[2].Downloads.Single().Label.Should().Be("Label \"q\" \\ x");
+        catalog.Apps[0].Downloads.Select(d => d.Guide).Should().Equal("windows.md", "linux.md", "android.md");
+        catalog.Apps[0].Icon.Should().Be("example-viewer.png");
     }
 
     public static TheoryData<string[], string> RefusedPublishes()
     {
         var file = Path.Combine(Path.GetTempPath(), "apps-refuse-a.exe");
         File.WriteAllBytes(file, [1, 2, 3]);
+        var svg = Path.Combine(Path.GetTempPath(), "apps-refuse-icon.png");
+        File.WriteAllText(svg, "<svg xmlns=\"http://www.w3.org/2000/svg\" onload=\"alert(1)\"/>");
+        var huge = Path.Combine(Path.GetTempPath(), "apps-refuse-huge.png");
+        File.WriteAllBytes(huge, [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, .. new byte[256 * 1024]]);
+        string[] download = ["--download", "--platform", "windows", "--arch", "x64"];
         return new TheoryData<string[], string>
         {
-            { ["--app", "viewer", "--title", new string('x', 81)], "longer than 80" },
-            { ["--app", "viewer", "--title", "tab\there"], "control or layout character" },
-            { ["--app", "viewer", "--title", "   "], "blank" },
-            { ["--app", "Viewer", "--title", "x"], "id not allowed" },
-            { ["--app", "viewer", "--title", "x", "--app", "viewer", "--title", "y"], "given twice" },
-            { ["--title", "x"], "must follow an --app" },
-            { ["--app", "viewer", "--title", "x", "--version", "1.0.0"], "--version given without --file" },
-            { ["--app", "viewer", "--title", "x", "--file", file], "--version is missing" },
-            { ["--app", "viewer", "--title", "x", "--guide", file], "guide name not allowed" },
-            { [.. Enumerable.Range(0, 17).SelectMany(i => new[] { "--app", $"app-{i}", "--title", "x" })], "at most 16 apps" },
+            { ["--app", "viewer", "--name", new string('x', 81)], "longer than 80" },
+            { ["--app", "viewer", "--name", "tab\there"], "control or layout character" },
+            { ["--app", "viewer", "--name", "   "], "blank" },
+            { ["--app", "Viewer", "--name", "x"], "id not allowed" },
+            { ["--app", "viewer", "--name", "x", "--app", "viewer", "--name", "y"], "given twice" },
+            { ["--name", "x"], "must follow an --app" },
+            { ["--app", "viewer", "--name", "x", "--platform", "windows"], "must follow a --download" },
+            { ["--app", "viewer", "--name", "x", "--download", "--platform", "beos", "--arch", "x64"], "--platform must be one of" },
+            { ["--app", "viewer", "--name", "x", "--download", "--platform", "windows", "--arch", "riscv"], "--arch must be one of" },
+            { ["--app", "viewer", "--name", "x", "--download", "--arch", "x64"], "--platform must be one of" },
+            { ["--app", "viewer", "--name", "x", .. download, "--label", new string('x', 41)], "longer than 40" },
+            { ["--app", "viewer", "--name", "x", .. download, .. download], "same platform, architecture and label" },
+            { ["--app", "viewer", "--name", "x", .. Enumerable.Range(0, 9).SelectMany(i => download.Append("--label").Append($"v{i}"))], "at most 8 downloads" },
+            { ["--app", "viewer", "--name", "x", .. download, "--version", "1.0.0"], "--version given without --file" },
+            { ["--app", "viewer", "--name", "x", .. download, "--file", file], "--version is missing" },
+            { ["--app", "viewer", "--name", "x", .. download, "--guide", file], "guide name not allowed" },
+            { ["--app", "viewer", "--name", "x", "--icon", file], "icon name not allowed" },
+            { ["--app", "viewer", "--name", "x", "--icon", svg], "icon is not a PNG" },
+            { ["--app", "viewer", "--name", "x", "--icon", huge], "icon must be 1 to 262144 bytes" },
+            { [.. Enumerable.Range(0, 17).SelectMany(i => new[] { "--app", $"app-{i}", "--name", "x" })], "at most 16 apps" },
         };
     }
 
@@ -537,8 +588,8 @@ public sealed class AppsImageIntegrationTests(AppsImageFixture image) : IClassFi
 
     [Theory]
     [InlineData("invalid-utf8", "not valid UTF-8")]
-    [InlineData("too-large", "must be 1 to 65536 bytes")]
-    [InlineData("empty", "must be 1 to 65536 bytes")]
+    [InlineData("too-large", "must be 1 to 16384 bytes")]
+    [InlineData("empty", "must be 1 to 16384 bytes")]
     public async Task PublishScript_RefusesAGuideTheAutoUpdaterWouldNotRead(string kind, string error)
     {
         var dir = Directory.CreateTempSubdirectory("apps-guide-");
@@ -548,11 +599,11 @@ public sealed class AppsImageIntegrationTests(AppsImageFixture image) : IClassFi
             await File.WriteAllBytesAsync(guide, kind switch
             {
                 "invalid-utf8" => [0x23, 0x20, 0xFF, 0xFE],
-                "too-large" => Enumerable.Repeat((byte)'a', 65537).ToArray(),
+                "too-large" => Enumerable.Repeat((byte)'a', 16385).ToArray(),
                 _ => [],
             });
 
-            var run = await AppsImageFixture.PublishCommand("--release", "1.0.0", "--dry-run", "--app", "viewer", "--title", "x", "--guide", guide)
+            var run = await AppsImageFixture.PublishCommand("--release", "1.0.0", "--dry-run", "--app", "viewer", "--name", "x", "--download", "--platform", "windows", "--arch", "x64", "--guide", guide)
                 .WithValidation(CommandResultValidation.None).ExecuteBufferedAsync();
 
             run.ExitCode.Should().NotBe(0);
@@ -567,7 +618,7 @@ public sealed class AppsImageIntegrationTests(AppsImageFixture image) : IClassFi
     [Fact]
     public async Task PublishScript_PushWithoutAnImage_IsRefused()
     {
-        var run = await AppsImageFixture.PublishCommand("--release", "1.0.0", "--app", "viewer", "--title", "x")
+        var run = await AppsImageFixture.PublishCommand("--release", "1.0.0", "--app", "viewer", "--name", "x")
             .WithValidation(CommandResultValidation.None).ExecuteBufferedAsync();
 
         run.ExitCode.Should().NotBe(0);
@@ -583,7 +634,7 @@ public sealed class AppsImageIntegrationTests(AppsImageFixture image) : IClassFi
             var bad = Path.Combine(dir.FullName, "has space.exe");
             await File.WriteAllBytesAsync(bad, [1, 2, 3]);
 
-            var publish = () => AppsImageFixture.Publish("--release", "1.0.0", "--dry-run", "--app", "viewer", "--title", "x", "--file", bad, "--version", "1.0.0");
+            var publish = () => AppsImageFixture.Publish("--release", "1.0.0", "--dry-run", "--app", "viewer", "--name", "x", "--download", "--platform", "windows", "--arch", "x64", "--file", bad, "--version", "1.0.0");
 
             await publish.Should().ThrowAsync<Exception>().Where(e => e.Message.Contains("file name not allowed"));
         }

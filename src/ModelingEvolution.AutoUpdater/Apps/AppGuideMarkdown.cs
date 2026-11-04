@@ -13,8 +13,11 @@ namespace ModelingEvolution.AutoUpdater.Apps;
 /// </summary>
 public static class AppGuideMarkdown
 {
-    /// <summary>The largest guide the AutoUpdater reads; a larger one is "unavailable".</summary>
-    public const int MaxBytes = 64 * 1024;
+    /// <summary>
+    /// The largest guide the AutoUpdater reads; a larger one is "unavailable". An install guide is a page of steps; the cap
+    /// also bounds the parse cost of a hostile guide, which grows faster than its size.
+    /// </summary>
+    public const int MaxBytes = 16 * 1024;
 
     private static readonly UTF8Encoding StrictUtf8 = new(encoderShouldEmitUTF8Identifier: false, throwOnInvalidBytes: true);
 
@@ -28,8 +31,9 @@ public static class AppGuideMarkdown
     }
 
     /// <summary>
-    /// The guide's text, or null when it is empty, too large, not valid UTF-8, or markdown that Markdig refuses to parse
-    /// (it throws past its nesting limit). Parsed once here, so the renderer never meets a guide that would throw.
+    /// The guide's text, or null when it is empty, too large, not valid UTF-8, or markdown that fails to parse (Markdig
+    /// throws past its nesting limit). Parsed once here, off the page's render path, so the renderer never meets a guide
+    /// that would throw.
     /// </summary>
     public static string? Decode(ReadOnlySpan<byte> bytes)
     {
@@ -51,8 +55,9 @@ public static class AppGuideMarkdown
             Markdown.Parse(text, Pipeline);
             return text;
         }
-        catch (ArgumentException)
+        catch (Exception)
         {
+            // Any failure of an untrusted document makes it unavailable, whatever Markdig or the cleanup threw.
             return null;
         }
     }
@@ -87,15 +92,29 @@ public static class AppGuideMarkdown
         foreach (var inline in document.Descendants<HtmlInline>().ToList())
             inline.ReplaceBy(new LiteralInline(inline.Tag ?? ""));
 
+        // MudMarkdown renders neither of these two (it drops them silently), so both become what it does render.
+        foreach (var entity in document.Descendants<HtmlEntityInline>().ToList())
+            entity.ReplaceBy(new LiteralInline(entity.Transcoded.ToString()));
+
         foreach (var autolink in document.Descendants<AutolinkInline>().ToList())
         {
-            if (autolink.IsEmail || !IsAllowedUrl(autolink.Url)) autolink.ReplaceBy(new LiteralInline(autolink.Url ?? ""));
+            var url = autolink.Url ?? "";
+            Inline replacement = autolink.IsEmail || !IsAllowedUrl(url)
+                ? new LiteralInline(url)
+                : new LinkInline(url, "").AppendChild(new LiteralInline(url));
+            autolink.ReplaceBy(replacement);
+        }
+
+        // Images first, and without their children: an image's alt text may itself hold a link, which goes with it.
+        foreach (var image in document.Descendants<LinkInline>().Where(l => l.IsImage).ToList())
+        {
+            if (image.Parent == null) continue;
+            image.ReplaceBy(new LiteralInline(TextOf(image)), copyChildren: false);
         }
 
         foreach (var link in document.Descendants<LinkInline>().ToList())
         {
-            if (link.IsImage) link.ReplaceBy(new LiteralInline(TextOf(link)));
-            else if (!IsAllowedUrl(link.Url)) Unwrap(link);
+            if (!IsAllowedUrl(link.Url)) Unwrap(link);
         }
     }
 

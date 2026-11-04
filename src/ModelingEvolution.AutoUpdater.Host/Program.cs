@@ -72,6 +72,7 @@ public class Program
         });
 
         app.Configuration.DisplayConfigurationValues(logger);
+        app.Services.GetRequiredService<ModelingEvolution.AutoUpdater.Apps.AppsSettings>().Log(logger);
 
         // Configure pipeline and endpoints
         app.ConfigurePipeline()

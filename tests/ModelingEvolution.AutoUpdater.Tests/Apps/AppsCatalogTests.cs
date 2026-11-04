@@ -1,50 +1,65 @@
 using System.Net;
 using System.Net.Sockets;
 using System.Text;
-using Bunit;
 using FluentAssertions;
-using Markdig;
 using Microsoft.Extensions.Configuration;
-using Microsoft.Extensions.DependencyInjection;
 using ModelingEvolution.AutoUpdater.Apps;
 using ModelingEvolution.AutoUpdater.Extensions;
-using ModelingEvolution.AutoUpdater.Host.Components.Shared;
-using MudBlazor;
-using MudBlazor.Services;
 
 namespace ModelingEvolution.AutoUpdater.Tests.Apps;
 
-public class AppsManifestTests
+/// <summary>Builds manifest JSON for the tests: an app with downloads, each written as raw JSON members.</summary>
+internal static class ManifestJson
 {
-    private static string Entry(string id = "viewer", string title = "Example Viewer", string? file = "\"version\":\"1.2.3\",\"file\":\"setup.exe\",\"size\":10", string? guide = "\"guide\":\"viewer.md\"")
+    public const string WindowsFile = "\"version\":\"1.2.3\",\"file\":\"setup.exe\",\"size\":10";
+
+    public static string Download(string platform = "windows", string architecture = "x64", string? extra = WindowsFile) =>
+        "{" + $"\"platform\":\"{platform}\",\"architecture\":\"{architecture}\"" + (extra == null ? "" : "," + extra) + "}";
+
+    public static string App(string id = "viewer", string name = "Example Viewer", string? icon = null, params string[] downloads)
     {
-        var parts = new List<string> { $"\"id\":\"{id}\"", $"\"title\":{System.Text.Json.JsonSerializer.Serialize(title)}" };
-        if (file != null) parts.Add(file);
-        if (guide != null) parts.Add(guide);
+        var parts = new List<string> { $"\"id\":\"{id}\"", $"\"name\":{System.Text.Json.JsonSerializer.Serialize(name)}" };
+        if (icon != null) parts.Add(icon);
+        parts.Add($"\"downloads\":[{string.Join(",", downloads.Length == 0 ? [Download()] : downloads)}]");
         return "{" + string.Join(",", parts) + "}";
     }
 
-    private static string Manifest(params string[] entries) =>
-        $$"""{"schemaVersion":2,"release":"1.0.0","apps":[{{string.Join(",", entries)}}]}""";
+    public static string Manifest(params string[] apps) =>
+        $$"""{"schemaVersion":2,"release":"1.0.0","apps":[{{string.Join(",", apps)}}]}""";
+
+    public static AppEntry? Find(this AppsCatalog catalog, string id) => catalog.Apps.FirstOrDefault(a => a.Id == id);
+}
+
+public class AppsManifestTests
+{
+    private static AppsCatalog Parse(params string[] apps) => AppsManifest.Parse(ManifestJson.Manifest(apps));
+
+    private static AppEntry Single(params string[] downloads) =>
+        Parse(ManifestJson.App(downloads: downloads)).Apps.Should().ContainSingle().Subject;
 
     [Fact]
-    public void Parse_ExampleFixture_ReadsBothAppsInOrder()
+    public void Parse_ExampleFixture_ReadsTheAppItsIconAndItsDownloadsInOrder()
     {
         var catalog = AppsManifest.Parse(File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "Fixtures", "Apps", "manifest.json")));
 
         catalog.Reachable.Should().BeTrue();
-        catalog.Release.Should().Be("1.2.0");
-        catalog.Apps.Should().Equal(
-            new AppEntry("windows", "Example Viewer for Windows", new AppFile("2.1.0", "ExampleViewer-2.1.0.msi", 48234496), "windows.md"),
-            new AppEntry("android", "Example Viewer for Android", null, "android.md"));
+        var app = catalog.Apps.Should().ContainSingle().Subject;
+        app.Id.Should().Be("example-viewer");
+        app.Name.Should().Be("Example Viewer");
+        app.Icon.Should().Be("example-viewer.png");
+        app.Downloads.Should().Equal(
+            new AppDownload(AppPlatform.Windows, AppArchitecture.X64, null, false, new AppFile("2.1.0", "ExampleViewer-2.1.0.msi", 48234496), "windows.md"),
+            new AppDownload(AppPlatform.Linux, AppArchitecture.Arm64, "Kiosk devices", false, new AppFile("2.1.0", "example-viewer_2.1.0_arm64.deb", 292076), "linux.md"),
+            new AppDownload(AppPlatform.Android, AppArchitecture.Arm64, null, true, new AppFile("2.1.0-preview", "ExampleViewer-2.1.0-preview.apk", 2432848), "android.md"));
+        catalog.Files.Should().HaveCount(3);
+        catalog.Icons.Should().Equal("example-viewer.png");
     }
 
     [Fact]
-    public void Parse_AppWithoutFileOrGuide_IsListedWithNeither()
+    public void Parse_DownloadWithoutFileOrGuide_IsListedWithNeither()
     {
-        var app = AppsManifest.Parse(Manifest(Entry(file: null, guide: null))).Find("viewer");
-
-        app.Should().Be(new AppEntry("viewer", "Example Viewer", null, null));
+        Single(ManifestJson.Download(extra: null)).Downloads.Should().Equal(
+            new AppDownload(AppPlatform.Windows, AppArchitecture.X64, null, false, null, null));
     }
 
     [Theory]
@@ -76,25 +91,140 @@ public class AppsManifestTests
     }
 
     [Theory]
+    [InlineData("windows", AppPlatform.Windows)]
+    [InlineData("linux", AppPlatform.Linux)]
+    [InlineData("macos", AppPlatform.Macos)]
+    [InlineData("android", AppPlatform.Android)]
+    [InlineData("ios", AppPlatform.Ios)]
+    public void Parse_EveryKnownPlatform_IsRead(string platform, AppPlatform expected)
+    {
+        Single(ManifestJson.Download(platform: platform)).Downloads.Should().ContainSingle().Which.Platform.Should().Be(expected);
+    }
+
+    [Theory]
+    [InlineData("x64", AppArchitecture.X64)]
+    [InlineData("arm64", AppArchitecture.Arm64)]
+    [InlineData("x86", AppArchitecture.X86)]
+    [InlineData("arm", AppArchitecture.Arm)]
+    [InlineData("any", AppArchitecture.Any)]
+    public void Parse_EveryKnownArchitecture_IsRead(string architecture, AppArchitecture expected)
+    {
+        Single(ManifestJson.Download(architecture: architecture)).Downloads.Should().ContainSingle().Which.Architecture.Should().Be(expected);
+    }
+
+    [Theory]
+    [InlineData("\"platform\":\"beos\",\"architecture\":\"x64\"")]
+    [InlineData("\"platform\":\"Windows\",\"architecture\":\"x64\"")]
+    [InlineData("\"platform\":\"windows\",\"architecture\":\"riscv64\"")]
+    [InlineData("\"platform\":\"windows\",\"architecture\":\"X64\"")]
+    [InlineData("\"platform\":\"windows\"")]
+    [InlineData("\"architecture\":\"x64\"")]
+    [InlineData("\"platform\":1,\"architecture\":\"x64\"")]
+    public void Parse_UnknownPlatformOrArchitecture_DropsThatDownloadOnly(string members)
+    {
+        var app = Single("{" + members + "}", ManifestJson.Download(platform: "linux", extra: null));
+
+        app.Downloads.Select(d => d.Platform).Should().Equal(AppPlatform.Linux);
+    }
+
+    [Fact]
+    public void Parse_LabelAndPreview_AreRead()
+    {
+        var download = Single(ManifestJson.Download(extra: "\"label\":\"Kiosk devices\",\"preview\":true")).Downloads.Single();
+
+        download.Label.Should().Be("Kiosk devices");
+        download.Preview.Should().BeTrue();
+    }
+
+    [Theory]
+    [InlineData("\"label\":\"\"")]
+    [InlineData("\"label\":\"line\\nbreak\"")]
+    [InlineData("\"label\":7")]
+    [InlineData("\"preview\":\"yes\"")]
+    [InlineData("\"preview\":1")]
+    public void Parse_InvalidLabelOrPreview_DropsThatDownload(string member)
+    {
+        Single(ManifestJson.Download(extra: member), ManifestJson.Download(platform: "linux", extra: null))
+            .Downloads.Select(d => d.Platform).Should().Equal(AppPlatform.Linux);
+    }
+
+    [Fact]
+    public void Parse_LabelOverForty_DropsThatDownload_AtFortyKeepsIt()
+    {
+        Single(ManifestJson.Download(extra: $"\"label\":\"{new string('x', 41)}\"")).Downloads.Should().BeEmpty();
+        Single(ManifestJson.Download(extra: $"\"label\":\"{new string('x', 40)}\"")).Downloads.Should().ContainSingle();
+    }
+
+    [Fact]
+    public void Parse_SamePlatformArchitectureAndLabel_KeepsTheFirst_ADifferentLabelIsAnotherDownload()
+    {
+        var app = Single(
+            ManifestJson.Download(extra: "\"version\":\"1\",\"file\":\"a.exe\",\"size\":1"),
+            ManifestJson.Download(extra: "\"version\":\"2\",\"file\":\"b.exe\",\"size\":1"),
+            ManifestJson.Download(extra: "\"label\":\"Kiosk\",\"version\":\"3\",\"file\":\"c.exe\",\"size\":1"));
+
+        app.Downloads.Select(d => d.File!.FileName).Should().Equal("a.exe", "c.exe");
+    }
+
+    [Fact]
+    public void Parse_MoreThanEightDownloads_ReadsOnlyTheFirstEight()
+    {
+        var downloads = Enumerable.Range(0, 12).Select(i => ManifestJson.Download(extra: $"\"label\":\"v{i}\"")).ToArray();
+
+        var app = Single(downloads);
+
+        app.Downloads.Should().HaveCount(AppsManifest.MaxDownloads);
+        app.Downloads[^1].Label.Should().Be("v7");
+    }
+
+    [Fact]
+    public void Parse_MoreThanSixteenApps_ReadsOnlyTheFirstSixteen()
+    {
+        var apps = Enumerable.Range(0, 40).Select(i => ManifestJson.App(id: $"app-{i}", downloads: ManifestJson.Download(extra: null))).ToArray();
+
+        var catalog = Parse(apps);
+
+        catalog.Apps.Should().HaveCount(AppsManifest.MaxApps);
+        catalog.Apps[^1].Id.Should().Be("app-15");
+    }
+
+    [Fact]
+    public void Parse_DuplicateAppId_KeepsTheFirst()
+    {
+        var catalog = Parse(ManifestJson.App(name: "First"), ManifestJson.App(name: "Second", downloads: ManifestJson.Download(extra: null)));
+
+        catalog.Apps.Should().ContainSingle().Which.Name.Should().Be("First");
+    }
+
+    [Fact]
+    public void Parse_FileNameUsedByAnEarlierApp_DropsTheLaterDownload()
+    {
+        var catalog = Parse(ManifestJson.App(id: "a"), ManifestJson.App(id: "b"));
+
+        catalog.Find("a")!.Downloads.Should().ContainSingle();
+        catalog.Find("b")!.Downloads.Should().BeEmpty();
+    }
+
+    [Theory]
     [InlineData("Windows")]
     [InlineData("-viewer")]
     [InlineData("view er")]
     [InlineData("viewer\n")]
     [InlineData("abcdefghijklmnopqrstuvwxyz0123456")]
     [InlineData("")]
-    public void Parse_InvalidId_DropsTheEntry(string id)
+    public void Parse_InvalidId_DropsTheApp(string id)
     {
-        AppsManifest.Parse(Manifest(Entry(id: id))).Apps.Should().BeEmpty();
+        Parse(ManifestJson.App(id: id)).Apps.Should().BeEmpty();
     }
 
     [Fact]
-    public void Parse_TitleOverTheLimit_DropsTheEntry_AtTheLimitKeepsIt()
+    public void Parse_NameOverTheLimit_DropsTheApp_AtTheLimitKeepsIt()
     {
-        AppsManifest.Parse(Manifest(Entry(title: new string('x', 81)))).Apps.Should().BeEmpty();
-        AppsManifest.Parse(Manifest(Entry(title: new string('x', 80)))).Apps.Should().ContainSingle();
+        Parse(ManifestJson.App(name: new string('x', 81))).Apps.Should().BeEmpty();
+        Parse(ManifestJson.App(name: new string('x', 80))).Apps.Should().ContainSingle();
     }
 
-    public static TheoryData<string> HostileTitles() =>
+    public static TheoryData<string> HostileNames() =>
     [
         "",
         "   ",
@@ -109,24 +239,40 @@ public class AppsManifestTests
     ];
 
     [Theory]
-    [MemberData(nameof(HostileTitles))]
-    public void Parse_TitleThatIsNotPlainText_DropsTheEntry(string title)
+    [MemberData(nameof(HostileNames))]
+    public void Parse_NameThatIsNotPlainText_DropsTheApp(string name)
     {
-        AppsManifest.Parse(Manifest(Entry(title: title), Entry(id: "other"))).Apps.Select(a => a.Id).Should().Equal("other");
+        Parse(ManifestJson.App(name: name), ManifestJson.App(id: "other", downloads: ManifestJson.Download(extra: null)))
+            .Apps.Select(a => a.Id).Should().Equal("other");
     }
 
     [Fact]
-    public void Parse_EscapedLoneSurrogate_DropsTheEntryWithoutThrowing()
+    public void Parse_EscapedLoneSurrogate_DropsTheAppWithoutThrowing()
     {
-        const string manifest = """{"schemaVersion":2,"apps":[{"id":"viewer","title":"bad \udc00 title"},{"id":"other","title":"Fine"}]}""";
+        const string manifest = """{"schemaVersion":2,"apps":[{"id":"viewer","name":"bad \udc00 name","downloads":[]},{"id":"other","name":"Fine","downloads":[]}]}""";
 
         AppsManifest.Parse(manifest).Apps.Select(a => a.Id).Should().Equal("other");
     }
 
     [Fact]
-    public void Parse_NonAsciiTitle_IsKept()
+    public void Parse_NonAsciiName_IsKept()
     {
-        AppsManifest.Parse(Manifest(Entry(title: "Przeglądarka – wersja ✓"))).Find("viewer")!.Title.Should().Be("Przeglądarka – wersja ✓");
+        Parse(ManifestJson.App(name: "Przeglądarka – wersja ✓")).Find("viewer")!.Name.Should().Be("Przeglądarka – wersja ✓");
+    }
+
+    [Theory]
+    [InlineData("\"downloads\":\"nope\"")]
+    [InlineData("\"downloads\":null")]
+    public void Parse_DownloadsNotAnArray_DropsTheApp(string downloads)
+    {
+        AppsManifest.Parse($$"""{"schemaVersion":2,"apps":[{"id":"viewer","name":"V",{{downloads}}}]}""").Apps.Should().BeEmpty();
+    }
+
+    [Fact]
+    public void Parse_NoDownloads_KeepsTheApp()
+    {
+        AppsManifest.Parse("""{"schemaVersion":2,"apps":[{"id":"viewer","name":"V","downloads":[]}]}""")
+            .Apps.Should().ContainSingle().Which.Downloads.Should().BeEmpty();
     }
 
     [Theory]
@@ -141,9 +287,9 @@ public class AppsManifestTests
     [InlineData("\"version\":\"1\",\"file\":\"a.exe\",\"size\":\"10\"")]
     [InlineData("\"version\":\"1 2\",\"file\":\"a.exe\",\"size\":1")]
     [InlineData("\"version\":1,\"file\":\"a.exe\",\"size\":1")]
-    public void Parse_IncompleteOrInvalidFileFields_DropsTheEntry(string fileFields)
+    public void Parse_IncompleteOrInvalidFileFields_DropsThatDownload(string fileFields)
     {
-        AppsManifest.Parse(Manifest(Entry(file: fileFields))).Apps.Should().BeEmpty();
+        Single(ManifestJson.Download(extra: fileFields)).Downloads.Should().BeEmpty();
     }
 
     [Theory]
@@ -152,43 +298,36 @@ public class AppsManifestTests
     [InlineData("\"guide\":\".md\"")]
     [InlineData("\"guide\":7")]
     [InlineData("\"guide\":\"a b.md\"")]
-    public void Parse_InvalidGuideName_DropsTheEntry(string guide)
+    public void Parse_InvalidGuideName_DropsThatDownload(string guide)
     {
-        AppsManifest.Parse(Manifest(Entry(guide: guide))).Apps.Should().BeEmpty();
+        Single(ManifestJson.Download(extra: guide)).Downloads.Should().BeEmpty();
+    }
+
+    [Theory]
+    [InlineData("\"icon\":\"viewer.svg\"")]
+    [InlineData("\"icon\":\"viewer.png.svg\"")]
+    [InlineData("\"icon\":\"../viewer.png\"")]
+    [InlineData("\"icon\":\".png\"")]
+    [InlineData("\"icon\":\"a b.png\"")]
+    [InlineData("\"icon\":\"viewer.PNG\"")]
+    [InlineData("\"icon\":7")]
+    public void Parse_InvalidIconName_KeepsTheAppWithoutAnIcon(string icon)
+    {
+        var catalog = Parse(ManifestJson.App(icon: icon));
+
+        catalog.Apps.Should().ContainSingle().Which.Icon.Should().BeNull();
+        catalog.Icons.Should().BeEmpty();
     }
 
     [Fact]
-    public void Parse_DuplicateIdOrFileName_KeepsTheFirst()
+    public void Parse_WrongJsonTypes_DropsThoseAppsWithoutThrowing()
     {
-        var catalog = AppsManifest.Parse(Manifest(
-            Entry(id: "a", title: "First"),
-            Entry(id: "a", title: "Second", file: null),
-            Entry(id: "b", title: "Same file")));
-
-        catalog.Apps.Should().ContainSingle().Which.Title.Should().Be("First");
-    }
-
-    [Fact]
-    public void Parse_MoreThanSixteenApps_ReadsOnlyTheFirstSixteen()
-    {
-        var entries = Enumerable.Range(0, 40).Select(i => Entry(id: $"app-{i}", file: null, guide: null)).ToArray();
-
-        var catalog = AppsManifest.Parse(Manifest(entries));
-
-        catalog.Apps.Should().HaveCount(AppsManifest.MaxApps);
-        catalog.Apps[^1].Id.Should().Be("app-15");
-    }
-
-    [Fact]
-    public void Parse_WrongJsonTypes_DropsThoseEntriesWithoutThrowing()
-    {
-        const string manifest = """{"schemaVersion":2,"release":5,"apps":[7,null,"x",[],{"id":1,"title":2},{"id":"ok","title":"Fine"}]}""";
+        const string manifest = """{"schemaVersion":2,"release":5,"apps":[7,null,"x",[],{"id":1,"name":2},{"id":"ok","name":"Fine","downloads":[7,null]}]}""";
 
         var catalog = AppsManifest.Parse(manifest);
 
         catalog.Reachable.Should().BeTrue();
-        catalog.Release.Should().BeNull();
-        catalog.Apps.Select(a => a.Id).Should().Equal("ok");
+        catalog.Apps.Should().ContainSingle().Which.Downloads.Should().BeEmpty();
     }
 
     [Fact]
@@ -210,134 +349,6 @@ public class AppsManifestTests
     {
         AppsManifest.IsSafeFileName(name).Should().Be(safe);
     }
-}
-
-public class AppGuideMarkdownTests
-{
-    private static string Html(string markdown) => Markdown.ToHtml(markdown, AppGuideMarkdown.Pipeline);
-
-    private static string Rendered(string markdown)
-    {
-        using var context = new BunitContext();
-        context.Services.AddMudServices();
-        context.Services.AddMudMarkdownServices();
-        context.JSInterop.Mode = JSRuntimeMode.Loose;
-        return context.Render<AppGuideView>(p => p.Add(v => v.Markdown, markdown)).Markup;
-    }
-
-    [Fact]
-    public void Guide_OrdinaryMarkdown_RendersListsEmphasisAndHttpLinks()
-    {
-        var markup = Rendered("**Preview.** Android 12.\n\n1. Download it.\n2. See [the vendor](https://example.com/help).\n");
-
-        markup.Should().Contain("Preview.").And.Contain("Download it.").And.Contain("href=\"https://example.com/help\"");
-        markup.Should().Contain("<ol");
-    }
-
-    [Theory]
-    [InlineData("<script>alert(1)</script>")]
-    [InlineData("before <script>alert(1)</script> after")]
-    [InlineData("<img src=x onerror=alert(1)>")]
-    [InlineData("<div onclick=\"alert(1)\">x</div>")]
-    [InlineData("<iframe src=\"https://evil.example\"></iframe>")]
-    public void Guide_RawHtml_IsNeverInterpreted(string markdown)
-    {
-        foreach (var output in new[] { Html(markdown), Rendered(markdown) })
-        {
-            output.Should().NotContain("<script").And.NotContain("<img").And.NotContain("<iframe").And.NotContain("<div onclick");
-        }
-    }
-
-    [Theory]
-    [InlineData("[click](javascript:alert(1))")]
-    [InlineData("[click](JAVASCRIPT:alert(1))")]
-    [InlineData("[click](  javascript:alert(1))")]
-    [InlineData("[click](data:text/html;base64,PHNjcmlwdD4=)")]
-    [InlineData("[click](vbscript:msgbox)")]
-    [InlineData("[click](file:///etc/passwd)")]
-    [InlineData("[click](//evil.example/x)")]
-    [InlineData("[click][ref]\n\n[ref]: javascript:alert(1)")]
-    [InlineData("<javascript:alert(1)>")]
-    public void Guide_LinkToAnythingButHttpHttpsOrRelative_KeepsOnlyItsText(string markdown)
-    {
-        foreach (var output in new[] { Html(markdown), Rendered(markdown) })
-        {
-            output.Should().NotContainEquivalentOf("href=\"javascript").And.NotContainEquivalentOf("href=\"data:")
-                .And.NotContainEquivalentOf("href=\"vbscript").And.NotContainEquivalentOf("href=\"file:")
-                .And.NotContain("href=\"//");
-        }
-    }
-
-    [Fact]
-    public void Guide_LinkText_StaysWhenTheTargetGoes()
-    {
-        Html("Open [the settings](javascript:alert(1)) now.").Should().Contain("Open the settings now.");
-    }
-
-    [Theory]
-    [InlineData("[ok](https://example.com)", "https://example.com")]
-    [InlineData("[ok](http://example.com/a?b#c)", "http://example.com/a?b#c")]
-    [InlineData("[ok](docs/install.html)", "docs/install.html")]
-    [InlineData("[ok](#step-2)", "#step-2")]
-    public void Guide_HttpHttpsAndRelativeLinks_AreKept(string markdown, string href)
-    {
-        Html(markdown).Should().Contain($"href=\"{href}\"");
-    }
-
-    [Theory]
-    [InlineData("![tracking pixel](https://evil.example/p.png)")]
-    [InlineData("![x](javascript:alert(1))")]
-    [InlineData("![relative](shot.png)")]
-    public void Guide_Images_AreReplacedByTheirAltText(string markdown)
-    {
-        foreach (var output in new[] { Html(markdown), Rendered(markdown) })
-        {
-            output.Should().NotContain("<img").And.NotContain("src=");
-        }
-
-        Html(markdown).Should().Contain(markdown[2..markdown.IndexOf(']')]);
-    }
-
-    [Fact]
-    public void Decode_ValidUtf8_ReturnsTheText_WithoutABom()
-    {
-        AppGuideMarkdown.Decode([0xEF, 0xBB, 0xBF, .. "# Hi"u8]).Should().Be("# Hi");
-    }
-
-    [Fact]
-    public void Decode_InvalidUtf8_IsUnavailable()
-    {
-        AppGuideMarkdown.Decode([0x61, 0xFF, 0x62]).Should().BeNull();
-        AppGuideMarkdown.Decode([0x61, 0xC3]).Should().BeNull();
-    }
-
-    [Fact]
-    public void Decode_OverTheCapOrEmpty_IsUnavailable()
-    {
-        AppGuideMarkdown.Decode(Encoding.UTF8.GetBytes(new string('a', AppGuideMarkdown.MaxBytes + 1))).Should().BeNull();
-        AppGuideMarkdown.Decode(Encoding.UTF8.GetBytes(new string('a', AppGuideMarkdown.MaxBytes))).Should().NotBeNull();
-        AppGuideMarkdown.Decode([]).Should().BeNull();
-        AppGuideMarkdown.Decode("  \n "u8).Should().BeNull();
-    }
-
-    [Fact]
-    public void Decode_NestingMarkdigRefuses_IsUnavailable_SoTheRendererNeverThrows()
-    {
-        var markdown = new string('>', 5000) + " deep";
-
-        AppGuideMarkdown.Decode(Encoding.UTF8.GetBytes(markdown)).Should().BeNull();
-    }
-
-    [Fact]
-    public void Decode_LargeOrdinaryGuide_IsAcceptedAndRenders()
-    {
-        var markdown = string.Concat(Enumerable.Repeat("1. A step with **bold** and `code`.\n", 1_700));
-
-        var text = AppGuideMarkdown.Decode(Encoding.UTF8.GetBytes(markdown));
-
-        text.Should().NotBeNull();
-        ((Func<string>)(() => Html(text!))).Should().NotThrow();
-    }
 
     [Fact]
     public void IsPlainText_LoneSurrogate_IsRefused()
@@ -347,12 +358,43 @@ public class AppGuideMarkdownTests
     }
 }
 
+public class AppIconTests
+{
+    private static readonly byte[] Signature = [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A];
+
+    [Fact]
+    public void IsPng_OnlyThePngSignatureWithinTheCap()
+    {
+        AppIcon.IsPng([.. Signature, 1, 2]).Should().BeTrue();
+        AppIcon.IsPng([.. Signature, .. new byte[AppIcon.MaxBytes - Signature.Length]]).Should().BeTrue();
+        AppIcon.IsPng([.. Signature, .. new byte[AppIcon.MaxBytes]]).Should().BeFalse();
+        AppIcon.IsPng("<svg onload=\"alert(1)\"/>"u8).Should().BeFalse();
+        AppIcon.IsPng(Signature[..7]).Should().BeFalse();
+        AppIcon.IsPng([]).Should().BeFalse();
+    }
+
+    [Fact]
+    public void ExampleIcon_InThePackaging_IsAPng()
+    {
+        var path = Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "..", "packaging", "apps", "example", "example-viewer.png");
+
+        AppIcon.IsPng(File.ReadAllBytes(path)).Should().BeTrue();
+    }
+
+    [Fact]
+    public void Path_IsRelativeToThePage()
+    {
+        AppIcon.Path("example-viewer.png").Should().Be("apps/icons/example-viewer.png");
+    }
+}
+
 public class AppsCatalogClientTests
 {
     private static readonly AppsOptions Options = new(new Uri("http://apps.test:8095/"));
-    private const string Manifest = """{"schemaVersion":2,"release":"2.0.0","apps":[{"id":"viewer","title":"Example Viewer","version":"1","file":"a.apk","size":1,"guide":"viewer.md"}]}""";
+    private static readonly byte[] Png = [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 1, 2, 3];
+    private static readonly string Manifest = ManifestJson.Manifest(ManifestJson.App(downloads: ManifestJson.Download(extra: "\"version\":\"1\",\"file\":\"a.apk\",\"size\":1,\"guide\":\"viewer.md\"")));
 
-    private sealed class StubHandler(Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage>> respond) : HttpMessageHandler
+    internal sealed class StubHandler(Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage>> respond) : HttpMessageHandler
     {
         public List<string> Paths { get; } = [];
 
@@ -379,7 +421,7 @@ public class AppsCatalogClientTests
 
         var catalog = await client.GetAsync();
 
-        catalog.Find("viewer")!.File!.FileName.Should().Be("a.apk");
+        catalog.Files.Single().FileName.Should().Be("a.apk");
         handler.Paths.Should().Equal("/manifest.json");
     }
 
@@ -449,7 +491,7 @@ public class AppsCatalogClientTests
     [Fact]
     public async Task GetGuideAsync_OverTheCap_IsUnavailable()
     {
-        var (client, _) = Client((_, _) => Task.FromResult(Ok(new byte[AppGuideMarkdown.MaxBytes + 1].Select(_ => (byte)'a').ToArray())));
+        var (client, _) = Client((_, _) => Task.FromResult(Ok(Enumerable.Repeat((byte)'a', AppGuideMarkdown.MaxBytes + 1).ToArray())));
 
         (await client.GetGuideAsync("viewer.md")).Should().BeNull();
     }
@@ -480,6 +522,36 @@ public class AppsCatalogClientTests
         var (client, _) = Client((_, _) => Task.FromResult(new HttpResponseMessage(HttpStatusCode.NotFound)));
 
         (await client.GetGuideAsync("viewer.md")).Should().BeNull();
+    }
+
+    [Fact]
+    public async Task GetIconAsync_Png_IsReturnedFromUnderIcons()
+    {
+        var (client, handler) = Client((_, _) => Task.FromResult(Ok(Png)));
+
+        (await client.GetIconAsync("viewer.png")).Should().Equal(Png);
+        handler.Paths.Should().Equal("/icons/viewer.png");
+    }
+
+    [Fact]
+    public async Task GetIconAsync_NotAPngOrOverTheCap_IsNull()
+    {
+        var (svg, _) = Client((_, _) => Task.FromResult(Ok("<svg onload=\"alert(1)\"/>")));
+        var (huge, _) = Client((_, _) => Task.FromResult(Ok([.. Png, .. new byte[AppIcon.MaxBytes]])));
+
+        (await svg.GetIconAsync("viewer.png")).Should().BeNull();
+        (await huge.GetIconAsync("viewer.png")).Should().BeNull();
+    }
+
+    [Theory]
+    [InlineData("viewer.svg")]
+    [InlineData("../manifest.png")]
+    public async Task GetIconAsync_NameThatIsNotAnIcon_IsNeverRequested(string name)
+    {
+        var (client, handler) = Client((_, _) => Task.FromResult(Ok(Png)));
+
+        (await client.GetIconAsync(name)).Should().BeNull();
+        handler.Paths.Should().BeEmpty();
     }
 
     [Fact]
@@ -528,44 +600,59 @@ public class AppsCatalogClientTests
 
 public class AppsSettingsTests
 {
-    private static IConfiguration Config(params (string Key, string Value)[] values) => new ConfigurationBuilder()
+    private static AppsSettings Settings(params (string Key, string Value)[] values) => new ConfigurationBuilder()
         .AddInMemoryCollection(values.Select(v => new KeyValuePair<string, string?>(v.Key, v.Value)))
-        .Build();
+        .Build()
+        .AppsSettings();
 
     [Fact]
-    public void From_NothingConfigured_IsDisabledWithoutError()
+    public void NothingConfigured_IsDisabledWithoutError()
     {
-        var settings = AppsSettings.From(Config());
+        var settings = Settings();
 
         settings.Enabled.Should().BeFalse();
         settings.Error.Should().BeNull();
     }
 
     [Fact]
-    public void From_DisabledExplicitly_IgnoresTheRest()
+    public void DisabledExplicitly_IgnoresTheRest()
     {
-        AppsSettings.From(Config(("Apps:Enabled", "false"), ("Apps:SourceUrl", "nope"))).Should().Be(AppsSettings.Disabled);
+        Settings(("Apps:Enabled", "false"), ("Apps:SourceUrl", "nope")).Should().Be(AppsSettings.Disabled);
     }
 
     [Fact]
-    public void From_EnabledWithASourceUrl_UsesNeutralDefaults()
+    public void EnabledWithASourceUrl_UsesNeutralDefaults()
     {
-        var settings = AppsSettings.From(Config(("Apps:Enabled", "true"), ("Apps:SourceUrl", "http://172.17.0.1:8095")));
+        var settings = Settings(("Apps:Enabled", "true"), ("Apps:SourceUrl", "http://172.17.0.1:8095"));
 
         settings.Enabled.Should().BeTrue();
         settings.Options.Should().Be(new AppsOptions(new Uri("http://172.17.0.1:8095/"), null, "Apps"));
     }
 
     [Fact]
-    public void From_EnabledWithEverything_ReadsTitleAndPackage()
+    public void EnabledWithEverything_ReadsTitleAndPackage()
     {
-        var options = AppsSettings.From(Config(("Apps:Enabled", "True"), ("Apps:SourceUrl", "https://apps.local/base"),
-            ("Apps:Title", "Downloads"), ("Apps:PackageName", "example-apps"))).Options!;
+        var options = Settings(("Apps:Enabled", "True"), ("Apps:SourceUrl", "https://apps.local/base"),
+            ("Apps:Title", "Downloads"), ("Apps:PackageName", "example-apps")).Options!;
 
         options.SourceUrl.Should().Be(new Uri("https://apps.local/base/"));
         options.Title.Should().Be("Downloads");
         options.PackageName.Should().Be("example-apps");
         options.FileUrl("a.apk").Should().Be(new Uri("https://apps.local/base/files/a.apk"));
+    }
+
+    [Fact]
+    public void EachValue_IsReadByItsOwnExtension()
+    {
+        var configuration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["Apps:Enabled"] = "true", ["Apps:SourceUrl"] = "http://h/", ["Apps:Title"] = "T", ["Apps:PackageName"] = "p",
+        }).Build();
+
+        configuration.AppsEnabled().Should().Be("true");
+        configuration.AppsSourceUrl().Should().Be("http://h/");
+        configuration.AppsTitle().Should().Be("T");
+        configuration.AppsPackageName().Should().Be("p");
     }
 
     [Theory]
@@ -576,30 +663,30 @@ public class AppsSettingsTests
     [InlineData("/relative/")]
     [InlineData("http://user:pass@host/")]
     [InlineData("http://host/?q=1")]
-    public void From_EnabledWithoutAUsableSourceUrl_StaysOffAndSaysWhy(string? url)
+    public void EnabledWithoutAUsableSourceUrl_StaysOffAndSaysWhy(string? url)
     {
         var values = new List<(string, string)> { ("Apps:Enabled", "true") };
         if (url != null) values.Add(("Apps:SourceUrl", url));
 
-        var settings = AppsSettings.From(Config(values.ToArray()));
+        var settings = Settings(values.ToArray());
 
         settings.Enabled.Should().BeFalse();
         settings.Error.Should().Contain("Apps:SourceUrl");
     }
 
     [Fact]
-    public void From_EnabledNotABoolean_StaysOffAndSaysWhy()
+    public void EnabledNotABoolean_StaysOffAndSaysWhy()
     {
-        var settings = AppsSettings.From(Config(("Apps:Enabled", "yes")));
+        var settings = Settings(("Apps:Enabled", "yes"));
 
         settings.Enabled.Should().BeFalse();
         settings.Error.Should().Contain("Apps:Enabled");
     }
 
     [Fact]
-    public void From_TitleThatIsNotPlainText_StaysOffAndSaysWhy()
+    public void TitleThatIsNotPlainText_StaysOffAndSaysWhy()
     {
-        var settings = AppsSettings.From(Config(("Apps:Enabled", "true"), ("Apps:SourceUrl", "http://h/"), ("Apps:Title", new string('x', 41))));
+        var settings = Settings(("Apps:Enabled", "true"), ("Apps:SourceUrl", "http://h/"), ("Apps:Title", new string('x', 41)));
 
         settings.Enabled.Should().BeFalse();
         settings.Error.Should().Contain("Apps:Title");
@@ -618,59 +705,88 @@ public class AppsSettingsTests
     }
 }
 
-public class AppRowTests
+public class AppCardTests
 {
     private static readonly AppFile File = new("1", "a.exe", 1);
-    private static readonly AppEntry WithFile = new("viewer", "Example Viewer", File, "viewer.md");
-    private static readonly AppEntry WithoutFile = new("other", "Other", null, null);
-    private static readonly AppsCatalog Listed = new(true, "1.0.0", [WithFile, WithoutFile]);
+    private static readonly AppDownload WithFile = new(AppPlatform.Windows, AppArchitecture.X64, null, false, File, "viewer.md");
+    private static readonly AppDownload WithoutFile = new(AppPlatform.Ios, AppArchitecture.Any, null, false, null, null);
+    private static readonly AppEntry Viewer = new("viewer", "Example Viewer", "viewer.png", [WithFile, WithoutFile]);
+    private static readonly AppEntry Other = new("other", "Other", null, []);
+    private static readonly AppsCatalog Listed = new(true, [Viewer, Other]);
     private static readonly AppsPackageSnapshot Deployed = new(true, true, false);
 
     [Fact]
     public void Decide_File_IsReady_NoFile_IsNotAvailableYet()
     {
-        AppRow.Decide(File, Deployed).Should().Be(AppStatus.Ready);
-        AppRow.Decide(null, Deployed).Should().Be(AppStatus.NotAvailableYet);
+        DownloadRow.Decide(File, Deployed).Should().Be(AppStatus.Ready);
+        DownloadRow.Decide(null, Deployed).Should().Be(AppStatus.NotAvailableYet);
     }
 
     [Fact]
     public void Decide_UpdateRunning_WinsOverEverything()
     {
-        AppRow.Decide(File, new AppsPackageSnapshot(true, true, true)).Should().Be(AppStatus.Downloading);
+        DownloadRow.Decide(File, new AppsPackageSnapshot(true, true, true)).Should().Be(AppStatus.Downloading);
     }
 
     [Fact]
-    public void For_ReadableCatalog_OneRowPerAppInOrder_OnlyAFileCanBeDownloaded()
+    public void For_ReadableCatalog_OneCardPerAppInOrder_OneRowPerDownload()
     {
-        var rows = AppRow.For(Listed, Deployed);
+        var cards = AppCard.For(Listed, Deployed);
 
-        rows.Select(r => r.Id).Should().Equal("viewer", "other");
-        rows[0].CanDownload.Should().BeTrue();
-        rows[1].CanDownload.Should().BeFalse();
-        rows[0].Guide.Should().Be(GuideState.Loading);
-        rows[1].Guide.Should().Be(GuideState.None);
+        cards.Select(c => c.Id).Should().Equal("viewer", "other");
+        cards[0].Downloads.Select(r => r.CanDownload).Should().Equal(true, false);
+        cards[0].Downloads.Select(r => r.Guide).Should().Equal(LoadState.Loading, LoadState.None);
+        cards[0].Icon.Should().Be(LoadState.Loading);
+        cards[1].Icon.Should().Be(LoadState.None);
+        cards[1].Downloads.Should().BeEmpty();
     }
 
     [Fact]
-    public void For_UnreadableCatalog_InventsNoRows()
+    public void For_UnreadableCatalog_InventsNoCards()
     {
-        AppRow.For(null, Deployed).Should().BeEmpty();
-        AppRow.For(AppsCatalog.Unreachable, Deployed).Should().BeEmpty();
-        AppRow.For(AppsCatalog.Unsupported("1"), Deployed).Should().BeEmpty();
+        AppCard.For(null, Deployed).Should().BeEmpty();
+        AppCard.For(AppsCatalog.Unreachable, Deployed).Should().BeEmpty();
+        AppCard.For(AppsCatalog.Unsupported("1"), Deployed).Should().BeEmpty();
+    }
+
+    [Fact]
+    public void Apply_UpdateStarts_EveryRowIsDownloading_AndSaysSo()
+    {
+        var card = new AppCard(Viewer, Deployed);
+        var changed = new List<string?>();
+        card.Downloads[0].PropertyChanged += (_, e) => changed.Add(e.PropertyName);
+
+        card.Apply(new AppsPackageSnapshot(true, true, true));
+
+        card.Downloads.Select(r => r.Status).Should().Equal(AppStatus.Downloading, AppStatus.Downloading);
+        changed.Should().Equal(nameof(DownloadRow.Status));
     }
 
     [Fact]
     public void SetGuide_NullIsUnavailable_TextIsLoaded()
     {
-        var unavailable = new AppRow(WithFile);
-        var loaded = new AppRow(WithFile);
+        var unavailable = new DownloadRow(WithFile);
+        var loaded = new DownloadRow(WithFile);
 
         unavailable.SetGuide(null);
         loaded.SetGuide("1. Install.");
 
-        unavailable.Guide.Should().Be(GuideState.Unavailable);
-        loaded.Guide.Should().Be(GuideState.Loaded);
+        unavailable.Guide.Should().Be(LoadState.Unavailable);
+        loaded.Guide.Should().Be(LoadState.Loaded);
         loaded.GuideMarkdown.Should().Be("1. Install.");
+    }
+
+    [Fact]
+    public void SetIcon_FalseIsUnavailable_TrueIsLoaded()
+    {
+        var unavailable = new AppCard(Viewer, Deployed);
+        var loaded = new AppCard(Viewer, Deployed);
+
+        unavailable.SetIcon(false);
+        loaded.SetIcon(true);
+
+        unavailable.Icon.Should().Be(LoadState.Unavailable);
+        loaded.Icon.Should().Be(LoadState.Loaded);
     }
 
     [Theory]
@@ -679,16 +795,16 @@ public class AppRowTests
     [InlineData(false, false, AppsPageStatus.Unavailable)]
     public void DecidePage_ImageNotAnswering_DependsOnThePackage(bool registered, bool deployed, AppsPageStatus expected)
     {
-        AppRow.DecidePage(AppsCatalog.Unreachable, new AppsPackageSnapshot(registered, deployed, false)).Should().Be(expected);
+        AppCard.DecidePage(AppsCatalog.Unreachable, new AppsPackageSnapshot(registered, deployed, false)).Should().Be(expected);
     }
 
     [Fact]
     public void DecidePage_CoversCheckingUnsupportedEmptyAndListed()
     {
-        AppRow.DecidePage(null, Deployed).Should().Be(AppsPageStatus.Checking);
-        AppRow.DecidePage(AppsCatalog.Unsupported("1"), Deployed).Should().Be(AppsPageStatus.UnsupportedSchema);
-        AppRow.DecidePage(new AppsCatalog(true, null, []), Deployed).Should().Be(AppsPageStatus.Empty);
-        AppRow.DecidePage(Listed, Deployed).Should().Be(AppsPageStatus.Listed);
+        AppCard.DecidePage(null, Deployed).Should().Be(AppsPageStatus.Checking);
+        AppCard.DecidePage(AppsCatalog.Unsupported("1"), Deployed).Should().Be(AppsPageStatus.UnsupportedSchema);
+        AppCard.DecidePage(new AppsCatalog(true, []), Deployed).Should().Be(AppsPageStatus.Empty);
+        AppCard.DecidePage(Listed, Deployed).Should().Be(AppsPageStatus.Listed);
     }
 }
 

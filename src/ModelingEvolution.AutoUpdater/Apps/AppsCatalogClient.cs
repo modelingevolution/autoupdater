@@ -1,9 +1,9 @@
-using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Logging;
 
 namespace ModelingEvolution.AutoUpdater.Apps;
 
 /// <summary>Where the apps image is, for an enabled Apps page. See <see cref="AppsSettings"/>.</summary>
-/// <param name="SourceUrl">Where the AutoUpdater reads manifest.json, verification.json and files/&lt;name&gt;.</param>
+/// <param name="SourceUrl">Where the AutoUpdater reads manifest.json, guides/&lt;name&gt; and files/&lt;name&gt;.</param>
 /// <param name="PackageName">The AutoUpdater package that deploys the apps image, if any: the page then shows its download state.</param>
 /// <param name="Title">The page title and navigation label.</param>
 public sealed record AppsOptions(Uri SourceUrl, string? PackageName = null, string Title = AppsSettings.DefaultTitle)
@@ -20,14 +20,13 @@ public sealed record AppsOptions(Uri SourceUrl, string? PackageName = null, stri
 }
 
 /// <summary>
-/// The <c>Apps</c> configuration section. The Apps page is off unless <c>Apps:Enabled</c> is true; then
-/// <c>Apps:SourceUrl</c> (an absolute http or https URL) is required, and <c>Apps:Title</c> and <c>Apps:PackageName</c>
-/// are optional. Enabled with a missing or invalid value leaves the page off and carries an <see cref="Error"/> for the
-/// startup log: the AutoUpdater is the remote recovery path, so a bad Apps setting never stops it from starting.
+/// The Apps page's settings, built once at startup from the <c>Apps:*</c> configuration values
+/// (<see cref="ModelingEvolution.AutoUpdater.Extensions.ConfigurationExtensions.AppsSettings"/>). The page is off unless
+/// <c>Apps:Enabled</c> is true; then <c>Apps:SourceUrl</c> (an absolute http or https URL) is required, and
+/// <c>Apps:Title</c> and <c>Apps:PackageName</c> are optional.
 /// </summary>
 public sealed record AppsSettings(AppsOptions? Options, string? Error)
 {
-    public const string Section = "Apps";
     public const string DefaultTitle = "Apps";
     public const int MaxTitle = 40;
 
@@ -35,16 +34,16 @@ public sealed record AppsSettings(AppsOptions? Options, string? Error)
 
     public bool Enabled => Options != null;
 
-    public static AppsSettings From(IConfiguration configuration)
+    /// <summary>Validates the raw <c>Apps:*</c> values. Each argument is the value as configured, or null when unset.</summary>
+    public static AppsSettings Create(string? enabled, string? url, string? title, string? package)
     {
-        var section = configuration.GetSection(Section);
-        var enabled = section["Enabled"];
+        // Deliberately not fail-fast (standards/dotnet.md): the AutoUpdater is the station's recovery path, so a bad Apps
+        // value only turns the page off and is logged as an error at startup; it never stops the AutoUpdater from starting.
         if (string.IsNullOrWhiteSpace(enabled)) return Disabled;
         if (!bool.TryParse(enabled, out var on))
             return new AppsSettings(null, $"Apps:Enabled must be true or false (got '{enabled}'); the Apps page is off.");
         if (!on) return Disabled;
 
-        var url = section["SourceUrl"];
         if (!Uri.TryCreate(url, UriKind.Absolute, out var source) || source.Scheme is not ("http" or "https")
             || !string.IsNullOrEmpty(source.Query) || !string.IsNullOrEmpty(source.Fragment) || !string.IsNullOrEmpty(source.UserInfo))
             return new AppsSettings(null,
@@ -52,13 +51,26 @@ public sealed record AppsSettings(AppsOptions? Options, string? Error)
         // A base URL: manifest.json and files/ resolve under it, so it must end with a slash.
         if (!source.AbsolutePath.EndsWith('/')) source = new Uri(source.AbsoluteUri + "/");
 
-        var title = section["Title"];
         if (string.IsNullOrWhiteSpace(title)) title = DefaultTitle;
         else if (!AppsManifest.IsPlainText(title, MaxTitle))
             return new AppsSettings(null, $"Apps:Title must be plain text of at most {MaxTitle} characters; the Apps page is off.");
 
-        var package = section["PackageName"];
         return new AppsSettings(new AppsOptions(source, string.IsNullOrWhiteSpace(package) ? null : package.Trim(), title.Trim()), null);
+    }
+
+    /// <summary>Writes these settings to the startup log, and the configuration error, if any, as an error.</summary>
+    public void Log(ILogger logger)
+    {
+        logger.LogInformation("Apps Configuration:");
+        logger.LogInformation("  Apps:Enabled: {AppsEnabled}", Enabled);
+        if (Options is { } options)
+        {
+            logger.LogInformation("  Apps:SourceUrl: {AppsSourceUrl}", options.SourceUrl);
+            logger.LogInformation("  Apps:Title: {AppsTitle}", options.Title);
+            logger.LogInformation("  Apps:PackageName: {AppsPackageName}", options.PackageName ?? "Not set");
+        }
+
+        if (Error != null) logger.LogError("Apps configuration error: {AppsError}", Error);
     }
 }
 
@@ -120,7 +132,19 @@ public sealed class AppsCatalogClient
     {
         if (!AppsManifest.IsGuideName(name)) return null;
         var bytes = await ReadAsync("guides/" + Uri.EscapeDataString(name), AppGuideMarkdown.MaxBytes, cancellationToken);
-        return bytes == null ? null : AppGuideMarkdown.Decode(bytes);
+        // On the thread pool: the trial parse must not hold up the caller's context (a Blazor circuit).
+        return bytes == null ? null : await Task.Run(() => AppGuideMarkdown.Decode(bytes), cancellationToken);
+    }
+
+    /// <summary>
+    /// Reads one icon (<c>icons/&lt;name&gt;</c>): its bytes when the name is a listed-icon name and the body is a PNG of
+    /// at most <see cref="AppIcon.MaxBytes"/>; otherwise null, and the page shows its neutral icon.
+    /// </summary>
+    public async Task<byte[]?> GetIconAsync(string name, CancellationToken cancellationToken = default)
+    {
+        if (!AppsManifest.IsIconName(name)) return null;
+        var bytes = await ReadAsync("icons/" + Uri.EscapeDataString(name), AppIcon.MaxBytes, cancellationToken);
+        return bytes != null && AppIcon.IsPng(bytes) ? bytes : null;
     }
 
     /// <summary>The body, or null for any failure, a non-2xx answer, or a body over <paramref name="maxBytes"/>.</summary>

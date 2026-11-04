@@ -9,9 +9,9 @@
 @inject IProgressService Progress
 @inject ILogger<AppsView> Logger
 
-@* Renders whatever the apps image's manifest.json lists, read once when the page opens. Titles are plain text (Blazor
-   encodes them); guides are markdown, rendered by MudMarkdown through AppGuideMarkdown.Pipeline (no raw HTML, no images,
-   only http/https/relative links). *@
+@* Renders whatever the apps image's manifest.json lists, read once when the page opens: one card per app, one section
+   per download. Names and labels are plain text (Blazor encodes them); guides are markdown, rendered by AppGuideView;
+   icons are PNGs served through /apps/icons. *@
 
 <PageTitle>@Options.Title</PageTitle>
 
@@ -77,54 +77,81 @@ else if (_package != null)
 }
 
 <MudStack Spacing="4">
-    <ObservableForEach ItemSource="@_rows" IsNotifyPropertyChangedEnabled="true" Context="row">
-        <MudPaper Class="pa-4" Elevation="2" data-testid="@($"app-{row.Id}")">
-            <MudStack Row="true" AlignItems="AlignItems.Center" Justify="Justify.SpaceBetween" Wrap="Wrap.Wrap">
-                <MudText Typo="Typo.h5" data-testid="app-title">@row.Entry.Title</MudText>
-                <MudChip T="string" Color="@StatusColor(row.Status)" data-testid="app-status">@StatusText(row.Status)</MudChip>
+    <ObservableForEach ItemSource="@_cards" IsNotifyPropertyChangedEnabled="true" Context="card">
+        <MudPaper Class="pa-4" Elevation="2" data-testid="@($"app-{card.Id}")">
+            <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="3" data-icon-state="@card.Icon">
+                @if (card.Icon == LoadState.Loaded)
+                {
+                    <img src="@AppIcon.Path(card.Entry.Icon!)" alt="" width="48" height="48" style="object-fit: contain;" data-testid="app-icon" />
+                }
+                else
+                {
+                    <MudIcon Icon="@Icons.Material.Filled.Apps" Style="font-size: 48px;" data-testid="app-icon-default" />
+                }
+                <MudText Typo="Typo.h5" data-testid="app-name">@card.Entry.Name</MudText>
             </MudStack>
 
-            @if (row.File != null)
+            @if (card.Downloads.Count == 0)
             {
-                <MudGrid Spacing="2" Class="mt-2">
-                    <MudItem xs="6" sm="3"><MudField Label="Version" Variant="Variant.Text" data-testid="app-version">@row.File.Version</MudField></MudItem>
-                    <MudItem xs="6" sm="3"><MudField Label="Size" Variant="Variant.Text" data-testid="app-size">@(new Bytes(row.File.Size).ToString())</MudField></MudItem>
-                    <MudItem xs="12" sm="6"><MudField Label="File" Variant="Variant.Text" Style="word-break: break-all;">@row.File.FileName</MudField></MudItem>
-                </MudGrid>
+                <MudText Typo="Typo.body2" Class="mt-3" data-testid="app-no-downloads">Not available yet.</MudText>
             }
 
-            @if (row.CanDownload)
-            {
-                <MudStack Row="true" Class="mt-3">
-                    <MudButton Variant="Variant.Filled" Color="Color.Primary" Size="Size.Large"
-                               StartIcon="@Icons.Material.Filled.Download"
-                               Href="@AppsOptions.DownloadPath(row.File!.FileName)"
-                               data-testid="app-download">Download</MudButton>
-                </MudStack>
-            }
+            <ObservableForEach ItemSource="@card.Downloads" IsNotifyPropertyChangedEnabled="true" Context="row">
+                <MudDivider Class="my-3" />
+                <div data-testid="@($"download-{row.Download.Key}")">
+                    <MudStack Row="true" AlignItems="AlignItems.Center" Justify="Justify.SpaceBetween" Wrap="Wrap.Wrap">
+                        <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2">
+                            <MudIcon Icon="@PlatformIcon(row.Download.Platform)" data-testid="download-platform-icon" />
+                            <MudText Typo="Typo.h6" data-testid="download-title">@DownloadTitle(row.Download)</MudText>
+                            @if (row.Download.Preview)
+                            {
+                                <MudChip T="string" Size="Size.Small" Color="Color.Warning" Variant="Variant.Outlined" data-testid="download-preview">Preview</MudChip>
+                            }
+                        </MudStack>
+                        <MudChip T="string" Size="Size.Small" Color="@StatusColor(row.Status)" data-testid="download-status">@StatusText(row.Status)</MudChip>
+                    </MudStack>
 
-            @switch (row.Guide)
-            {
-                case GuideState.Loading:
-                    <MudProgressLinear Indeterminate="true" Class="mt-3" data-testid="app-guide-loading" />
-                    break;
-                case GuideState.Loaded:
-                    @* A guide that still fails to render takes down only itself, never the page. *@
-                    <ErrorBoundary>
-                        <ChildContent>
-                            <div class="mt-3" data-testid="app-guide">
-                                <AppGuideView Markdown="@row.GuideMarkdown" />
-                            </div>
-                        </ChildContent>
-                        <ErrorContent>
-                            <MudText Typo="Typo.body2" Class="mt-3" data-testid="app-guide-unavailable">Install guide unavailable.</MudText>
-                        </ErrorContent>
-                    </ErrorBoundary>
-                    break;
-                case GuideState.Unavailable:
-                    <MudText Typo="Typo.body2" Class="mt-3" data-testid="app-guide-unavailable">Install guide unavailable.</MudText>
-                    break;
-            }
+                    @if (row.File != null)
+                    {
+                        <MudStack Row="true" AlignItems="AlignItems.Center" Wrap="Wrap.Wrap" Spacing="4" Class="mt-2">
+                            <MudText Typo="Typo.body2" data-testid="download-version">Version @row.File.Version</MudText>
+                            <MudText Typo="Typo.body2" data-testid="download-size">@(new Bytes(row.File.Size).ToString())</MudText>
+                            <MudText Typo="Typo.body2" Style="word-break: break-all;" data-testid="download-file">@row.File.FileName</MudText>
+                            @if (row.CanDownload)
+                            {
+                                <MudSpacer />
+                                <MudButton Variant="Variant.Filled" Color="Color.Primary"
+                                           StartIcon="@Icons.Material.Filled.Download"
+                                           Href="@AppsOptions.DownloadPath(row.File.FileName)"
+                                           data-testid="download-button">Download</MudButton>
+                            }
+                        </MudStack>
+                    }
+
+                    @switch (row.Guide)
+                    {
+                        case LoadState.Loading:
+                            <MudProgressLinear Indeterminate="true" Class="mt-3" data-testid="download-guide-loading" />
+                            break;
+                        case LoadState.Loaded:
+                            @* A guide that still fails to render takes down only itself, never the page. *@
+                            <ErrorBoundary>
+                                <ChildContent>
+                                    <div class="mt-3" data-testid="download-guide">
+                                        <AppGuideView Markdown="@row.GuideMarkdown" />
+                                    </div>
+                                </ChildContent>
+                                <ErrorContent>
+                                    <MudText Typo="Typo.body2" Class="mt-3" data-testid="download-guide-unavailable">Install guide unavailable.</MudText>
+                                </ErrorContent>
+                            </ErrorBoundary>
+                            break;
+                        case LoadState.Unavailable:
+                            <MudText Typo="Typo.body2" Class="mt-3" data-testid="download-guide-unavailable">Install guide unavailable.</MudText>
+                            break;
+                    }
+                </div>
+            </ObservableForEach>
         </MudPaper>
     </ObservableForEach>
 </MudStack>
@@ -132,7 +159,7 @@ else if (_package != null)
 @code {
     [Parameter, EditorRequired] public AppsOptions Options { get; set; } = null!;
 
-    private readonly ObservableCollection<AppRow> _rows = new();
+    private readonly ObservableCollection<AppCard> _cards = new();
     private readonly CancellationTokenSource _stop = new();
     private PackageState? _package;
     private AppsCatalog? _catalog;
@@ -161,26 +188,24 @@ else if (_package != null)
         if (firstRender) _load = LoadAsync(_stop.Token);
     }
 
-    /// <summary>One read of manifest.json, then each listed guide. Nothing polls: reloading the page reads again.</summary>
+    /// <summary>One read of manifest.json, then each listed icon and guide. Nothing polls: reloading the page reads again.</summary>
     private async Task LoadAsync(CancellationToken stop)
     {
         try
         {
             var catalog = await CatalogClient.GetAsync(stop);
-            var rows = AppRow.For(catalog, Snapshot());
+            var cards = AppCard.For(catalog, Snapshot());
             await InvokeAsync(() =>
             {
                 _catalog = catalog;
-                _pageStatus = AppRow.DecidePage(catalog, Snapshot());
-                foreach (var row in rows) _rows.Add(row);
+                _pageStatus = AppCard.DecidePage(catalog, Snapshot());
+                foreach (var card in cards) _cards.Add(card);
                 StateHasChanged();
             });
 
-            await Task.WhenAll(rows.Where(r => r.Entry.Guide != null).Select(async row =>
-            {
-                var markdown = await CatalogClient.GetGuideAsync(row.Entry.Guide!, stop);
-                await InvokeAsync(() => row.SetGuide(markdown));
-            }));
+            var icons = cards.Where(c => c.Entry.Icon != null).Select(card => LoadIconAsync(card, stop));
+            var guides = cards.SelectMany(c => c.Downloads).Where(r => r.Download.Guide != null).Select(row => LoadGuideAsync(row, stop));
+            await Task.WhenAll(icons.Concat(guides));
         }
         catch (OperationCanceledException)
         {
@@ -195,6 +220,48 @@ else if (_package != null)
         }
     }
 
+    /// <summary>One download's guide. Whatever goes wrong, that section ends as "Install guide unavailable", never a spinner.</summary>
+    private async Task LoadGuideAsync(DownloadRow row, CancellationToken stop)
+    {
+        string? markdown;
+        try
+        {
+            markdown = await CatalogClient.GetGuideAsync(row.Download.Guide!, stop);
+        }
+        catch (OperationCanceledException) when (stop.IsCancellationRequested)
+        {
+            return;
+        }
+        catch (Exception ex)
+        {
+            Logger.LogWarning(ex, "The install guide {Guide} could not be read", row.Download.Guide);
+            markdown = null;
+        }
+
+        await InvokeAsync(() => row.SetGuide(markdown));
+    }
+
+    /// <summary>Checks the icon is there and a PNG before the browser is pointed at it; otherwise the neutral icon stays.</summary>
+    private async Task LoadIconAsync(AppCard card, CancellationToken stop)
+    {
+        bool available;
+        try
+        {
+            available = await CatalogClient.GetIconAsync(card.Entry.Icon!, stop) != null;
+        }
+        catch (OperationCanceledException) when (stop.IsCancellationRequested)
+        {
+            return;
+        }
+        catch (Exception ex)
+        {
+            Logger.LogWarning(ex, "The icon {Icon} could not be read", card.Entry.Icon);
+            available = false;
+        }
+
+        await InvokeAsync(() => card.SetIcon(available));
+    }
+
     private AppsPackageSnapshot Snapshot() => _package == null
         ? AppsPackageSnapshot.None
         : new AppsPackageSnapshot(true, _package.CurrentVersion != null, _package.IsUpdateInProgress);
@@ -204,8 +271,8 @@ else if (_package != null)
         _ = InvokeAsync(() =>
         {
             var snapshot = Snapshot();
-            if (_catalog != null) _pageStatus = AppRow.DecidePage(_catalog, snapshot);
-            foreach (var row in _rows) row.Apply(snapshot);
+            if (_catalog != null) _pageStatus = AppCard.DecidePage(_catalog, snapshot);
+            foreach (var card in _cards) card.Apply(snapshot);
             StateHasChanged();
         });
     }
@@ -214,6 +281,36 @@ else if (_package != null)
     {
         if (ProgressIsOurs) _ = InvokeAsync(StateHasChanged);
     }
+
+    /// <summary>"Windows · x64", "Linux · arm64 · Kiosk devices". "any" architecture is left out.</summary>
+    public static string DownloadTitle(AppDownload download)
+    {
+        var parts = new List<string> { PlatformName(download.Platform) };
+        if (download.Architecture != AppArchitecture.Any) parts.Add(download.Architecture.ToString().ToLowerInvariant());
+        if (download.Label != null) parts.Add(download.Label);
+        return string.Join(" · ", parts);
+    }
+
+    private static string PlatformName(AppPlatform platform) => platform switch
+    {
+        AppPlatform.Windows => "Windows",
+        AppPlatform.Linux => "Linux",
+        AppPlatform.Macos => "macOS",
+        AppPlatform.Android => "Android",
+        AppPlatform.Ios => "iOS",
+        _ => platform.ToString(),
+    };
+
+    // MudBlazor 8.9 has brand icons for Windows and Linux only; Apple platforms use the device icons.
+    private static string PlatformIcon(AppPlatform platform) => platform switch
+    {
+        AppPlatform.Windows => Icons.Custom.Brands.MicrosoftWindows,
+        AppPlatform.Linux => Icons.Custom.Brands.Linux,
+        AppPlatform.Android => Icons.Material.Filled.Android,
+        AppPlatform.Macos => Icons.Material.Filled.LaptopMac,
+        AppPlatform.Ios => Icons.Material.Filled.PhoneIphone,
+        _ => Icons.Material.Filled.Download,
+    };
 
     private static string StatusText(AppStatus status) => status switch
     {

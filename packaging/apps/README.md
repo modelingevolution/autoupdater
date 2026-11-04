@@ -12,7 +12,7 @@ The AutoUpdater's Apps page is a generic renderer of that content and holds no p
 | `image/` | Dockerfile and nginx config. alpine + nginx, static files only. |
 | `publish-apps.sh` | Builds and pushes the image from a laptop. |
 | `compose/` | A template AutoUpdater package that deploys the image; copy it into the product's compose repository. |
-| `example/` | Example guides, used by the tests and below. |
+| `example/` | Example guides and icon, used by the tests and below. |
 
 ## Contract
 
@@ -21,7 +21,8 @@ The image serves, as plain static HTTP:
 | Path | Answer |
 |---|---|
 | `GET /manifest.json` | The document below. `Cache-Control: no-store`. |
-| `GET /guides/<name>.md` | A guide: `text/markdown; charset=utf-8`, UTF-8, at most 64 KiB. |
+| `GET /guides/<name>.md` | A guide: `text/markdown; charset=utf-8`, UTF-8, at most 16 KiB. |
+| `GET /icons/<name>.png` | An app icon: `image/png`, a PNG of at most 256 KiB. |
 | `GET /files/<name>` | A file, with `Content-Disposition: attachment`, `Cache-Control: no-cache` and single-range support. Symlinks are refused. |
 | `GET /health` | 200. |
 | anything else | 404. No directory listing. |
@@ -33,52 +34,83 @@ The image serves, as plain static HTTP:
   "schemaVersion": 2,
   "release": "1.2.0",
   "apps": [
-    {"id": "windows", "title": "Example Viewer for Windows",
-     "version": "2.1.0", "file": "ExampleViewer-2.1.0.msi", "size": 48234496, "guide": "windows.md"},
-    {"id": "android", "title": "Example Viewer for Android", "guide": "android.md"}
+    {
+      "id": "example-viewer",
+      "name": "Example Viewer",
+      "icon": "example-viewer.png",
+      "downloads": [
+        { "platform": "windows", "architecture": "x64",   "version": "2.1.0", "file": "ExampleViewer-2.1.0.msi", "size": 48234496, "guide": "windows.md" },
+        { "platform": "linux",   "architecture": "arm64", "version": "2.1.0", "file": "example-viewer_2.1.0_arm64.deb", "size": 292076, "guide": "linux.md", "label": "Kiosk devices" },
+        { "platform": "android", "architecture": "arm64", "version": "2.1.0-preview", "file": "ExampleViewer-2.1.0-preview.apk", "size": 2432848, "guide": "android.md", "preview": true }
+      ]
+    }
   ]
 }
 ```
 
+Per app:
+
 | Field | Rule |
 |---|---|
 | `schemaVersion` | `2`. Any other value, or none, and the page says the format is not supported and shows no app. |
-| `release` | The image tag, `X.Y.Z`. |
-| `apps` | At most 16; the page shows them in this order. Only the first 16 are read. |
-| `id` | `[a-z0-9][a-z0-9-]{0,31}`, unique. |
-| `title` | Plain text, one line, at most 80 characters: no control characters, no bidirectional overrides. |
-| `version`, `file`, `size` | All three or none. None: the app shows "Not available yet". `version`: `[0-9A-Za-z][0-9A-Za-z.+~_-]{0,63}`; `file`: `[A-Za-z0-9][A-Za-z0-9._+~-]{0,127}`, unique; `size`: bytes, > 0. |
+| `release` | The image tag, `X.Y.Z`. Informational; the AutoUpdater does not read it. |
+| `apps` | At most 16; the page shows one card per app, in this order. Only the first 16 are read. |
+| `id` | `[a-z0-9][a-z0-9-]{0,31}`. A later app with the same id is left out. |
+| `name` | Plain text, one line, at most 80 characters: no control characters, no bidirectional overrides. |
+| `icon` | Optional. A file name ending in `.png`, served at `/icons/<icon>`. PNG only (no SVG: it can carry script), at most 256 KiB. Missing, invalid or not a PNG: the card shows a neutral icon. |
+| `downloads` | At most 8 per app; the card shows them in this order. |
+
+Per download:
+
+| Field | Rule |
+|---|---|
+| `platform` | One of `windows`, `linux`, `macos`, `android`, `ios`. Anything else leaves the download out. |
+| `architecture` | One of `x64`, `arm64`, `x86`, `arm`, `any`. Anything else leaves the download out. |
+| `label` | Optional short variant name, plain text, at most 40 characters (e.g. `Kiosk devices`). A later download with the same platform, architecture and label is left out. |
+| `preview` | Optional `true`/`false`: shows a "Preview" chip. |
+| `version`, `file`, `size` | All three or none. None: the download shows "Not available yet". `version`: `[0-9A-Za-z][0-9A-Za-z.+~_-]{0,63}`; `file`: `[A-Za-z0-9][A-Za-z0-9._+~-]{0,127}`, unique in the image; `size`: bytes, > 0. |
 | `guide` | Optional. A file name like `file`, ending in `.md`, served at `/guides/<guide>`. |
 
-An entry that breaks a rule is left out; the rest of the page still shows. A guide that cannot be read (missing, over
-64 KiB, not UTF-8) shows "Install guide unavailable" on its app's card.
+An app or download that breaks a rule is left out; the rest of the page still shows. A guide that cannot be read
+(missing, over 16 KiB, not UTF-8, or one that fails to parse or render) shows "Install guide unavailable" under its
+download.
 
 Guides are rendered as markdown (MudBlazor's markdown component). Raw HTML is not interpreted (it shows as text), images
-are replaced by their alt text, and a link keeps its target only if it is `http`, `https` or relative. Write the guide
-for the person installing: requirements, warnings, then numbered steps. See `example/windows.md`.
+are not shown (only their alt text), HTML entities such as `&amp;` show as their character, and a link keeps its target
+only if it is `http`, `https` or relative. Write the guide for the person installing: requirements, warnings, then
+numbered steps. See `example/windows.md`.
+
+Links: a relative link resolves against the AutoUpdater's page, not against the image. Link only to absolute `http` or
+`https` URLs, or to a file of this release as `apps/files/<file>`. Any other relative link (`files/x.msi`, `other.md`)
+leads nowhere.
 
 ## Publish a release
 
 ```bash
 docker login registry.example.com       # once
 ./publish-apps.sh --release 1.2.0 --image registry.example.com/example/apps \
-    --app windows --title "Example Viewer for Windows" \
-          --file dist/ExampleViewer-2.1.0.msi --version 2.1.0 --guide example/windows.md \
-    --app android --title "Example Viewer for Android" --guide example/android.md
+    --app example-viewer --name "Example Viewer" --icon example/example-viewer.png \
+      --download --platform windows --arch x64 \
+                 --file dist/ExampleViewer-2.1.0.msi --version 2.1.0 --guide example/windows.md \
+      --download --platform linux --arch arm64 --label "Kiosk devices" \
+                 --file dist/example-viewer_2.1.0_arm64.deb --version 2.1.0 --guide example/linux.md \
+      --download --platform android --arch arm64 --preview \
+                 --file dist/ExampleViewer-2.1.0-preview.apk --version 2.1.0-preview --guide example/android.md
 ```
 
-Each `--app` starts one app; `--title`, `--file` with `--version`, and `--guide` after it describe that app. The script
-applies the rules above and refuses what the page would leave out. It needs bash, docker with buildx, `sha256sum`,
-`stat` and `iconv` (all in Git Bash, WSL and common Linux distributions).
+Each `--app` starts one app, described by `--name` and `--icon`; each `--download` after it starts one of its
+downloads, described by `--platform`, `--arch`, `--label`, `--preview`, `--file` with `--version`, and `--guide`. Two
+downloads may share a guide (the same file). The script applies the rules above and refuses what the page would leave
+out, including an icon that is not a PNG. It needs bash, docker with buildx, `sha256sum`, `stat`, `iconv` and `od`
+(all in Git Bash, WSL and common Linux distributions).
 
 Then pin the release in the compose package (`compose/release.sh 1.2.0` in the product's copy). Stations see the new
 version on their Packages page. Nothing downloads until an operator starts it there, or uses "Update all".
 
 To carry an app forward unchanged, pass the same file again: each file is its own layer, and its mtime is derived from
-its SHA-256. The build clamps every other timestamp (`SOURCE_DATE_EPOCH` with `rewrite-timestamp`), so an unchanged
-file or guide keeps its layer even when an app before it changed, and a station does not download it twice. This needs
-buildx with BuildKit 0.13 or later. A changed file gets another
-mtime, so its `ETag` and `Last-Modified` change too: a browser revalidates instead of reusing an older installer, and an
+its SHA-256. A layer stays the same only while nothing before it in the image changed: a rebuilt layer also carries its
+parent directories, stamped with the build time. So when one app changes, the files and guides after it are downloaded
+again; put the app that changes most often last. A changed file gets another mtime, so its `ETag` and `Last-Modified` change too: a browser revalidates instead of reusing an older installer, and an
 `If-Range` resume started on an older build gets the whole new file rather than a mix of the two.
 
 `publish-apps.sh` refuses a release tag that already exists, and also refuses when it cannot tell (a refused login, no
@@ -86,7 +118,8 @@ network): only a clear "not found" from the registry lets it push. `--overwrite`
 
 ## Turn the page on in the AutoUpdater
 
-The Apps page is off by default: no navigation entry, `/apps` and `/apps/files/*` answer 404, and nothing reads the image.
+The Apps page is off by default: no navigation entry, `/apps` and everything under it (`/apps/files/*`, `/apps/icons/*`)
+answer 404, the markdown renderer's script is not sent, and nothing reads the image.
 
 ```json
 {
@@ -110,9 +143,9 @@ Enabled with a missing or invalid setting, the AutoUpdater logs a configuration 
 it still starts, since it is the station's recovery path. As environment variables: `Apps__Enabled=true`,
 `Apps__SourceUrl=...`.
 
-The page reads `manifest.json` and the guides once, when it opens. Browsers download through the AutoUpdater at
-`/apps/files/<name>`, which streams the file from the image (ranges and validators pass through) and only for a name the
-manifest lists.
+The page reads `manifest.json`, the guides and the icons once, when it opens. Browsers download through the AutoUpdater
+at `/apps/files/<name>`, which streams the file from the image (ranges and validators pass through) and only for a name
+the manifest lists. Icons come from `/apps/icons/<name>`, likewise only for a listed icon, and only when it is a PNG.
 
 ## Run the tests
 

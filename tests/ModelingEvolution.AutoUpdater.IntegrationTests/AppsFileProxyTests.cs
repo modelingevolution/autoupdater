@@ -68,15 +68,23 @@ public sealed class FakeAppsContainer : IAsyncDisposable
     private TestWebServer _server = null!;
 
     public ConcurrentQueue<string> Requests { get; } = new();
+    /// <summary>One app, "viewer", with one Windows download per file; <c>Id</c> becomes the download's label.</summary>
     public required (string Id, string Name)[] Files { get; init; }
     public required Func<HttpContext, string, Task> Serve { get; init; }
+    /// <summary>The app's icon as the manifest names it, if any.</summary>
+    public string? IconName { get; init; }
+    /// <summary>What <c>/icons/{name}</c> answers, for any name; 404 when null.</summary>
+    public byte[]? IconBytes { get; init; }
     public Uri BaseAddress => _server.BaseAddress;
     public int FileRequests => Requests.Count(p => p.StartsWith("/files/"));
+    public int IconRequests => Requests.Count(p => p.StartsWith("/icons/"));
 
     public async Task<FakeAppsContainer> StartAsync()
     {
-        var manifest = "{\"schemaVersion\":2,\"apps\":[" + string.Join(",", Files.Select(f =>
-            $"{{\"id\":\"{f.Id}\",\"title\":\"Example Viewer\",\"version\":\"1\",\"file\":\"{f.Name}\",\"size\":1}}")) + "]}";
+        var icon = IconName == null ? "" : $",\"icon\":\"{IconName}\"";
+        var manifest = "{\"schemaVersion\":2,\"apps\":[{\"id\":\"viewer\",\"name\":\"Example Viewer\"" + icon + ",\"downloads\":[" +
+            string.Join(",", Files.Select(f =>
+                $"{{\"platform\":\"windows\",\"architecture\":\"x64\",\"label\":\"{f.Id}\",\"version\":\"1\",\"file\":\"{f.Name}\",\"size\":1}}")) + "]}]}";
         _server = await TestWebServer.StartAsync(_ => { }, app =>
         {
             app.Use(async (context, next) =>
@@ -86,6 +94,7 @@ public sealed class FakeAppsContainer : IAsyncDisposable
             });
             app.MapGet("/manifest.json", () => Results.Text(manifest, "application/json"));
             app.MapMethods("/files/{name}", [HttpMethods.Get, HttpMethods.Head], (HttpContext context, string name) => Serve(context, name));
+            app.MapGet("/icons/{name}", () => IconBytes == null ? Results.NotFound() : Results.Bytes(IconBytes, "image/png"));
         });
         return this;
     }
@@ -109,7 +118,7 @@ public sealed class RawFakeContainer : IAsyncDisposable
     {
         var container = new RawFakeContainer();
         container._listener.Start();
-        var manifest = $$"""{"schemaVersion":2,"apps":[{"id":"windows","title":"Example Viewer","version":"1","file":"{{fileName}}","size":1}]}""";
+        var manifest = $$"""{"schemaVersion":2,"apps":[{"id":"viewer","name":"Example Viewer","downloads":[{"platform":"windows","architecture":"x64","version":"1","file":"{{fileName}}","size":1}]}]}""";
         container._loop = container.ServeAsync(path => path switch
         {
             "/manifest.json" => Ok(manifest),
@@ -629,61 +638,3 @@ public sealed class AppsFileProxyTests(AppsImageFixture image) : IClassFixture<A
     }
 }
 
-/// <summary>
-/// The Apps switch, on the AutoUpdater's own pipeline pieces: <c>AddApps</c>, <c>UseAppsGate</c> and <c>MapAppsEndpoints</c>.
-/// A plain <c>/apps</c> endpoint stands in for the Razor page, which the gate must hide the same way.
-/// </summary>
-public sealed class AppsSwitchTests
-{
-    private static Task<TestWebServer> StartAsync(AppsSettings settings) => TestWebServer.StartAsync(
-        services => services.AddApps(settings),
-        app =>
-        {
-            app.UseAppsGate();
-            app.MapAppsEndpoints();
-            app.MapGet("/apps", () => "the page");
-            app.MapGet("/packages", () => "another page");
-        });
-
-    [Fact]
-    public async Task Disabled_AppsAndEverythingUnderIt_Is404_AndNothingReadsTheImage()
-    {
-        await using var server = await StartAsync(AppsSettings.Disabled);
-        using var client = new HttpClient { BaseAddress = server.BaseAddress };
-
-        (await client.GetAsync("apps")).StatusCode.Should().Be(HttpStatusCode.NotFound);
-        (await client.GetAsync("Apps/")).StatusCode.Should().Be(HttpStatusCode.NotFound);
-        (await client.GetAsync(AppsOptions.DownloadPath("a.msi"))).StatusCode.Should().Be(HttpStatusCode.NotFound);
-        (await client.GetAsync("packages")).StatusCode.Should().Be(HttpStatusCode.OK, "only /apps is gated");
-        server.Services.GetService<AppsCatalogClient>().Should().BeNull();
-        server.Services.GetService<AppsFileProxy>().Should().BeNull();
-    }
-
-    [Fact]
-    public async Task EnabledButMisconfigured_IsOffLikeDisabled()
-    {
-        var settings = AppsSettings.From(new ConfigurationBuilder()
-            .AddInMemoryCollection(new Dictionary<string, string?> { ["Apps:Enabled"] = "true" }).Build());
-        await using var server = await StartAsync(settings);
-        using var client = new HttpClient { BaseAddress = server.BaseAddress };
-
-        settings.Error.Should().Contain("Apps:SourceUrl");
-        (await client.GetAsync("apps")).StatusCode.Should().Be(HttpStatusCode.NotFound);
-        server.Services.GetService<AppsCatalogClient>().Should().BeNull();
-    }
-
-    [Fact]
-    public async Task Enabled_ThePageAndTheFileProxyAreServed()
-    {
-        await using var container = await new FakeAppsContainer
-        {
-            Files = [("viewer", "a.msi")],
-            Serve = (context, _) => context.Response.WriteAsync("x"),
-        }.StartAsync();
-        await using var server = await StartAsync(new AppsSettings(new AppsOptions(container.BaseAddress), null));
-        using var client = new HttpClient { BaseAddress = server.BaseAddress };
-
-        (await client.GetStringAsync("apps")).Should().Be("the page");
-        (await client.GetStringAsync(AppsOptions.DownloadPath("a.msi"))).Should().Be("x");
-    }
-}
