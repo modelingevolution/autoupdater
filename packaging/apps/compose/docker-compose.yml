@@ -1,0 +1,39 @@
+name: rocketwelder-apps
+
+# Deploy package for the RocketWelder apps image (players for Windows, Linux and Android).
+# AutoUpdater pulls the pinned image and runs it; this file never builds.
+# `up -d`:  docker compose -f docker-compose.yml -f docker-compose.x64.yml up -d    # x86_64
+#           docker compose -f docker-compose.yml -f docker-compose.arm64.yml up -d  # ARM64
+
+services:
+  rocketwelder-apps:
+    image: docker.modelingevolution.com/rocketwelder/rocketwelder-apps:0.0.0
+    container_name: rocketwelder-apps
+    restart: unless-stopped
+
+    # Serves static files as an unprivileged user; only the verification state is written, to /tmp.
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+
+    # On the LAN: a browser downloads straight from here. The AutoUpdater's Apps page reads the manifest here too.
+    ports:
+      - "${APPS_PORT:-8095}:8080"
+
+    # start_period: the container hashes every file before it starts serving.
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:8080/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
+
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "1m"
+        max-file: "3"
