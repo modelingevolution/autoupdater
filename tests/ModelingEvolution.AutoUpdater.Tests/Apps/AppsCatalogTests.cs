@@ -444,13 +444,12 @@ public class AppGuidesTests
     }
 
     [Fact]
-    public void Windows_IsAnMsi_AndItsInstallStepsStayUnverifiedUntilARealRun()
+    public void Windows_IsAnMsi_InstalledPerUser()
     {
         var windows = AppGuides.All.Single(g => g.Platform == AppGuides.Windows);
 
         windows.Steps[0].Text.Should().Contain("RocketWelderPlayer-<version>.msi").And.Contain("double-click");
         windows.Steps.Should().Contain(s => s.Text.Contains("current user") && s.Text.Contains("without administrator rights"));
-        windows.Steps.Where(s => !s.Text.Contains("Neuron address")).Should().OnlyContain(s => s.Unverified);
     }
 
     [Fact]

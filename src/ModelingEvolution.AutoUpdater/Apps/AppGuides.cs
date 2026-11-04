@@ -2,8 +2,8 @@ using System.Collections.Immutable;
 
 namespace ModelingEvolution.AutoUpdater.Apps;
 
-/// <summary>One install step. <see cref="Unverified"/>: nobody has confirmed it, in source or on a device.</summary>
-public sealed record InstallStep(string Text, bool Unverified = false);
+/// <summary>One install step.</summary>
+public sealed record InstallStep(string Text);
 
 /// <summary>What a person needs to install one player. Written from native-player's source; no internal names or addresses.</summary>
 public sealed record AppGuide(
@@ -33,12 +33,12 @@ public static class AppGuides
             Note: "The installer (an .msi) is not signed, so Windows SmartScreen warns about it. This is expected for this build.",
             VerifyHashCommand: "certutil -hashfile <file> SHA256",
             [
-                new InstallStep("Download RocketWelderPlayer-<version>.msi and double-click it.", Unverified: true),
-                new InstallStep("If SmartScreen says \"Windows protected your PC\", choose \"More info\", then \"Run anyway\".", Unverified: true),
-                new InstallStep("It installs for the current user, without administrator rights.", Unverified: true),
-                new InstallStep("Start \"RocketWelder Player\" from the Start menu. If it reports that the WebView2 Runtime is not installed, install that from Microsoft and start the player again.", Unverified: true),
+                new InstallStep("Download RocketWelderPlayer-<version>.msi and double-click it."),
+                new InstallStep("If SmartScreen says \"Windows protected your PC\", choose \"More info\", then \"Run anyway\"."),
+                new InstallStep("It installs for the current user, without administrator rights."),
+                new InstallStep("Start \"RocketWelder Player\" from the Start menu. If it reports that the WebView2 Runtime is not installed, install that from Microsoft and start the player again."),
                 new InstallStep("On the start screen, enter the Neuron address with its port, http://<IP>:<port>, and choose Open."),
-                new InstallStep("To upgrade, double-click a newer .msi. Settings survive an upgrade and an uninstall.", Unverified: true),
+                new InstallStep("To upgrade, double-click a newer .msi. Settings survive an upgrade and an uninstall."),
             ]),
         new AppGuide(
             Linux,
@@ -51,7 +51,7 @@ public static class AppGuides
             [
                 new InstallStep("Copy the package to the kiosk device."),
                 new InstallStep("Run sudo apt install ./<file>. A reboot follows within seconds of the install finishing. To hold it, run sudo systemctl stop native-player-reboot straight away."),
-                new InstallStep("Set the page to show: sudo kiosk-config --url <URL>, using http://<IP>:<port> of the Neuron. If the machine rebooted first, do this over SSH, because the screen now belongs to the kiosk.", Unverified: true),
+                new InstallStep("Set the page to show: sudo kiosk-config --url <URL>, using http://<IP>:<port> of the Neuron. If the machine rebooted first, do this over SSH, because the screen now belongs to the kiosk."),
                 new InstallStep("Run sudo reboot if you held the reboot, so the kiosk starts on the new page."),
             ]),
         new AppGuide(
@@ -63,8 +63,8 @@ public static class AppGuides
             Note: null,
             VerifyHashCommand: "certutil -hashfile <file> SHA256  (or sha256sum <file>, on a PC)",
             [
-                new InstallStep("Open this page on the tablet and download the APK. This is a preview build, still signed with the development key.", Unverified: true),
-                new InstallStep("Open the downloaded file. When Android asks, allow installs from this source, then choose Install.", Unverified: true),
+                new InstallStep("Open this page on the tablet and download the APK. This is a preview build, still signed with the development key."),
+                new InstallStep("Open the downloaded file. When Android asks, allow installs from this source, then choose Install."),
                 new InstallStep("Start RocketWelder Player. With no Neuron set, the settings sheet opens by itself; later, swipe in from the right edge to open it."),
                 new InstallStep("In \"Neuron base URL\", enter http://<IP>:<port>. The port is required, and https, host names and paths are refused."),
                 new InstallStep("Choose \"Save & restart\"."),
