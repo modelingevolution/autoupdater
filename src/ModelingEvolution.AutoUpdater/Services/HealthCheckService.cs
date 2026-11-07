@@ -84,7 +84,8 @@ namespace ModelingEvolution.AutoUpdater.Services
         private async Task<SshCommandResult> GetServicesFromComposeAsync(string[] composeFiles, string workingDirectory)
         {
             var composeFilesArgs = string.Join(" ", composeFiles.Select(f => $"-f {f}"));
-            var command = $"docker-compose {composeFilesArgs} config --services";
+            // Compose v2 plugin, as every other compose call here: stations have no docker-compose v1 binary.
+            var command = $"sudo docker compose {composeFilesArgs} config --services";
             
             return await _sshService.ExecuteCommandAsync(command, workingDirectory);
         }
@@ -107,7 +108,7 @@ namespace ModelingEvolution.AutoUpdater.Services
                 _logger.LogDebug("Checking health of service: {ServiceName}", serviceName);
 
                 var composeFilesArgs = string.Join(" ", composeFiles.Select(f => $"-f {f}"));
-                var command = $"docker-compose {composeFilesArgs} ps --format json {serviceName}";
+                var command = $"sudo docker compose {composeFilesArgs} ps --format json {serviceName}";
                 
                 var result = await _sshService.ExecuteCommandAsync(command, workingDirectory);
                 if (!result.IsSuccess)
