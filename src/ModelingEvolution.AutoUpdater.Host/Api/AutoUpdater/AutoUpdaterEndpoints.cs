@@ -19,7 +19,8 @@ public static class AutoUpdaterEndpoints
             .WithName("GetInstalledPackages")
             .WithSummary("Get the installed state of all configured packages")
             .WithDescription("Returns name, repository URL, current version and compose status per package. No update check, no git access.")
-            .Produces<InstalledPackagesResponse>();
+            .Produces<InstalledPackagesResponse>()
+            .ProducesProblem(503);
 
         group.MapGet("/upgrades/{packageName}", GetUpgradeStatusAsync)
             .WithName("GetUpgradeStatus")
@@ -84,6 +85,11 @@ public static class AutoUpdaterEndpoints
         try
         {
             return Results.Ok(await service.GetInstalledPackagesAsync());
+        }
+        catch (InstalledStateUnavailableException ex)
+        {
+            logger.LogWarning(ex, "Installed state unavailable: {Reason}", ex.Message);
+            return Results.Problem(title: "Installed state unavailable", detail: ex.Message, statusCode: 503);
         }
         catch (Exception ex)
         {

@@ -1,4 +1,3 @@
-using System.Collections.Immutable;
 using System.Net;
 using System.Text.Json;
 using FluentAssertions;
@@ -13,15 +12,17 @@ using Microsoft.Extensions.Logging.Abstractions;
 using ModelingEvolution.AutoUpdater.Common;
 using ModelingEvolution.AutoUpdater.Common.Events;
 using ModelingEvolution.AutoUpdater.Host.Api.AutoUpdater;
-using ModelingEvolution.AutoUpdater.Models;
 using ModelingEvolution.AutoUpdater.Services;
 using NSubstitute;
+using NSubstitute.ExceptionExtensions;
 
 namespace ModelingEvolution.AutoUpdater.Tests.Api;
 
 /// <summary>
 /// GET /api/packages/installed returns installed state only (owner 2026-11-21: "just checking current state - this should
 /// be extreamly quick"). It must never reach git or the update check; GET /api/packages keeps doing both.
+/// A broken probe (compose ls or a version read failing) answers 503, never "not installed"; a missing state file is a
+/// legitimate null version. The real DeploymentStateProvider and DockerComposeService run over a fake SSH service.
 /// </summary>
 public class InstalledPackagesEndpointTests : IAsyncDisposable
 {
@@ -29,21 +30,28 @@ public class InstalledPackagesEndpointTests : IAsyncDisposable
     private const string RocketWelderUrl = "https://github.com/example/rocket-welder-compose.git";
     private const string PlumberPath = "/data/plumber";
     private const string PlumberUrl = "https://github.com/example/plumber-compose.git";
+    private const string RocketWelderState = "/var/docker/configuration/rocket-welder/./deployment.state.json";
+    private const string PlumberState = "/var/docker/configuration/plumber/./deployment.state.json";
+    private const string ComposeLs = "sudo docker compose ls --format json";
 
-    private readonly IDeploymentStateProvider _deploymentState = Substitute.For<IDeploymentStateProvider>();
-    private readonly IDockerComposeService _compose = Substitute.For<IDockerComposeService>();
+    private readonly ISshService _ssh = Substitute.For<ISshService>();
     private readonly IEventHub _eventHub = Substitute.For<IEventHub>();
     private WebApplication? _app;
 
     public InstalledPackagesEndpointTests()
     {
-        // rocket-welder: installed at 1.2.3 and running; plumber: no deployment state, not in `compose ls`.
-        _deploymentState.GetCurrentVersionAsync(Arg.Is<string>(p => p.Contains("/rocket-welder/"))).Returns("1.2.3");
-        _deploymentState.GetCurrentVersionAsync(Arg.Is<string>(p => p.Contains("/plumber/"))).Returns((string?)null);
-        _compose.GetDockerComposeStatusAsync().Returns(new Dictionary<PackageName, ComposeProjectStatus>
-        {
-            [new PackageName("rocket-welder")] = new("running(2)", ImmutableArray<string>.Empty, 2, 2)
-        });
+        // rocket-welder: installed at 1.2.3 and running; plumber: no deployment state file, not in `compose ls`.
+        var state = JsonSerializer.Serialize(new DeploymentState(PackageVersion.Parse("1.2.3"), DateTime.UtcNow));
+        _ssh.ExecuteCommandAsync($"test -f {RocketWelderState}").Returns(new SshCommandResult($"test -f {RocketWelderState}", ""));
+        _ssh.FileExistsAsync(RocketWelderState).Returns(true);
+        _ssh.ReadFileAsync(RocketWelderState).Returns(state);
+        _ssh.ExecuteCommandAsync($"test -f {PlumberState}").Returns(SshCommandResult.Failed($"test -f {PlumberState}", 1, "", ""));
+        _ssh.FileExistsAsync(PlumberState).Returns(false);
+
+        _ssh.ExecuteCommandAsync("sudo docker compose version")
+            .Returns(new SshCommandResult("sudo docker compose version", "Docker Compose version v2.20.2"));
+        _ssh.ExecuteCommandAsync(ComposeLs)
+            .Returns(new SshCommandResult(ComposeLs, "[{\"Name\":\"rocket-welder\",\"Status\":\"running(2)\",\"ConfigFiles\":\"docker-compose.yml\"}]"));
     }
 
     [Fact]
@@ -55,12 +63,15 @@ public class InstalledPackagesEndpointTests : IAsyncDisposable
         await service.GetInstalledPackagesAsync();
 
         git.Calls.Should().BeEmpty("the installed-state read must not touch git (fetch, tags, clone)");
-        // The update check (UpdateHost.CheckIsUpdateAvailable) reads GetDeploymentStateAsync and publishes VersionCheckCompletedEvent.
-        await _deploymentState.DidNotReceiveWithAnyArgs().GetDeploymentStateAsync(default!);
+        // The update check (UpdateHost.CheckIsUpdateAvailable) reads the lenient GetDeploymentStateAsync, whose probe is
+        // FileExistsAsync, and publishes VersionCheckCompletedEvent.
+        await _ssh.DidNotReceiveWithAnyArgs().FileExistsAsync(default!);
         await _eventHub.DidNotReceiveWithAnyArgs().PublishAsync<VersionCheckCompletedEvent>(default!);
-        // Current version: exactly one read per package.
-        await _deploymentState.Received(1).GetCurrentVersionAsync("/var/docker/configuration/rocket-welder/./");
-        await _deploymentState.Received(1).GetCurrentVersionAsync("/var/docker/configuration/plumber/./");
+        // Current version: exactly one read per installed package.
+        await _ssh.Received(1).ExecuteCommandAsync($"test -f {RocketWelderState}");
+        await _ssh.Received(1).ReadFileAsync(RocketWelderState);
+        await _ssh.Received(1).ExecuteCommandAsync($"test -f {PlumberState}");
+        await _ssh.DidNotReceive().ReadFileAsync(PlumberState);
     }
 
     [Fact]
@@ -82,7 +93,7 @@ public class InstalledPackagesEndpointTests : IAsyncDisposable
     }
 
     [Fact]
-    public async Task GetInstalled_OverHttp_ReturnsTheInstalledStateJson()
+    public async Task GetInstalled_OverHttp_ReturnsTheInstalledStateJson_AndAMissingStateFileIsANullVersion()
     {
         var git = new FailingGitService();
         var client = await StartAsync(git);
@@ -98,6 +109,7 @@ public class InstalledPackagesEndpointTests : IAsyncDisposable
         rw.GetProperty("repositoryUrl").GetString().Should().Be(RocketWelderUrl);
         rw.GetProperty("currentVersion").GetString().Should().Be("1.2.3");
         rw.GetProperty("status").GetString().Should().Be("running");
+        // plumber's state file does not exist (`test -f` exit 1): a legitimate "not installed", still 200.
         var plumber = packages.Single(p => p.GetProperty("name").GetString() == "plumber");
         plumber.GetProperty("currentVersion").ValueKind.Should().Be(JsonValueKind.Null);
         plumber.GetProperty("status").GetString().Should().Be("not-deployed");
@@ -105,12 +117,56 @@ public class InstalledPackagesEndpointTests : IAsyncDisposable
     }
 
     [Fact]
+    public async Task GetInstalled_WhenComposeLsFails_Returns503_WhileApiPackagesKeepsItsOldAnswer()
+    {
+        _ssh.ExecuteCommandAsync(ComposeLs).Returns(SshCommandResult.Failed(ComposeLs, -1, "", "Connection lost"));
+        var client = await StartAsync(WorkingGit());
+
+        var installed = await client.GetAsync("/api/packages/installed");
+
+        installed.StatusCode.Should().Be(HttpStatusCode.ServiceUnavailable);
+        (await ProblemDetailAsync(installed)).Should().Contain("docker compose ls failed").And.Contain("Connection lost");
+
+        // /api/packages is unchanged: a failed compose ls still reads as "not-deployed" with 200.
+        var packages = await client.GetAsync("/api/packages");
+        packages.StatusCode.Should().Be(HttpStatusCode.OK);
+        using var json = JsonDocument.Parse(await packages.Content.ReadAsStringAsync());
+        json.RootElement.GetProperty("packages").EnumerateArray()
+            .Select(p => p.GetProperty("status").GetString()).Should().AllBe("not-deployed");
+    }
+
+    [Fact]
+    public async Task GetInstalled_WhenTheStateFileProbeFailsOverSsh_Returns503()
+    {
+        // SshService turns a lost connection or a timeout into exit -1; only exit 1 means "file does not exist".
+        _ssh.ExecuteCommandAsync($"test -f {RocketWelderState}")
+            .Returns(SshCommandResult.Failed($"test -f {RocketWelderState}", -1, "", "Command timed out after 600 seconds"));
+        var client = await StartAsync(new FailingGitService());
+
+        var http = await client.GetAsync("/api/packages/installed");
+
+        http.StatusCode.Should().Be(HttpStatusCode.ServiceUnavailable);
+        (await ProblemDetailAsync(http)).Should().Contain("rocket-welder").And.Contain("timed out");
+    }
+
+    [Fact]
+    public async Task GetInstalled_WhenTheStateFileReadFails_Returns503()
+    {
+        _ssh.ReadFileAsync(RocketWelderState)
+            .Throws(new InvalidOperationException($"Failed to read file {RocketWelderState}: SCP channel closed"));
+        var client = await StartAsync(new FailingGitService());
+
+        var http = await client.GetAsync("/api/packages/installed");
+
+        http.StatusCode.Should().Be(HttpStatusCode.ServiceUnavailable);
+        (await ProblemDetailAsync(http)).Should().Contain("rocket-welder").And.Contain("SCP channel closed");
+    }
+
+    [Fact]
     public async Task GetPackages_OverHttp_StillRunsTheUpdateCheckPerPackage()
     {
         // /api/packages is unchanged: per package it reads available versions from git and runs the update check.
-        var git = Substitute.For<IGitService>();
-        git.IsGitRepository(Arg.Any<string>()).Returns(true);
-        git.GetAvailableVersionsAsync(Arg.Any<string>()).Returns(new[] { PackageVersion.Parse("1.3.0") });
+        var git = WorkingGit();
         var client = await StartAsync(git);
 
         var http = await client.GetAsync("/api/packages");
@@ -125,21 +181,31 @@ public class InstalledPackagesEndpointTests : IAsyncDisposable
         rw.GetProperty("status").GetString().Should().Be("running");
         await git.Received(1).FetchAsync(RocketWelderPath);
         await git.Received(1).FetchAsync(PlumberPath);
-        await _deploymentState.Received().GetDeploymentStateAsync("/var/docker/configuration/rocket-welder/./");
+        await _ssh.Received().FileExistsAsync(RocketWelderState);
         await _eventHub.Received(2).PublishAsync(Arg.Any<VersionCheckCompletedEvent>());
+    }
+
+    private static IGitService WorkingGit()
+    {
+        var git = Substitute.For<IGitService>();
+        git.IsGitRepository(Arg.Any<string>()).Returns(true);
+        git.GetAvailableVersionsAsync(Arg.Any<string>()).Returns(new[] { PackageVersion.Parse("1.3.0") });
+        return git;
     }
 
     private AutoUpdaterService CreateService(IGitService git)
     {
         var configuration = CreateConfiguration();
+        var deploymentState = new DeploymentStateProvider(_ssh, NullLogger<DeploymentStateProvider>.Instance);
+        var compose = new DockerComposeService(_ssh, NullLogger<DockerComposeService>.Instance);
         var updateHost = new UpdateHost(configuration, NullLogger<UpdateHost>.Instance, git,
-            Substitute.For<IScriptMigrationService>(), Substitute.For<ISshConnectionManager>(), _compose, _deploymentState,
+            Substitute.For<IScriptMigrationService>(), Substitute.For<ISshConnectionManager>(), compose, deploymentState,
             Substitute.For<IBackupService>(), Substitute.For<IHealthCheckService>(), Substitute.For<IProgressService>(), _eventHub);
         var packageManager = new PackageManager(
             new DockerComposeConfigurationModel(configuration, NullLogger<DockerComposeConfigurationModel>.Instance),
-            updateHost, git, _deploymentState, Substitute.For<IBackupService>(), _compose,
+            updateHost, git, deploymentState, Substitute.For<IBackupService>(), compose,
             Substitute.For<ISshConnectionManager>(), NullLogger<PackageManager>.Instance);
-        return new AutoUpdaterService(packageManager, Substitute.For<ISshConnectionManager>(), _compose,
+        return new AutoUpdaterService(packageManager, Substitute.For<ISshConnectionManager>(), compose,
             NullLogger<AutoUpdaterService>.Instance);
     }
 
@@ -155,6 +221,12 @@ public class InstalledPackagesEndpointTests : IAsyncDisposable
         var address = _app.Services.GetRequiredService<IServer>().Features.Get<IServerAddressesFeature>()!
             .Addresses.Single();
         return new HttpClient { BaseAddress = new Uri(address) };
+    }
+
+    private static async Task<string> ProblemDetailAsync(HttpResponseMessage response)
+    {
+        using var json = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        return json.RootElement.GetProperty("detail").GetString()!;
     }
 
     private static IConfiguration CreateConfiguration() => new ConfigurationBuilder()

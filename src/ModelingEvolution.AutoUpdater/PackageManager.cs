@@ -106,7 +106,9 @@ namespace ModelingEvolution.AutoUpdater
         /// <summary>
         /// Installed state only: name, repository URL and the version recorded in the deployment state file on the host.
         /// No git, no available versions, no update check (owner 2026-11-21: "just checking current state - this should be
-        /// extreamly quick"). Cost per package: the two SSH operations of <see cref="GetCurrentVersionAsync"/>.
+        /// extreamly quick"). Cost per package: two SSH operations (<c>test -f</c> + SCP read).
+        /// A missing state file is a null version; any other read failure throws <see cref="InstalledStateUnavailableException"/>
+        /// (a broken probe must not read as "not installed").
         /// </summary>
         public async Task<IReadOnlyList<InstalledPackageInfo>> GetInstalledPackagesAsync()
         {
@@ -114,11 +116,17 @@ namespace ModelingEvolution.AutoUpdater
 
             foreach (var config in _repository.GetPackages())
             {
-                var currentVersion = await GetCurrentVersionAsync(config);
-                packages.Add(new InstalledPackageInfo(
-                    config.FriendlyName,
-                    config.RepositoryUrl,
-                    currentVersion != null ? (PackageVersion?)PackageVersion.Parse(currentVersion) : null));
+                DeploymentState? state;
+                try
+                {
+                    state = await _deploymentStateProvider.ReadDeploymentStateOrThrowAsync(config.HostComposeFolderPath);
+                }
+                catch (InstalledStateUnavailableException ex)
+                {
+                    throw new InstalledStateUnavailableException($"version of {config.FriendlyName}: {ex.Message}", ex);
+                }
+
+                packages.Add(new InstalledPackageInfo(config.FriendlyName, config.RepositoryUrl, state?.Version));
             }
 
             return packages;

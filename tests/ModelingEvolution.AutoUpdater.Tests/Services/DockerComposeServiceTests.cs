@@ -785,5 +785,43 @@ namespace ModelingEvolution.AutoUpdater.Tests.Services
             await _sshService.Received(1).ExecuteCommandAsync(expectedCommand);
             result.Should().ContainKey(new PackageName("test-project"));
         }
+
+        [Fact]
+        public async Task GetDockerComposeStatusOrThrowAsync_FailureIsNotCached_SuccessWithin5sIsSeen()
+        {
+            // Only a successful `compose ls` is cached: a failure followed by a success inside the 5 s cache window must
+            // reach the success, from the strict and from the lenient entry point.
+            SetupDockerComposeV2Detection();
+            const string command = "sudo docker compose ls --format json";
+            const string jsonOutput = "[{\"Name\":\"test-project\",\"Status\":\"running(1)\",\"ConfigFiles\":\"docker-compose.yml\"}]";
+            _sshService.ExecuteCommandAsync(command).Returns(
+                SshCommandResult.Failed(command, -1, "", "Connection lost"),
+                new SshCommandResult(command, jsonOutput));
+
+            var failed = async () => await _service.GetDockerComposeStatusOrThrowAsync();
+            await failed.Should().ThrowAsync<InstalledStateUnavailableException>().WithMessage("*Connection lost*");
+
+            var result = await _service.GetDockerComposeStatusOrThrowAsync();
+
+            result.Should().ContainKey(new PackageName("test-project"));
+            await _sshService.Received(2).ExecuteCommandAsync(command);
+        }
+
+        [Fact]
+        public async Task GetDockerComposeStatusAsync_FailureIsNotCached_SuccessWithin5sIsSeen()
+        {
+            SetupDockerComposeV2Detection();
+            const string command = "sudo docker compose ls --format json";
+            const string jsonOutput = "[{\"Name\":\"test-project\",\"Status\":\"running(1)\",\"ConfigFiles\":\"docker-compose.yml\"}]";
+            _sshService.ExecuteCommandAsync(command).Returns(
+                SshCommandResult.Failed(command, -1, "", "Connection lost"),
+                new SshCommandResult(command, jsonOutput));
+
+            (await _service.GetDockerComposeStatusAsync()).Should().BeEmpty("the lenient read keeps answering an empty map on failure");
+            var result = await _service.GetDockerComposeStatusAsync();
+
+            result.Should().ContainKey(new PackageName("test-project"));
+            await _sshService.Received(2).ExecuteCommandAsync(command);
+        }
     }
 }

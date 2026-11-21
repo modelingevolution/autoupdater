@@ -97,5 +97,11 @@ namespace ModelingEvolution.AutoUpdater.Services
         /// </summary>
         /// <returns>Dictionary mapping project names to their status</returns>
         Task<Dictionary<PackageName, ComposeProjectStatus>> GetDockerComposeStatusAsync();
+
+        /// <summary>
+        /// Same read as <see cref="GetDockerComposeStatusAsync"/>, but a failed <c>docker compose ls</c> throws
+        /// <see cref="InstalledStateUnavailableException"/> instead of returning an empty map.
+        /// </summary>
+        Task<Dictionary<PackageName, ComposeProjectStatus>> GetDockerComposeStatusOrThrowAsync();
     }
 }

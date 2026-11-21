@@ -605,6 +605,19 @@ namespace ModelingEvolution.AutoUpdater.Services
         }
 
         public async Task<Dictionary<PackageName, ComposeProjectStatus>> GetDockerComposeStatusAsync()
+            => (await ReadComposeStatusAsync()).Map ?? new Dictionary<PackageName, ComposeProjectStatus>();
+
+        public async Task<Dictionary<PackageName, ComposeProjectStatus>> GetDockerComposeStatusOrThrowAsync()
+        {
+            var read = await ReadComposeStatusAsync();
+            return read.Map ?? throw new InstalledStateUnavailableException($"docker compose ls failed: {read.Failure}");
+        }
+
+        /// <summary>
+        /// One read of <c>docker compose ls</c>, shared by the lenient and the strict entry point. Only a successful read is
+        /// cached; a failure returns <see cref="ComposeStatusRead.Failure"/> and leaves the cache as it was.
+        /// </summary>
+        private async Task<ComposeStatusRead> ReadComposeStatusAsync()
         {
             try
             {
@@ -613,7 +626,7 @@ namespace ModelingEvolution.AutoUpdater.Services
                 {
                     _logger.LogDebug("Returning cached Docker Compose status (age: {Age}ms)", 
                         (DateTime.Now - _lastCacheTime).TotalMilliseconds);
-                    return _cachedStatus;
+                    return new ComposeStatusRead(_cachedStatus, null);
                 }
 
                 _logger.LogDebug("Fetching fresh Docker Compose status");
@@ -625,7 +638,7 @@ namespace ModelingEvolution.AutoUpdater.Services
                 if (!result.IsSuccess || string.IsNullOrWhiteSpace(result.Output))
                 {
                     _logger.LogWarning("No output from docker-compose ls command");
-                    return new Dictionary<PackageName, ComposeProjectStatus>();
+                    return new ComposeStatusRead(null, result.IsSuccess ? "no output" : $"exit {result.ExitCode}: {result.Error}");
                 }
 
                 // Define ComposeProject record locally since it might not be available here
@@ -634,7 +647,7 @@ namespace ModelingEvolution.AutoUpdater.Services
                 if (composeProjects == null)
                 {
                     _logger.LogWarning("Failed to deserialize docker-compose ls output");
-                    return new Dictionary<PackageName, ComposeProjectStatus>();
+                    return new ComposeStatusRead(null, "output is not a project list");
                 }
 
                 var statusMap = composeProjects.ToDictionary(
@@ -701,14 +714,16 @@ namespace ModelingEvolution.AutoUpdater.Services
                 _lastCacheTime = DateTime.Now;
 
                 _logger.LogDebug("Retrieved and cached status for {Count} compose projects", statusMap.Count);
-                return statusMap;
+                return new ComposeStatusRead(statusMap, null);
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Failed to get Docker Compose status via SSH");
-                return new Dictionary<PackageName, ComposeProjectStatus>();
+                return new ComposeStatusRead(null, ex.Message);
             }
         }
+
+        private readonly record struct ComposeStatusRead(Dictionary<PackageName, ComposeProjectStatus>? Map, string? Failure);
 
         /// <summary>
         /// Parses the service count from docker compose ls status string.
