@@ -49,6 +49,25 @@ public class AutoUpdaterService
         return new PackagesResponse { Packages = packages };
     }
 
+    /// <summary>
+    /// Installed state only: per package name, repository URL, current version and compose status.
+    /// Never touches git or the update check; see <see cref="PackageManager.GetInstalledPackagesAsync"/>.
+    /// </summary>
+    public async Task<InstalledPackagesResponse> GetInstalledPackagesAsync()
+    {
+        var composeStatusMap = await _dockerComposeService.GetDockerComposeStatusAsync();
+        var installed = await _packageManager.GetInstalledPackagesAsync();
+
+        var packages = installed.Select(p => new InstalledPackage
+        {
+            Name = p.Name,
+            RepositoryUrl = p.RepositoryUrl,
+            CurrentVersion = p.CurrentVersion,
+            Status = GetPackageStatus(p.Name, composeStatusMap)
+        }).ToList();
+
+        return new InstalledPackagesResponse { Packages = packages };
+    }
 
     private string GetPackageStatus(PackageName packageName, Dictionary<PackageName, ComposeProjectStatus> composeStatusMap)
     {
@@ -204,4 +223,4 @@ public class AutoUpdaterService
 public class PackageNotFoundException : Exception
 {
     public PackageNotFoundException(string message) : base(message) { }
-}
+}

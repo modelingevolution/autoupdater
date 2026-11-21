@@ -103,6 +103,27 @@ namespace ModelingEvolution.AutoUpdater
             return packages;
         }
 
+        /// <summary>
+        /// Installed state only: name, repository URL and the version recorded in the deployment state file on the host.
+        /// No git, no available versions, no update check (owner 2026-11-21: "just checking current state - this should be
+        /// extreamly quick"). Cost per package: the two SSH operations of <see cref="GetCurrentVersionAsync"/>.
+        /// </summary>
+        public async Task<IReadOnlyList<InstalledPackageInfo>> GetInstalledPackagesAsync()
+        {
+            var packages = new List<InstalledPackageInfo>();
+
+            foreach (var config in _repository.GetPackages())
+            {
+                var currentVersion = await GetCurrentVersionAsync(config);
+                packages.Add(new InstalledPackageInfo(
+                    config.FriendlyName,
+                    config.RepositoryUrl,
+                    currentVersion != null ? (PackageVersion?)PackageVersion.Parse(currentVersion) : null));
+            }
+
+            return packages;
+        }
+
         public async Task<PackageInfo?> GetPackageAsync(PackageName packageName)
         {
             var config = _repository.GetPackage(packageName);
@@ -404,6 +425,8 @@ namespace ModelingEvolution.AutoUpdater
         public bool UpgradeAvailable { get; init; }
         public DateTime LastChecked { get; init; }
     }
+
+    public record InstalledPackageInfo(PackageName Name, string RepositoryUrl, PackageVersion? CurrentVersion);
 
     public class PackageNotFoundException : Exception
     {
