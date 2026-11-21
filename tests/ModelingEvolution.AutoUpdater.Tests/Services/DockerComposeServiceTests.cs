@@ -808,6 +808,26 @@ namespace ModelingEvolution.AutoUpdater.Tests.Services
         }
 
         [Fact]
+        public async Task GetDockerComposeStatusOrThrowAsync_MalformedOutputIsNotCached_SuccessWithin5sIsSeen()
+        {
+            // Malformed `compose ls` output throws inside the read and lands in its exception branch: not cached either.
+            SetupDockerComposeV2Detection();
+            const string command = "sudo docker compose ls --format json";
+            const string jsonOutput = "[{\"Name\":\"test-project\",\"Status\":\"running(1)\",\"ConfigFiles\":\"docker-compose.yml\"}]";
+            _sshService.ExecuteCommandAsync(command).Returns(
+                new SshCommandResult(command, "Error response from daemon: not json"),
+                new SshCommandResult(command, jsonOutput));
+
+            var failed = async () => await _service.GetDockerComposeStatusOrThrowAsync();
+            await failed.Should().ThrowAsync<InstalledStateUnavailableException>();
+
+            var result = await _service.GetDockerComposeStatusOrThrowAsync();
+
+            result.Should().ContainKey(new PackageName("test-project"));
+            await _sshService.Received(2).ExecuteCommandAsync(command);
+        }
+
+        [Fact]
         public async Task GetDockerComposeStatusAsync_FailureIsNotCached_SuccessWithin5sIsSeen()
         {
             SetupDockerComposeV2Detection();

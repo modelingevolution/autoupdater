@@ -42,7 +42,8 @@ namespace ModelingEvolution.AutoUpdater.Tests.Services
         {
             // Arrange
             var deploymentPath = "/test/path";
-            _sshService.FileExistsAsync(Arg.Any<string>()).Returns(false);
+            _sshService.ExecuteCommandAsync("test -f /test/path/deployment.state.json")
+                .Returns(SshCommandResult.Failed("test -f /test/path/deployment.state.json", 1, "", ""));
 
             // Act
             var result = await _deploymentStateProvider.GetCurrentVersionAsync(deploymentPath);
@@ -59,7 +60,8 @@ namespace ModelingEvolution.AutoUpdater.Tests.Services
             var expectedVersion = "1.2.3";
             var stateJson = $@"{{""Version"":""{expectedVersion}"",""Updated"":""2023-01-01T00:00:00Z""}}";
             
-            _sshService.FileExistsAsync(Arg.Any<string>()).Returns(true);
+            _sshService.ExecuteCommandAsync("test -f /test/path/deployment.state.json")
+                .Returns(new SshCommandResult("test -f /test/path/deployment.state.json", ""));
             _sshService.ReadFileAsync(Arg.Any<string>()).Returns(stateJson);
 
             // Act

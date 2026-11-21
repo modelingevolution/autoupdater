@@ -43,10 +43,8 @@ public class InstalledPackagesEndpointTests : IAsyncDisposable
         // rocket-welder: installed at 1.2.3 and running; plumber: no deployment state file, not in `compose ls`.
         var state = JsonSerializer.Serialize(new DeploymentState(PackageVersion.Parse("1.2.3"), DateTime.UtcNow));
         _ssh.ExecuteCommandAsync($"test -f {RocketWelderState}").Returns(new SshCommandResult($"test -f {RocketWelderState}", ""));
-        _ssh.FileExistsAsync(RocketWelderState).Returns(true);
         _ssh.ReadFileAsync(RocketWelderState).Returns(state);
         _ssh.ExecuteCommandAsync($"test -f {PlumberState}").Returns(SshCommandResult.Failed($"test -f {PlumberState}", 1, "", ""));
-        _ssh.FileExistsAsync(PlumberState).Returns(false);
 
         _ssh.ExecuteCommandAsync("sudo docker compose version")
             .Returns(new SshCommandResult("sudo docker compose version", "Docker Compose version v2.20.2"));
@@ -63,11 +61,9 @@ public class InstalledPackagesEndpointTests : IAsyncDisposable
         await service.GetInstalledPackagesAsync();
 
         git.Calls.Should().BeEmpty("the installed-state read must not touch git (fetch, tags, clone)");
-        // The update check (UpdateHost.CheckIsUpdateAvailable) reads the lenient GetDeploymentStateAsync, whose probe is
-        // FileExistsAsync, and publishes VersionCheckCompletedEvent.
-        await _ssh.DidNotReceiveWithAnyArgs().FileExistsAsync(default!);
+        // The update check (UpdateHost.CheckIsUpdateAvailable) publishes VersionCheckCompletedEvent and reads the state file
+        // a second time; exactly one read per package proves it did not run.
         await _eventHub.DidNotReceiveWithAnyArgs().PublishAsync<VersionCheckCompletedEvent>(default!);
-        // Current version: exactly one read per installed package.
         await _ssh.Received(1).ExecuteCommandAsync($"test -f {RocketWelderState}");
         await _ssh.Received(1).ReadFileAsync(RocketWelderState);
         await _ssh.Received(1).ExecuteCommandAsync($"test -f {PlumberState}");
@@ -163,6 +159,18 @@ public class InstalledPackagesEndpointTests : IAsyncDisposable
     }
 
     [Fact]
+    public async Task GetInstalled_WhenTheStateFileIsEmpty_Returns503()
+    {
+        _ssh.ReadFileAsync(RocketWelderState).Returns("  ");
+        var client = await StartAsync(new FailingGitService());
+
+        var http = await client.GetAsync("/api/packages/installed");
+
+        http.StatusCode.Should().Be(HttpStatusCode.ServiceUnavailable);
+        (await ProblemDetailAsync(http)).Should().Contain("rocket-welder").And.Contain("is empty");
+    }
+
+    [Fact]
     public async Task GetPackages_OverHttp_StillRunsTheUpdateCheckPerPackage()
     {
         // /api/packages is unchanged: per package it reads available versions from git and runs the update check.
@@ -181,7 +189,8 @@ public class InstalledPackagesEndpointTests : IAsyncDisposable
         rw.GetProperty("status").GetString().Should().Be("running");
         await git.Received(1).FetchAsync(RocketWelderPath);
         await git.Received(1).FetchAsync(PlumberPath);
-        await _ssh.Received().FileExistsAsync(RocketWelderState);
+        // Current version + the update check's own state read: two reads per package, as before.
+        await _ssh.Received(2).ReadFileAsync(RocketWelderState);
         await _eventHub.Received(2).PublishAsync(Arg.Any<VersionCheckCompletedEvent>());
     }
 

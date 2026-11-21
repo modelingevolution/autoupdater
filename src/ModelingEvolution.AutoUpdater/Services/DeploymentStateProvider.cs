@@ -21,44 +21,28 @@ namespace ModelingEvolution.AutoUpdater.Services
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         }
 
+        /// <summary>
+        /// Lenient read used by /api/packages, the update check and backups: any failure is logged and reads as null.
+        /// One body with <see cref="ReadDeploymentStateOrThrowAsync"/>, so both report the same version for the same host.
+        /// </summary>
         public async Task<DeploymentState?> GetDeploymentStateAsync(string deploymentPath)
         {
             try
             {
                 _logger.LogDebug("Getting deployment state from {DeploymentPath}", deploymentPath);
 
-                if (string.IsNullOrWhiteSpace(deploymentPath))
-                {
-                    throw new ArgumentException("Deployment path cannot be null or whitespace", nameof(deploymentPath));
-                }
+                var state = await ReadDeploymentStateOrThrowAsync(deploymentPath);
 
-                var stateFilePath = Path.Combine(deploymentPath, StateFileName);
-                
-                if (!await _sshService.FileExistsAsync(stateFilePath))
+                if (state == null)
                 {
-                    _logger.LogDebug("No deployment state file found at {StateFilePath}", stateFilePath);
+                    _logger.LogDebug("No deployment state file found in {DeploymentPath}", deploymentPath);
                     return null;
                 }
 
-                var stateContent = await _sshService.ReadFileAsync(stateFilePath);
-                
-                if (string.IsNullOrWhiteSpace(stateContent))
-                {
-                    _logger.LogWarning("Deployment state file is empty at {StateFilePath}", stateFilePath);
-                    return null;
-                }
+                _logger.LogDebug("Retrieved deployment state: Version={Version}, Updated={Updated}",
+                    state.Version, state.Updated);
 
-                var state = JsonSerializer.Deserialize<DeploymentState>(stateContent);
-                
-                _logger.LogDebug("Retrieved deployment state: Version={Version}, Updated={Updated}", 
-                    state?.Version, state?.Updated);
-                
                 return state;
-            }
-            catch (JsonException ex)
-            {
-                _logger.LogError(ex, "Failed to deserialize deployment state from {DeploymentPath}", deploymentPath);
-                return null;
             }
             catch (Exception ex)
             {
