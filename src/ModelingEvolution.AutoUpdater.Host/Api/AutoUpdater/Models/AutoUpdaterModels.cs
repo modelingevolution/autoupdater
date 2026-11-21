@@ -16,6 +16,19 @@ public record PackageStatus
     public string Status { get; init; } = string.Empty;
 }
 
+public record InstalledPackagesResponse
+{
+    public List<InstalledPackage> Packages { get; init; } = new();
+}
+
+public record InstalledPackage
+{
+    public PackageName Name { get; init; } = PackageName.Empty;
+    public string RepositoryUrl { get; init; } = string.Empty;
+    public PackageVersion? CurrentVersion { get; init; }
+    public string Status { get; init; } = string.Empty;
+}
+
 public record UpgradeStatusResponse
 {
     public PackageName PackageName { get; init; } = PackageName.Empty;

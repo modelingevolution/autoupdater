@@ -15,6 +15,13 @@ public static class AutoUpdaterEndpoints
             .WithDescription("Returns a list of all packages configured for auto-updating")
             .Produces<PackagesResponse>();
 
+        group.MapGet("/packages/installed", GetInstalledPackagesAsync)
+            .WithName("GetInstalledPackages")
+            .WithSummary("Get the installed state of all configured packages")
+            .WithDescription("Returns name, repository URL, current version and compose status per package. No update check, no git access.")
+            .Produces<InstalledPackagesResponse>()
+            .ProducesProblem(503);
+
         group.MapGet("/upgrades/{packageName}", GetUpgradeStatusAsync)
             .WithName("GetUpgradeStatus")
             .WithSummary("Check upgrade status for a package")
@@ -68,6 +75,26 @@ public static class AutoUpdaterEndpoints
         {
             logger.LogError(ex, "Error getting packages");
             return Results.Problem("Failed to retrieve packages", statusCode: 500);
+        }
+    }
+
+    private static async Task<IResult> GetInstalledPackagesAsync(
+        AutoUpdaterService service,
+        ILogger<AutoUpdaterService> logger)
+    {
+        try
+        {
+            return Results.Ok(await service.GetInstalledPackagesAsync());
+        }
+        catch (InstalledStateUnavailableException ex)
+        {
+            logger.LogWarning(ex, "Installed state unavailable: {Reason}", ex.Message);
+            return Results.Problem(title: "Installed state unavailable", detail: ex.Message, statusCode: 503);
+        }
+        catch (Exception ex)
+        {
+            logger.LogError(ex, "Error getting installed packages");
+            return Results.Problem("Failed to retrieve installed packages", statusCode: 500);
         }
     }
 

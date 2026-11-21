@@ -15,6 +15,12 @@ namespace ModelingEvolution.AutoUpdater.Services
         Task<DeploymentState?> GetDeploymentStateAsync(string deploymentPath);
 
         /// <summary>
+        /// Strict read: null only when the state file does not exist; any other failure (SSH, timeout, unreadable or empty
+        /// file) throws <see cref="InstalledStateUnavailableException"/>.
+        /// </summary>
+        Task<DeploymentState?> ReadDeploymentStateOrThrowAsync(string deploymentPath);
+
+        /// <summary>
         /// Saves the deployment state to storage
         /// </summary>
         /// <param name="deploymentPath">Path to the deployment directory</param>

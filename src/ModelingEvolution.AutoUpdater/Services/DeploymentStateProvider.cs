@@ -21,49 +21,79 @@ namespace ModelingEvolution.AutoUpdater.Services
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         }
 
+        /// <summary>
+        /// Lenient read used by /api/packages, the update check and backups: any failure is logged and reads as null.
+        /// One body with <see cref="ReadDeploymentStateOrThrowAsync"/>, so both report the same version for the same host.
+        /// </summary>
         public async Task<DeploymentState?> GetDeploymentStateAsync(string deploymentPath)
         {
             try
             {
                 _logger.LogDebug("Getting deployment state from {DeploymentPath}", deploymentPath);
 
-                if (string.IsNullOrWhiteSpace(deploymentPath))
-                {
-                    throw new ArgumentException("Deployment path cannot be null or whitespace", nameof(deploymentPath));
-                }
+                var state = await ReadDeploymentStateOrThrowAsync(deploymentPath);
 
-                var stateFilePath = Path.Combine(deploymentPath, StateFileName);
-                
-                if (!await _sshService.FileExistsAsync(stateFilePath))
+                if (state == null)
                 {
-                    _logger.LogDebug("No deployment state file found at {StateFilePath}", stateFilePath);
+                    _logger.LogDebug("No deployment state file found in {DeploymentPath}", deploymentPath);
                     return null;
                 }
 
-                var stateContent = await _sshService.ReadFileAsync(stateFilePath);
-                
-                if (string.IsNullOrWhiteSpace(stateContent))
-                {
-                    _logger.LogWarning("Deployment state file is empty at {StateFilePath}", stateFilePath);
-                    return null;
-                }
+                _logger.LogDebug("Retrieved deployment state: Version={Version}, Updated={Updated}",
+                    state.Version, state.Updated);
 
-                var state = JsonSerializer.Deserialize<DeploymentState>(stateContent);
-                
-                _logger.LogDebug("Retrieved deployment state: Version={Version}, Updated={Updated}", 
-                    state?.Version, state?.Updated);
-                
                 return state;
-            }
-            catch (JsonException ex)
-            {
-                _logger.LogError(ex, "Failed to deserialize deployment state from {DeploymentPath}", deploymentPath);
-                return null;
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Failed to get deployment state from {DeploymentPath}", deploymentPath);
                 return null;
+            }
+        }
+
+        public async Task<DeploymentState?> ReadDeploymentStateOrThrowAsync(string deploymentPath)
+        {
+            if (string.IsNullOrWhiteSpace(deploymentPath))
+            {
+                throw new ArgumentException("Deployment path cannot be null or whitespace", nameof(deploymentPath));
+            }
+
+            var stateFilePath = Path.Combine(deploymentPath, StateFileName);
+
+            // `test -f` exits 1 when the file does not exist; SSH failures and timeouts come back as other exit codes.
+            var probe = await _sshService.ExecuteCommandAsync($"test -f {stateFilePath}");
+            if (probe.ExitCode == 1)
+            {
+                return null;
+            }
+            if (!probe.IsSuccess)
+            {
+                throw new InstalledStateUnavailableException($"checking {stateFilePath} failed (exit {probe.ExitCode}): {probe.Error}");
+            }
+
+            string stateContent;
+            try
+            {
+                stateContent = await _sshService.ReadFileAsync(stateFilePath);
+            }
+            catch (Exception ex)
+            {
+                throw new InstalledStateUnavailableException($"reading {stateFilePath} failed: {ex.Message}", ex);
+            }
+
+            if (string.IsNullOrWhiteSpace(stateContent))
+            {
+                throw new InstalledStateUnavailableException($"{stateFilePath} is empty");
+            }
+
+            try
+            {
+                return JsonSerializer.Deserialize<DeploymentState>(stateContent)
+                       ?? throw new InstalledStateUnavailableException($"{stateFilePath} holds no deployment state");
+            }
+            catch (JsonException ex)
+            {
+                throw new InstalledStateUnavailableException($"{stateFilePath} is not valid JSON: {ex.Message}", ex);
             }
         }
 
