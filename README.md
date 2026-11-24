@@ -252,6 +252,20 @@ For enhanced security, use SSH key-based authentication:
 }
 ```
 
+### Installation reports
+
+After every installation it runs (success or failure), the updater can POST the outcome to a URL:
+
+```yaml
+environment:
+  - InstallationReports__Url=http://<receiver>/api/fleet/installation-reports
+```
+
+Absent = off (nothing is sent). Body (JSON): `package`, `version` (the target version on failure), `succeeded`,
+`finishedAt` (UTC), and on failure `reason` and `log` (the lines logged between the start and the end of that
+installation). One POST, no retry; a refused or failed POST is logged. A self-update sends no report (the process
+restarts before the installation completes).
+
 ## SSH Key Setup
 
 ### Automated Setup (Recommended)

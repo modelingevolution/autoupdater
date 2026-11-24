@@ -13,6 +13,7 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <InternalsVisibleTo Include="ModelingEvolution.AutoUpdater.Tests" />
     <PackageReference Include="CliWrap" Version="3.6.7" />
     <PackageReference Include="Docker.DotNet" Version="3.125.15" />
     <PackageReference Include="Ductus.FluentDocker" Version="2.10.59" />

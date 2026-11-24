@@ -24,6 +24,10 @@ public static class ServiceCollectionExtensions
         // Register PackageStateReadModel as singleton
         services.AddSingleton<PackageStateReadModel>();
 
+        // epic-092 feature-004: after every installation, POST the outcome to InstallationReports:Url (absent = off).
+        services.AddHttpClient(Services.InstallationReporter.HttpClientName);
+        services.AddHostedService<Services.InstallationReporter>();
+
 
         // Register SSH VPN service using extension methods
         services.AddSingleton<ISshVpnService>(provider =>
