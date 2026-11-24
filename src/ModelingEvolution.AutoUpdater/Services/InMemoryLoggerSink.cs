@@ -1,3 +1,4 @@
+using System.Threading;
 using Microsoft.Extensions.Logging;
 using System;
 using System.Collections.Concurrent;
@@ -23,11 +24,19 @@ namespace ModelingEvolution.AutoUpdater.Services
 
         public IReadOnlyList<LogEntry> LogEntries => _logs;
 
+        private int _switchOns;
+
         public bool Enabled
         {
             get => _enabled;
-            set => SetField(ref _enabled, value);
+            set
+            {
+                if (value) Interlocked.Increment(ref _switchOns);
+                SetField(ref _enabled, value);
+            }
         }
+
+        public int SwitchOns => Volatile.Read(ref _switchOns);
 
         public InMemoryLoggerSink(int maxEntries = 1000)
         {

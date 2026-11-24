@@ -21,10 +21,14 @@ namespace ModelingEvolution.AutoUpdater.Host.Services;
 ///
 /// <para>Log (failures only): the in-memory log sink's entries from the matching <see cref="UpdateStartedEvent"/> to
 /// <see cref="UpdateCompletedEvent.CompletedAt"/>. The sink is registered DISABLED and only the UI's buttons switch it on,
-/// so the start of an installation switches it on, as the Update button already does.</para>
+/// so the start of an installation switches it on. The sink also drives the UI (Home shows the log viewer while it is
+/// on), so after the log is taken the reporter switches it off again ONLY IF it was off at the start AND nobody switched
+/// it on since (<see cref="IInMemoryLoggerSink.SwitchOns"/> unchanged). A UI that asked for it keeps it; the log viewer
+/// turns it off itself.</para>
 ///
-/// <para>One POST per installation, NOT awaited by the event handler (EventHub awaits its handlers, and the updater must
-/// not wait on the receiver), no retry: a failed POST is logged and dropped (retries are Deferred).</para>
+/// <para>One POST per installation, explicitly DETACHED from the event handler (<c>Task.Run</c>): EventHub awaits its
+/// handlers and the updater must not wait on the receiver, whatever the HTTP stack does synchronously. No retry: a failed
+/// POST is logged and dropped (retries are Deferred).</para>
 /// </summary>
 public sealed class InstallationReporter : IHostedService, IDisposable
 {
@@ -37,6 +41,7 @@ public sealed class InstallationReporter : IHostedService, IDisposable
     private readonly ILogger<InstallationReporter> _log;
     private readonly Uri? _url;
     private readonly ConcurrentDictionary<string, DateTime> _startedAtUtc = new();
+    private readonly ConcurrentDictionary<string, int> _switchedOnAt = new();   // app → SwitchOns after OUR switch-on
     private SubscriptionSet? _subscriptions;
     private Task _lastSend = Task.CompletedTask;
 
@@ -74,14 +79,24 @@ public sealed class InstallationReporter : IHostedService, IDisposable
     private void OnStarted(UpdateStartedEvent e)
     {
         _startedAtUtc[e.ApplicationName] = e.StartedAt;
+        if (_sink.Enabled) return;   // already on (the UI): not ours to switch off later
         _sink.Enabled = true;
+        _switchedOnAt[e.ApplicationName] = _sink.SwitchOns;
     }
 
     private void OnCompleted(UpdateCompletedEvent e)
     {
         _startedAtUtc.TryRemove(e.ApplicationName, out var started);
         var report = Build(e, started == default ? null : started, e.Success ? [] : Snapshot());
-        _lastSend = SendAsync(report);
+        RestoreSink(e.ApplicationName);
+        _lastSend = Task.Run(() => SendAsync(report));   // detached: the updater never waits on the receiver
+    }
+
+    /// <summary>Off again only if WE switched it on and no one has asked for it since.</summary>
+    private void RestoreSink(string app)
+    {
+        if (_switchedOnAt.TryRemove(app, out var ours) && _sink.Enabled && _sink.SwitchOns == ours)
+            _sink.Enabled = false;
     }
 
     /// <summary>The body: <see cref="UpdateCompletedEvent"/> plus, on failure, the installation's log.</summary>
@@ -122,7 +137,6 @@ public sealed class InstallationReporter : IHostedService, IDisposable
 
     private async Task SendAsync(InstallationReport report)
     {
-        await Task.Yield();   // off the event handler: the updater does not wait for the receiver
         try
         {
             using var response = await _http.CreateClient(HttpClientName).PostAsJsonAsync(_url, report);

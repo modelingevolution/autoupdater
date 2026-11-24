@@ -29,6 +29,12 @@ namespace ModelingEvolution.AutoUpdater.Services
         /// When enabled, log entries are captured and stored in memory; otherwise, logging is disabled.
         /// </summary>
         bool Enabled { get; set; }
+
+        /// <summary>
+        /// How many times anything set <see cref="Enabled"/> to true, counted even when it already was. Lets a caller
+        /// that switched the sink on tell whether someone else (the UI) asked for it too since then.
+        /// </summary>
+        int SwitchOns { get; }
         /// <summary>
         /// All log entries
         /// </summary>
