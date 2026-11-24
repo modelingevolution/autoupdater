@@ -139,20 +139,79 @@ public class InstallationReporterTests : IDisposable
         _log.Entries.Should().Contain(e => e.Level == LogLevel.Warning && e.Exception is HttpRequestException);
     }
 
-    [Fact]
-    public async Task TheUpdaterDoesNotWaitForTheReceiver()
+    [Fact] // the no-wait guarantee, against a receiver that blocks the calling THREAD (not an async wait)
+    public async Task TheUpdaterDoesNotWaitForTheReceiver_EvenWhenTheHttpCallBlocksSynchronously()
     {
-        var gate = new TaskCompletionSource();
-        _receiver.Gate = gate.Task;
+        using var gate = new ManualResetEventSlim(false);
+        _receiver.BlockSynchronously = gate;
         var reporter = await Start();
 
-        var publish = _hub.PublishAsync(new UpdateCompletedEvent("rocket-welder", null, "v4.0.206", success: true));
+        var publish = Task.Run(() => _hub.PublishAsync(new UpdateCompletedEvent("rocket-welder", null, "v4.0.206", success: true)));
         var finished = await Task.WhenAny(publish, Task.Delay(TimeSpan.FromSeconds(5)));
 
-        finished.Should().BeSameAs(publish, "the completion event returns while the POST is still waiting");
-        gate.SetResult();
+        finished.Should().BeSameAs(publish, "the completion is handled while the POST is still blocked");
+        reporter.LastSend.IsCompleted.Should().BeFalse("the POST is still waiting on the receiver");
+        gate.Set();
         await reporter.LastSend;
         _receiver.Requests.Should().ContainSingle();
+    }
+
+    // ── the sink drives the UI: the reporter gives back what it took, and nothing a person asked for ────────────────
+
+    [Fact] // (1) off at start, nobody else → off again after the completion
+    public async Task SinkOffAtStart_NoUi_IsOffAgainAfterTheCompletion()
+    {
+        var reporter = await Start();
+        await _hub.PublishAsync(new UpdateStartedEvent("rocket-welder", "v4.0.206", "v4.0.207"));
+        _sink.Enabled.Should().BeTrue("on during the installation, so its log is recorded");
+
+        await _hub.PublishAsync(new UpdateCompletedEvent("rocket-welder", "v4.0.206", "v4.0.207", success: false, errorMessage: "x"));
+        await reporter.LastSend;
+
+        _sink.Enabled.Should().BeFalse();
+    }
+
+    [Fact] // (2) off at start, the UI switches it on mid-run → stays on
+    public async Task SinkOffAtStart_TheUiSwitchesItOnMidRun_StaysOnAfterTheCompletion()
+    {
+        var reporter = await Start();
+        await _hub.PublishAsync(new UpdateStartedEvent("rocket-welder", "v4.0.206", "v4.0.207"));
+
+        _sink.Enabled = true;   // the operator opens the log / presses Update while it runs (already on: no visible change)
+        await _hub.PublishAsync(new UpdateCompletedEvent("rocket-welder", "v4.0.206", "v4.0.207", success: true));
+        await reporter.LastSend;
+
+        _sink.Enabled.Should().BeTrue("the UI asked for it; the log viewer turns it off itself");
+    }
+
+    [Fact] // (3) on at start (the UI is watching) → stays on
+    public async Task SinkOnAtStart_StaysOnAfterTheCompletion()
+    {
+        _sink.Enabled = true;
+        var reporter = await Start();
+        await _hub.PublishAsync(new UpdateStartedEvent("rocket-welder", "v4.0.206", "v4.0.207"));
+
+        await _hub.PublishAsync(new UpdateCompletedEvent("rocket-welder", "v4.0.206", "v4.0.207", success: true));
+        await reporter.LastSend;
+
+        _sink.Enabled.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task SinkSwitchedBackOff_StillReportsTheLogTakenBeforeIt()
+    {
+        var reporter = await Start();
+        await _hub.PublishAsync(new UpdateStartedEvent("rocket-welder", "v4.0.206", "v4.0.207"));
+        await Task.Delay(20);
+        _sink.AddLog(LogLevel.Error, "UpdateHost", "Error response from daemon: manifest not found");
+        await Task.Delay(20);
+
+        await _hub.PublishAsync(new UpdateCompletedEvent("rocket-welder", "v4.0.206", "v4.0.207", success: false, errorMessage: "pull failed"));
+        await reporter.LastSend;
+
+        _sink.Enabled.Should().BeFalse();
+        JsonDocument.Parse(_receiver.Requests.Single().Body).RootElement.GetProperty("log").GetString()
+            .Should().Contain("manifest not found", "the log is taken before the sink goes off");
     }
 
     [Fact]
@@ -210,9 +269,11 @@ public class InstallationReporterTests : IDisposable
         public string ResponseBody { get; set; } = "{}";
         public Exception? Throw { get; set; }
         public Task Gate { get; set; } = Task.CompletedTask;
+        public ManualResetEventSlim? BlockSynchronously { get; set; }
 
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
         {
+            BlockSynchronously?.Wait(ct);   // blocks the caller's thread before any await
             var body = request.Content is null ? "" : await request.Content.ReadAsStringAsync(ct);
             lock (Requests) Requests.Add(new Recorded(request.Method, request.RequestUri, body));
             await Gate;
