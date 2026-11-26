@@ -91,7 +91,7 @@ namespace ModelingEvolution.AutoUpdater.Tests.Services
             var execution = _sut.ExecuteCommandAsync("sleep 30", TimeSpan.FromMinutes(10));
             await _factory.Started.Task.WaitAsync(TimeSpan.FromSeconds(5));
 
-            _sut.Dispose();
+            await OwnThread.RunAsync(_sut.Dispose);   // Dispose blocks while it drains: not on a pool thread the drain needs
 
             _journal.Should().Equal("cancel: sleep 30", "handle disposed: sleep 30", "clients disposed");
             execution.IsCompleted.Should().BeTrue("Dispose waits for the cancelled command before releasing the connections");
@@ -105,13 +105,13 @@ namespace ModelingEvolution.AutoUpdater.Tests.Services
         // be queued behind the blocked context thread.
 
         [Fact]
-        public void Dispose_OnASingleThreadedContext_CancelAcknowledgedOnSessionThread_DoesNotStarveTheDrain()
+        public async Task Dispose_OnASingleThreadedContext_CancelAcknowledgedOnSessionThread_DoesNotStarveTheDrain()
         {
             _factory.Behaviour = FakeBehaviour.CancelAcknowledgedOnSessionThread;
             TimeSpan disposeTook = default;
             Task<SshCommandResult>? execution = null;
 
-            SingleThreadSynchronizationContext.Run(async () =>
+            await SingleThreadSynchronizationContext.RunAsync(async () =>
             {
                 execution = _sut.ExecuteCommandAsync("sleep 30", TimeSpan.FromMinutes(10));
                 await _factory.Started.Task;
@@ -126,7 +126,7 @@ namespace ModelingEvolution.AutoUpdater.Tests.Services
         }
 
         [Fact]
-        public void Dispose_OnASingleThreadedContext_TimeoutAlreadyElapsedWhenAwaited_DoesNotStarveTheDrain()
+        public async Task Dispose_OnASingleThreadedContext_TimeoutAlreadyElapsedWhenAwaited_DoesNotStarveTheDrain()
         {
             // The token is cancelled before the command is awaited, so the cancellation path starts synchronously on the context
             // thread and the waits for the session thread's acknowledgement run from there.
@@ -135,7 +135,7 @@ namespace ModelingEvolution.AutoUpdater.Tests.Services
             TimeSpan disposeTook = default;
             Task<SshCommandResult>? execution = null;
 
-            SingleThreadSynchronizationContext.Run(async () =>
+            await SingleThreadSynchronizationContext.RunAsync(async () =>
             {
                 execution = _sut.ExecuteCommandAsync("sleep 30", TimeSpan.FromMilliseconds(1));
                 await _factory.Started.Task;
@@ -150,13 +150,13 @@ namespace ModelingEvolution.AutoUpdater.Tests.Services
         }
 
         [Fact]
-        public void Dispose_OnASingleThreadedContext_CommandCompletedOnSessionThreadJustBefore_DoesNotStarveTheDrain()
+        public async Task Dispose_OnASingleThreadedContext_CommandCompletedOnSessionThreadJustBefore_DoesNotStarveTheDrain()
         {
             _factory.Behaviour = FakeBehaviour.CompletedByTest;
             TimeSpan disposeTook = default;
             Task<SshCommandResult>? execution = null;
 
-            SingleThreadSynchronizationContext.Run(async () =>
+            await SingleThreadSynchronizationContext.RunAsync(async () =>
             {
                 execution = _sut.ExecuteCommandAsync("echo hello", TimeSpan.FromMinutes(10));
                 await _factory.Started.Task;
@@ -177,7 +177,7 @@ namespace ModelingEvolution.AutoUpdater.Tests.Services
         }
 
         [Fact]
-        public void Dispose_OnASingleThreadedContext_StreamedCommandStillDraining_DoesNotStarveTheOutputPump()
+        public async Task Dispose_OnASingleThreadedContext_StreamedCommandStillDraining_DoesNotStarveTheOutputPump()
         {
             // The streamed overload: the command has returned but its output stream has not ended, so the call is inside the pump
             // drain when Dispose blocks the context thread. Both the drain waits and the pump's own reads must run off the context.
@@ -187,7 +187,7 @@ namespace ModelingEvolution.AutoUpdater.Tests.Services
             TimeSpan disposeTook = default;
             Task<SshCommandResult>? execution = null;
 
-            SingleThreadSynchronizationContext.Run(async () =>
+            await SingleThreadSynchronizationContext.RunAsync(async () =>
             {
                 execution = _sut.ExecuteCommandAsync("docker compose pull", TimeSpan.FromMinutes(10), null, lines.Enqueue);
                 await _factory.Started.Task;
@@ -238,7 +238,7 @@ namespace ModelingEvolution.AutoUpdater.Tests.Services
         }
 
         [Fact]
-        public void Dispose_OnASingleThreadedContext_StreamedCommandWithNoDrainGrace_DoesNotStarveTheFinalPumpWait()
+        public async Task Dispose_OnASingleThreadedContext_StreamedCommandWithNoDrainGrace_DoesNotStarveTheFinalPumpWait()
         {
             // With no drain grace, Task.Delay(Zero) is already complete, so the drain's WhenAny does not suspend and the final
             // "await pump" is reached on the context thread - the one place where that await can capture a context.
@@ -249,7 +249,7 @@ namespace ModelingEvolution.AutoUpdater.Tests.Services
             TimeSpan disposeTook = default;
             Task<SshCommandResult>? execution = null;
 
-            SingleThreadSynchronizationContext.Run(async () =>
+            await SingleThreadSynchronizationContext.RunAsync(async () =>
             {
                 execution = _sut.ExecuteCommandAsync("docker compose pull", TimeSpan.FromMinutes(10), null, lines.Enqueue);
                 await _factory.Started.Task;
@@ -273,7 +273,7 @@ namespace ModelingEvolution.AutoUpdater.Tests.Services
             await _factory.Started.Task.WaitAsync(TimeSpan.FromSeconds(5));
             var sw = Stopwatch.StartNew();
 
-            _sut.Dispose();
+            await OwnThread.RunAsync(_sut.Dispose);   // Dispose blocks while it drains: not on a pool thread the drain needs
 
             sw.Elapsed.Should().BeLessThan(TimeSpan.FromSeconds(5));
             _journal.Should().StartWith("cancel: sleep 30").And.EndWith("clients disposed");
@@ -453,6 +453,12 @@ namespace ModelingEvolution.AutoUpdater.Tests.Services
     /// <summary>One thread runs every continuation, like a Blazor circuit's renderer context.</summary>
     internal sealed class SingleThreadSynchronizationContext : SynchronizationContext
     {
+        /// <summary>
+        /// <see cref="Run"/> on a thread of its own. The context thread blocks (that is what the tests exercise), so it must not be
+        /// one of the pool threads the code under test needs in order to finish.
+        /// </summary>
+        public static Task RunAsync(Func<Task> body) => OwnThread.RunAsync(() => Run(body));
+
         private readonly System.Collections.Concurrent.BlockingCollection<(SendOrPostCallback Callback, object? State)> _queue = new();
 
         public override void Post(SendOrPostCallback d, object? state) => _queue.Add((d, state));

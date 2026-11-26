@@ -32,24 +32,24 @@ namespace ModelingEvolution.AutoUpdater.Tests.Common
         }
 
         [Fact]
-        public void OnUnhandledException_FlushesLoggingBeforeExit()
+        public async Task OnUnhandledException_FlushesLoggingBeforeExit()
         {
             var order = new ConcurrentQueue<string>();
             var net = new ProcessSafetyNet(_logger, _ => order.Enqueue("exit"), () => order.Enqueue("flush"), TimeSpan.FromSeconds(2));
 
-            net.OnUnhandledException(this, new UnhandledExceptionEventArgs(new Exception("x"), isTerminating: true));
+            await CrashOnOwnThread(net, new Exception("x"));
 
             order.Should().Equal("flush", "exit");
         }
 
         [Fact]
-        public void OnUnhandledException_FlushHangs_StillExitsAfterFlushTimeout()
+        public async Task OnUnhandledException_FlushHangs_StillExitsAfterFlushTimeout()
         {
             using var never = new ManualResetEventSlim();
             var net = Create(flush: () => never.Wait(), flushTimeout: TimeSpan.FromMilliseconds(200));
             var sw = Stopwatch.StartNew();
 
-            net.OnUnhandledException(this, new UnhandledExceptionEventArgs(new Exception("x"), isTerminating: true));
+            await CrashOnOwnThread(net, new Exception("x"));
 
             _exitCodes.Should().Equal(1);
             sw.Elapsed.Should().BeLessThan(TimeSpan.FromSeconds(3));
@@ -71,7 +71,7 @@ namespace ModelingEvolution.AutoUpdater.Tests.Common
         public async Task OnUnhandledException_SecondThreadCrashesWhileFirstIsExiting_SecondNeverReturns()
         {
             using var flushGate = new ManualResetEventSlim();
-            using var loserBlocked = new ManualResetEventSlim();
+            var loserBlocked = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
             using var releaseLoser = new ManualResetEventSlim();
             Task? loser = null;
             bool? loserReturnedBeforeExit = null;
@@ -86,21 +86,21 @@ namespace ModelingEvolution.AutoUpdater.Tests.Common
                 events: new FakeExceptionEvents(),
                 blockForever: () =>
                 {
-                    loserBlocked.Set();
-                    releaseLoser.Wait(TimeSpan.FromSeconds(30));
+                    loserBlocked.TrySetResult();
+                    releaseLoser.Wait(TimeSpan.FromSeconds(30));   // parks the loser's own thread
                 });
 
-            var winner = Task.Run(() => net.OnUnhandledException(this, new UnhandledExceptionEventArgs(new Exception("first"), true)));
-            SpinWait.SpinUntil(() => _logger.Entries.Any(e => e.Level == LogLevel.Critical), TimeSpan.FromSeconds(5)).Should().BeTrue();
-            loser = Task.Run(() => net.OnUnhandledException(this, new UnhandledExceptionEventArgs(new Exception("second"), true)));
+            var winner = CrashOnOwnThread(net, new Exception("first"));
+            (await WaitUntil(() => _logger.Entries.Any(e => e.Level == LogLevel.Critical), TimeSpan.FromSeconds(5))).Should().BeTrue();
+            loser = CrashOnOwnThread(net, new Exception("second"));
 
             // The loser must be parked, not returned: a returning UnhandledException handler lets the runtime abort the process.
-            WaitHandle.WaitAny(new[] { loserBlocked.WaitHandle, ((IAsyncResult)loser).AsyncWaitHandle }, TimeSpan.FromSeconds(5));
+            await Task.WhenAny(loserBlocked.Task, loser, Task.Delay(TimeSpan.FromSeconds(5)));
             flushGate.Set();
             await winner.WaitAsync(TimeSpan.FromSeconds(10));
 
             loserReturnedBeforeExit.Should().BeFalse();
-            loserBlocked.IsSet.Should().BeTrue();
+            loserBlocked.Task.IsCompleted.Should().BeTrue();
             _exitCodes.Should().Equal(1);
             releaseLoser.Set();
             await loser.WaitAsync(TimeSpan.FromSeconds(10));
@@ -147,14 +147,14 @@ namespace ModelingEvolution.AutoUpdater.Tests.Common
         }
 
         [Fact]
-        public void UseLogger_SwitchesWhereTheCriticalEntryGoes()
+        public async Task UseLogger_SwitchesWhereTheCriticalEntryGoes()
         {
             var appLogger = new RecordingLogger<ProcessSafetyNetTests>();
             var flushed = false;
             var net = Create();
 
             net.UseLogger(appLogger, () => flushed = true);
-            net.OnUnhandledException(this, new UnhandledExceptionEventArgs(new Exception("x"), true));
+            await CrashOnOwnThread(net, new Exception("x"));
 
             appLogger.Entries.Should().ContainSingle(e => e.Level == LogLevel.Critical);
             _logger.Entries.Should().BeEmpty();
@@ -234,7 +234,7 @@ namespace ModelingEvolution.AutoUpdater.Tests.Common
         }
 
         [Fact]
-        public void Install_RealUnobservedTaskException_IsDeliveredToTheLogger()
+        public async Task Install_RealUnobservedTaskException_IsDeliveredToTheLogger()
         {
             var marker = $"bug-019-{Guid.NewGuid():N}";
             using (ProcessSafetyNet.Install(_logger, code => _exitCodes.Enqueue(code)))
@@ -243,6 +243,7 @@ namespace ModelingEvolution.AutoUpdater.Tests.Common
                 while (!Logged(marker) && deadline.Elapsed < TimeSpan.FromSeconds(10))
                 {
                     DropFaultedTask(marker);
+                    await Task.Delay(50);   // let the dropped task fault
                     GC.Collect();
                     GC.WaitForPendingFinalizers();
                     GC.Collect();
@@ -260,7 +261,24 @@ namespace ModelingEvolution.AutoUpdater.Tests.Common
         private static void DropFaultedTask(string marker)
         {
             _ = Task.Run(() => throw new InvalidOperationException(marker));
-            Thread.Sleep(50);
+        }
+
+        /// <summary>
+        /// Raises an unhandled exception on a thread of its own, as the runtime does on the crashing thread. The handler blocks
+        /// that thread while it flushes (and the loser forever), so it must not be a pool thread: the flush itself runs on one.
+        /// </summary>
+        private Task CrashOnOwnThread(ProcessSafetyNet net, Exception exception) =>
+            OwnThread.RunAsync(() => net.OnUnhandledException(this, new UnhandledExceptionEventArgs(exception, isTerminating: true)));
+
+        private static async Task<bool> WaitUntil(Func<bool> condition, TimeSpan timeout)
+        {
+            var deadline = Stopwatch.StartNew();
+            while (!condition())
+            {
+                if (deadline.Elapsed > timeout) return false;
+                await Task.Delay(10);
+            }
+            return true;
         }
     }
 }
