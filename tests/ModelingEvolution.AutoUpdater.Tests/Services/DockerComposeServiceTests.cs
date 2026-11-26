@@ -58,10 +58,39 @@ namespace ModelingEvolution.AutoUpdater.Tests.Services
         private const string JsonPullCommand = "sudo docker compose --progress json -f \"docker-compose.yml\" pull 2>&1";
         private const string BlockingPullCommand = "sudo docker compose -f \"docker-compose.yml\" pull";
 
+        /// <summary>
+        /// Records every report. The trailing flush reports from a thread-pool thread, so writes and reads share a lock
+        /// and <see cref="Reports"/> returns a snapshot.
+        /// </summary>
         private sealed class RecordingProgress : IProgress<PullProgress>
         {
-            public List<PullProgress> Reports { get; } = new();
-            public void Report(PullProgress value) => Reports.Add(value);
+            private readonly List<PullProgress> _reports = new();
+
+            public IReadOnlyList<PullProgress> Reports
+            {
+                get { lock (_reports) return _reports.ToList(); }
+            }
+
+            public void Report(PullProgress value)
+            {
+                lock (_reports) _reports.Add(value);
+            }
+
+            /// <summary>
+            /// Polls until <paramref name="condition"/> holds for the snapshot, or <paramref name="timeout"/> elapses.
+            /// Returns the last snapshot either way.
+            /// </summary>
+            public async Task<IReadOnlyList<PullProgress>> WaitUntilAsync(Func<IReadOnlyList<PullProgress>, bool> condition, TimeSpan timeout)
+            {
+                var deadline = DateTime.UtcNow + timeout;
+                var snapshot = Reports;
+                while (!condition(snapshot) && DateTime.UtcNow < deadline)
+                {
+                    await Task.Delay(10);
+                    snapshot = Reports;
+                }
+                return snapshot;
+            }
         }
 
         [Fact]
@@ -182,16 +211,21 @@ namespace ModelingEvolution.AutoUpdater.Tests.Services
             _service.ProgressReportInterval = TimeSpan.FromMilliseconds(100);
             var progress = new RecordingProgress();
 
-            // Act
+            var extracting = new PullProgress(1, 0, 1000, 1000, 100f, LayersExtracting: 1, LayersKnown: 1, LayersTotal: 1);
+
+            // Act: wait (gate still closed, so compose is silent) for the condition the assertion needs, not for a fixed time.
+            // The flush is a Task.Delay continuation; a loaded CI runner can run it well after the 100 ms interval.
             var pull = _service.PullAsync(new[] { "docker-compose.yml" }, "/app", TimeSpan.FromMinutes(1), progress);
-            await Task.Delay(400);                          // longer than the interval, shorter than any real extraction
-            var reportsDuringExtraction = progress.Reports.ToList();
+            var reportsDuringExtraction = await progress.WaitUntilAsync(r => r.Count > 0 && r[^1] == extracting, TimeSpan.FromSeconds(10));
             gate.SetResult();
             await pull;
 
             // Assert: while compose was silent, the trailing flush delivered the extracting state
-            reportsDuringExtraction.Last().Should().Be(new PullProgress(1, 0, 1000, 1000, 100f, LayersExtracting: 1, LayersKnown: 1, LayersTotal: 1));
-            progress.Reports.Last().IsComplete.Should().BeTrue();
+            reportsDuringExtraction.Should().NotBeEmpty("the initial Pulling state is reported at once");
+            reportsDuringExtraction.Should().HaveCountGreaterThan(1,
+                "the trailing flush must report within 10 s of compose going silent; only the initial report arrived: {0}", reportsDuringExtraction[^1]);
+            reportsDuringExtraction[^1].Should().Be(extracting, "the trailing flush must carry the latest (extracting) state");
+            progress.Reports[^1].IsComplete.Should().BeTrue();
         }
 
         [Fact]
