@@ -274,6 +274,8 @@ namespace ModelingEvolution.AutoUpdater.Tests.Services
 
             sw.Elapsed.Should().BeLessThan(TimeSpan.FromSeconds(5));
             _journal.Should().StartWith("cancel: sleep 30").And.EndWith("clients disposed");
+            _log.Entries.Should().Contain(e => e.Level == LogLevel.Warning && e.Message.Contains(DrainGaveUp),
+                "a drain that runs out of DisposeDrainTimeout says so - the string the context tests rely on");
         }
 
         [Fact]
