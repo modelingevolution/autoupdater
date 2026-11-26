@@ -15,6 +15,12 @@ namespace ModelingEvolution.AutoUpdater.Tests.Common
         private readonly RecordingLogger<ProcessSafetyNetTests> _logger = new();
         private readonly ConcurrentQueue<int> _exitCodes = new();
 
+        /// <summary>
+        /// Flush timeout for the tests that assert only the order (flush, then exit): a liveness bound, so a flush that never runs
+        /// fails instead of hanging. The timeout behaviour itself is FlushHangs_StillExitsAfterFlushTimeout (200 ms).
+        /// </summary>
+        private static readonly TimeSpan FlushLiveness = TimeSpan.FromSeconds(30);
+
         private ProcessSafetyNet Create(Action? flush = null, TimeSpan? flushTimeout = null) =>
             new(_logger, code => _exitCodes.Enqueue(code), flush, flushTimeout ?? TimeSpan.FromSeconds(2));
 
@@ -35,7 +41,7 @@ namespace ModelingEvolution.AutoUpdater.Tests.Common
         public async Task OnUnhandledException_FlushesLoggingBeforeExit()
         {
             var order = new ConcurrentQueue<string>();
-            var net = new ProcessSafetyNet(_logger, _ => order.Enqueue("exit"), () => order.Enqueue("flush"), TimeSpan.FromSeconds(2));
+            var net = new ProcessSafetyNet(_logger, _ => order.Enqueue("exit"), () => order.Enqueue("flush"), FlushLiveness);
 
             await CrashOnOwnThread(net, new Exception("x"));
 
@@ -151,7 +157,7 @@ namespace ModelingEvolution.AutoUpdater.Tests.Common
         {
             var appLogger = new RecordingLogger<ProcessSafetyNetTests>();
             var flushed = false;
-            var net = Create();
+            var net = Create(flushTimeout: FlushLiveness);
 
             net.UseLogger(appLogger, () => flushed = true);
             await CrashOnOwnThread(net, new Exception("x"));
