@@ -17,6 +17,10 @@ using NSubstitute;
 namespace ModelingEvolution.AutoUpdater.Tests.Apps;
 
 /// <summary>The Apps page as it renders in a browser circuit: real AppsView, AppGuideView and MudMarkdown; a stub image.</summary>
+/// <remarks>
+/// Every wait is <c>WaitForAssertionAsync</c>: the synchronous WaitFor* blocks the test's pool thread while the renders it waits
+/// for need pool threads too, and on a 2-core runner that starves this and every parallel test.
+/// </remarks>
 public sealed class AppsViewTests : IAsyncLifetime
 {
     private static readonly byte[] Png = [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0, 0, 0, 13];
@@ -56,8 +60,21 @@ public sealed class AppsViewTests : IAsyncLifetime
 
     private IRenderedComponent<AppsView> Open() => _context.Render<AppsView>(p => p.Add(v => v.Options, Options));
 
+    /// <summary>
+    /// Liveness bound for the waits that say "this eventually happens": it only turns a hang into a failure. Nothing here asserts
+    /// speed - on a loaded 2-core runner rendering a few guides can take longer than bUnit's default second.
+    /// </summary>
+    private static readonly TimeSpan Eventually = TimeSpan.FromSeconds(10);
+
+    private int Count(IRenderedComponent<AppsView> page, string selector) => page.FindAll(selector).Count;
+
+    private int Reads(string path)
+    {
+        lock (_handler.Paths) return _handler.Paths.Count(p => p == path);
+    }
+
     [Fact]
-    public void OneAppOneDownload_ShowsNameIconDownloadAndGuide()
+    public async Task OneAppOneDownload_ShowsNameIconDownloadAndGuide()
     {
         Serve("/manifest.json", ManifestJson.Manifest(ManifestJson.App(id: "viewer", name: "Example Viewer", icon: "\"icon\":\"viewer.png\"",
             ManifestJson.Download(extra: "\"version\":\"2.1.0\",\"file\":\"Viewer-2.1.0.msi\",\"size\":2048,\"guide\":\"windows.md\""))));
@@ -66,8 +83,8 @@ public sealed class AppsViewTests : IAsyncLifetime
 
         var page = Open();
 
-        page.WaitForAssertion(() => page.Find("[data-testid=download-guide] ol").Should().NotBeNull());
-        page.WaitForAssertion(() => page.Find("[data-testid=app-icon]").GetAttribute("src").Should().Be("apps/icons/viewer.png?v=" + AppIcon.Version(Png)));
+        await page.WaitForAssertionAsync(() => page.Find("[data-testid=download-guide] ol").Should().NotBeNull());
+        await page.WaitForAssertionAsync(() => page.Find("[data-testid=app-icon]").GetAttribute("src").Should().Be("apps/icons/viewer.png?v=" + AppIcon.Version(Png)));
         var card = page.Find("[data-testid=app-viewer]");
         card.QuerySelector("[data-testid=app-name]")!.TextContent.Should().Be("Example Viewer");
         card.QuerySelector("[data-testid=download-title]")!.TextContent.Should().Be("Windows · x64");
@@ -80,7 +97,7 @@ public sealed class AppsViewTests : IAsyncLifetime
     }
 
     [Fact]
-    public void Downloads_ShowLabelPreviewAndNotAvailableYet_InManifestOrder()
+    public async Task Downloads_ShowLabelPreviewAndNotAvailableYet_InManifestOrder()
     {
         Serve("/manifest.json", ManifestJson.Manifest(ManifestJson.App(id: "viewer", name: "Example Viewer", icon: null,
             ManifestJson.Download("linux", "arm64", "\"label\":\"Kiosk devices\",\"version\":\"1\",\"file\":\"v.deb\",\"size\":1"),
@@ -89,7 +106,7 @@ public sealed class AppsViewTests : IAsyncLifetime
 
         var page = Open();
 
-        page.WaitForAssertion(() => page.FindAll("[data-testid=download-title]").Should().HaveCount(3));
+        await page.WaitForAssertionAsync(() => page.FindAll("[data-testid=download-title]").Should().HaveCount(3));
         page.FindAll("[data-testid=download-title]").Select(e => e.TextContent)
             .Should().Equal("Linux · arm64 · Kiosk devices", "Android · arm64", "macOS");
         page.FindAll("[data-testid=download-preview]").Should().ContainSingle();
@@ -99,7 +116,7 @@ public sealed class AppsViewTests : IAsyncLifetime
     }
 
     [Fact]
-    public void OneGuideFails_OnlyThatDownloadSaysUnavailable_NeverASpinner()
+    public async Task OneGuideFails_OnlyThatDownloadSaysUnavailable_NeverASpinner()
     {
         Serve("/manifest.json", ManifestJson.Manifest(ManifestJson.App(id: "viewer", name: "Example Viewer", icon: null,
             ManifestJson.Download("windows", "x64", "\"guide\":\"windows.md\""),
@@ -112,7 +129,7 @@ public sealed class AppsViewTests : IAsyncLifetime
 
         var page = Open();
 
-        page.WaitForAssertion(() => page.FindAll("[data-testid=download-guide-loading]").Should().BeEmpty());
+        await page.WaitForAssertionAsync(() => page.FindAll("[data-testid=download-guide-loading]").Should().BeEmpty());
         page.Find("[data-testid=download-windows-x64-] [data-testid=download-guide]").TextContent.Should().Contain("Install it.");
         page.Find("[data-testid=download-linux-arm64-] [data-testid=download-guide-unavailable]").TextContent.Should().Be("Install guide unavailable.");
         page.Find("[data-testid=download-android-arm64-] [data-testid=download-guide-unavailable]").TextContent.Should().Be("Install guide unavailable.");
@@ -121,7 +138,7 @@ public sealed class AppsViewTests : IAsyncLifetime
     [Theory]
     [InlineData("svg")]
     [InlineData("missing")]
-    public void IconThatIsNotAPng_ShowsTheNeutralIcon(string answer)
+    public async Task IconThatIsNotAPng_ShowsTheNeutralIcon(string answer)
     {
         Serve("/manifest.json", ManifestJson.Manifest(ManifestJson.App(id: "viewer", name: "Example Viewer", icon: "\"icon\":\"viewer.png\"",
             ManifestJson.Download(extra: null))));
@@ -129,14 +146,14 @@ public sealed class AppsViewTests : IAsyncLifetime
 
         var page = Open();
 
-        page.WaitForAssertion(() => page.Find("[data-icon-state]").GetAttribute("data-icon-state").Should().Be(nameof(LoadState.Unavailable)));
+        await page.WaitForAssertionAsync(() => page.Find("[data-icon-state]").GetAttribute("data-icon-state").Should().Be(nameof(LoadState.Unavailable)));
         page.Find("[data-testid=app-icon-default]").Should().NotBeNull();
         page.FindAll("[data-testid=app-icon]").Should().BeEmpty();
         page.FindAll("img").Should().BeEmpty();
     }
 
     [Fact]
-    public void GuideAndIconSharedByDownloadsAndApps_AreEachReadOnce()
+    public async Task GuideAndIconSharedByDownloadsAndApps_AreEachReadOnce()
     {
         Serve("/manifest.json", ManifestJson.Manifest(
             ManifestJson.App(id: "viewer", name: "Example Viewer", icon: "\"icon\":\"shared.png\"",
@@ -149,8 +166,12 @@ public sealed class AppsViewTests : IAsyncLifetime
 
         var page = Open();
 
-        page.WaitForAssertion(() => page.FindAll("[data-testid=download-guide]").Should().HaveCount(3));
-        page.WaitForAssertion(() => page.FindAll("[data-testid=app-icon]").Should().HaveCount(2));
+        await page.WaitForAssertionAsync(() => page.FindAll("[data-testid=download-guide]").Should().HaveCount(3,
+            "every download shows the shared guide within the {0} liveness bound; guides {1}/3, icons {2}/2, guide reads {3}, icon reads {4}",
+            Eventually, Count(page, "[data-testid=download-guide]"), Count(page, "[data-testid=app-icon]"), Reads("/guides/shared.md"), Reads("/icons/shared.png")), Eventually);
+        await page.WaitForAssertionAsync(() => page.FindAll("[data-testid=app-icon]").Should().HaveCount(2,
+            "every app shows the shared icon within the {0} liveness bound; icons {1}/2, icon reads {2}",
+            Eventually, Count(page, "[data-testid=app-icon]"), Reads("/icons/shared.png")), Eventually);
         lock (_handler.Paths)
         {
             _handler.Paths.Count(p => p == "/guides/shared.md").Should().Be(1);
@@ -180,21 +201,34 @@ public sealed class AppsViewTests : IAsyncLifetime
 
         var page = Open();
 
-        page.WaitForAssertion(() => Volatile.Read(ref inFlight).Should().Be(4));
-        // Every read is held, so with no limit all eight would be in flight by now.
-        await Task.Delay(200);
-        Volatile.Read(ref inFlight).Should().Be(4);
-        release.SetResult();
-        page.WaitForAssertion(() => page.FindAll("[data-testid=download-guide]").Should().HaveCount(guides));
-        most.Should().Be(4);
+        try
+        {
+            // The limit is reached. "At least": a looser limit gets past this at once and is caught, exactly, just below.
+            await page.WaitForAssertionAsync(() => Volatile.Read(ref inFlight).Should().BeGreaterThanOrEqualTo(4,
+                "four reads start within the {0} liveness bound; in flight {1}, most at once {2}",
+                Eventually, Volatile.Read(ref inFlight), Volatile.Read(ref most)), Eventually);
+            // Every read is held, so with no limit all eight would be in flight by now.
+            await Task.Delay(200);
+            Volatile.Read(ref inFlight).Should().Be(4);
+            release.SetResult();
+            await page.WaitForAssertionAsync(() => page.FindAll("[data-testid=download-guide]").Should().HaveCount(guides,
+                "every guide renders within the {0} liveness bound; rendered {1}/{2}, reads in flight {3}, most at once {4}",
+                Eventually, Count(page, "[data-testid=download-guide]"), guides, Volatile.Read(ref inFlight), Volatile.Read(ref most)), Eventually);
+            most.Should().Be(4);
+        }
+        finally
+        {
+            // A failed assertion above must fail the test, not hang it: held reads never finish, and disposing the context waits for them.
+            release.TrySetResult();
+        }
     }
 
     [Fact]
-    public void ImageNotAnswering_SaysSo_AndShowsNoCard()
+    public async Task ImageNotAnswering_SaysSo_AndShowsNoCard()
     {
         var page = Open();
 
-        page.WaitForAssertion(() => page.Find("[data-testid=apps-unavailable]").Should().NotBeNull());
+        await page.WaitForAssertionAsync(() => page.Find("[data-testid=apps-unavailable]").Should().NotBeNull());
         page.FindAll("[data-testid^=app-]").Where(e => e.GetAttribute("data-testid") != "apps-unavailable").Should().BeEmpty();
     }
 }
