@@ -4,7 +4,9 @@ using ModelingEvolution.AutoUpdater.Services;
 using NSubstitute;
 using System;
 using System.Collections.Generic;
+using System.Collections.Immutable;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 using NSubstitute.ExceptionExtensions;
 using Xunit;
@@ -59,22 +61,16 @@ namespace ModelingEvolution.AutoUpdater.Tests.Services
         private const string BlockingPullCommand = "sudo docker compose -f \"docker-compose.yml\" pull";
 
         /// <summary>
-        /// Records every report. The trailing flush reports from a thread-pool thread, so writes and reads share a lock
-        /// and <see cref="Reports"/> returns a snapshot.
+        /// Records every report. The trailing flush reports from a thread-pool thread, so the reports are an immutable list
+        /// swapped atomically; <see cref="Reports"/> is a snapshot.
         /// </summary>
         private sealed class RecordingProgress : IProgress<PullProgress>
         {
-            private readonly List<PullProgress> _reports = new();
+            private ImmutableList<PullProgress> _reports = ImmutableList<PullProgress>.Empty;
 
-            public IReadOnlyList<PullProgress> Reports
-            {
-                get { lock (_reports) return _reports.ToList(); }
-            }
+            public IReadOnlyList<PullProgress> Reports => Volatile.Read(ref _reports);
 
-            public void Report(PullProgress value)
-            {
-                lock (_reports) _reports.Add(value);
-            }
+            public void Report(PullProgress value) => ImmutableInterlocked.Update(ref _reports, l => l.Add(value));
 
             /// <summary>
             /// Polls until <paramref name="condition"/> holds for the snapshot, or <paramref name="timeout"/> elapses.
@@ -191,6 +187,8 @@ namespace ModelingEvolution.AutoUpdater.Tests.Services
             // Arrange: a burst of Downloading lines for one image, all inside the interval, then silence while compose extracts.
             SetupDockerComposeV2Detection("Docker Compose version v2.40.3");
             var gate = new TaskCompletionSource();
+            var progress = new RecordingProgress();
+            var reportsWhenFed = new TaskCompletionSource<IReadOnlyList<PullProgress>>(TaskCreationOptions.RunContinuationsAsynchronously);
             var lines = new[]
             {
                 """{"id":"a","text":"Pulling"}""",
@@ -204,26 +202,29 @@ namespace ModelingEvolution.AutoUpdater.Tests.Services
                 {
                     var onLine = call.Arg<Action<string>>();
                     foreach (var line in lines) onLine(line);
+                    reportsWhenFed.SetResult(progress.Reports);   // everything reported inline; anything later is the flush
                     await gate.Task;                       // compose is "extracting": no more lines for a while
                     onLine("""{"id":"a","text":"Pulled"}""");
                     return new SshCommandResult { Command = JsonPullCommand, ExitCode = 0 };
                 });
             _service.ProgressReportInterval = TimeSpan.FromMilliseconds(100);
-            var progress = new RecordingProgress();
 
             var extracting = new PullProgress(1, 0, 1000, 1000, 100f, LayersExtracting: 1, LayersKnown: 1, LayersTotal: 1);
 
             // Act: wait (gate still closed, so compose is silent) for the condition the assertion needs, not for a fixed time.
             // The flush is a Task.Delay continuation; a loaded CI runner can run it well after the 100 ms interval.
             var pull = _service.PullAsync(new[] { "docker-compose.yml" }, "/app", TimeSpan.FromMinutes(1), progress);
-            var reportsDuringExtraction = await progress.WaitUntilAsync(r => r.Count > 0 && r[^1] == extracting, TimeSpan.FromSeconds(10));
+            var fed = await reportsWhenFed.Task.WaitAsync(TimeSpan.FromSeconds(10));
+            var reportsDuringExtraction = await progress.WaitUntilAsync(r => r.Count > fed.Count && r[^1] == extracting, TimeSpan.FromSeconds(10));
             gate.SetResult();
             await pull;
 
             // Assert: while compose was silent, the trailing flush delivered the extracting state
-            reportsDuringExtraction.Should().NotBeEmpty("the initial Pulling state is reported at once");
-            reportsDuringExtraction.Should().HaveCountGreaterThan(1,
-                "the trailing flush must report within 10 s of compose going silent; only the initial report arrived: {0}", reportsDuringExtraction[^1]);
+            fed.Should().NotBeEmpty("the initial Pulling state is reported at once");
+            fed[^1].Should().NotBe(extracting,
+                "the extracting state must reach the flush, not be reported inline (a runner stall longer than the interval while the lines were fed does that, and then the flush is not exercised)");
+            reportsDuringExtraction.Should().HaveCountGreaterThan(fed.Count,
+                "the trailing flush must report within 10 s of compose going silent; only the {0} inline report(s) arrived, the last: {1}", fed.Count, fed[^1]);
             reportsDuringExtraction[^1].Should().Be(extracting, "the trailing flush must carry the latest (extracting) state");
             progress.Reports[^1].IsComplete.Should().BeTrue();
         }
