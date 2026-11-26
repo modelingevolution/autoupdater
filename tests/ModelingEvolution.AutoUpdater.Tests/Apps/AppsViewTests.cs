@@ -60,6 +60,19 @@ public sealed class AppsViewTests : IAsyncLifetime
 
     private IRenderedComponent<AppsView> Open() => _context.Render<AppsView>(p => p.Add(v => v.Options, Options));
 
+    /// <summary>
+    /// Liveness bound for the waits that say "this eventually happens": it only turns a hang into a failure. Nothing here asserts
+    /// speed - on a loaded 2-core runner rendering a few guides can take longer than bUnit's default second.
+    /// </summary>
+    private static readonly TimeSpan Eventually = TimeSpan.FromSeconds(10);
+
+    private int Count(IRenderedComponent<AppsView> page, string selector) => page.FindAll(selector).Count;
+
+    private int Reads(string path)
+    {
+        lock (_handler.Paths) return _handler.Paths.Count(p => p == path);
+    }
+
     [Fact]
     public async Task OneAppOneDownload_ShowsNameIconDownloadAndGuide()
     {
@@ -153,8 +166,12 @@ public sealed class AppsViewTests : IAsyncLifetime
 
         var page = Open();
 
-        await page.WaitForAssertionAsync(() => page.FindAll("[data-testid=download-guide]").Should().HaveCount(3));
-        await page.WaitForAssertionAsync(() => page.FindAll("[data-testid=app-icon]").Should().HaveCount(2));
+        await page.WaitForAssertionAsync(() => page.FindAll("[data-testid=download-guide]").Should().HaveCount(3,
+            "every download shows the shared guide within the {0} liveness bound; guides {1}/3, icons {2}/2, guide reads {3}, icon reads {4}",
+            Eventually, Count(page, "[data-testid=download-guide]"), Count(page, "[data-testid=app-icon]"), Reads("/guides/shared.md"), Reads("/icons/shared.png")), Eventually);
+        await page.WaitForAssertionAsync(() => page.FindAll("[data-testid=app-icon]").Should().HaveCount(2,
+            "every app shows the shared icon within the {0} liveness bound; icons {1}/2, icon reads {2}",
+            Eventually, Count(page, "[data-testid=app-icon]"), Reads("/icons/shared.png")), Eventually);
         lock (_handler.Paths)
         {
             _handler.Paths.Count(p => p == "/guides/shared.md").Should().Be(1);
@@ -186,12 +203,17 @@ public sealed class AppsViewTests : IAsyncLifetime
 
         try
         {
-            await page.WaitForAssertionAsync(() => Volatile.Read(ref inFlight).Should().Be(4));
+            // The limit is reached. "At least": a looser limit gets past this at once and is caught, exactly, just below.
+            await page.WaitForAssertionAsync(() => Volatile.Read(ref inFlight).Should().BeGreaterThanOrEqualTo(4,
+                "four reads start within the {0} liveness bound; in flight {1}, most at once {2}",
+                Eventually, Volatile.Read(ref inFlight), Volatile.Read(ref most)), Eventually);
             // Every read is held, so with no limit all eight would be in flight by now.
             await Task.Delay(200);
             Volatile.Read(ref inFlight).Should().Be(4);
             release.SetResult();
-            await page.WaitForAssertionAsync(() => page.FindAll("[data-testid=download-guide]").Should().HaveCount(guides));
+            await page.WaitForAssertionAsync(() => page.FindAll("[data-testid=download-guide]").Should().HaveCount(guides,
+                "every guide renders within the {0} liveness bound; rendered {1}/{2}, reads in flight {3}, most at once {4}",
+                Eventually, Count(page, "[data-testid=download-guide]"), guides, Volatile.Read(ref inFlight), Volatile.Read(ref most)), Eventually);
             most.Should().Be(4);
         }
         finally
