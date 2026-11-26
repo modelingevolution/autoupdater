@@ -1,4 +1,5 @@
 using FluentAssertions;
+using Microsoft.Extensions.Logging;
 using ModelingEvolution.AutoUpdater.Services;
 using ModelingEvolution.AutoUpdater.Tests.Common;
 using System.Collections.Concurrent;
@@ -15,12 +16,13 @@ namespace ModelingEvolution.AutoUpdater.Tests.Services
     {
         private readonly ConcurrentQueue<string> _journal = new();
         private readonly FakeCommandFactory _factory;
+        private readonly RecordingLogger<SshService> _log = new();
         private readonly SshService _sut;
 
         public SshServiceTimeoutTests()
         {
             _factory = new FakeCommandFactory(_journal);
-            _sut = new SshService(_factory, null, null, () => _journal.Enqueue("clients disposed"), new RecordingLogger<SshService>())
+            _sut = new SshService(_factory, null, null, () => _journal.Enqueue("clients disposed"), _log)
             {
                 CancelGrace = TimeSpan.FromMilliseconds(200),
                 OutputDrainTimeout = TimeSpan.FromMilliseconds(200),
@@ -104,23 +106,30 @@ namespace ModelingEvolution.AutoUpdater.Tests.Services
         // commands it cancelled. SSH.NET completes a command on its session thread, so every continuation the drain needs must not
         // be queued behind the blocked context thread.
 
+        /// <summary>What Dispose logs when its drain ran out of <see cref="SshService.DisposeDrainTimeout"/>.</summary>
+        private const string DrainGaveUp = "releasing the connections anyway";
+
+        /// <summary>
+        /// A drain starved by the blocked context never finishes, so Dispose runs into its own DisposeDrainTimeout and says so. That,
+        /// not a wall-clock bound, is the property: a loaded runner can make a healthy drain slow, never make it give up.
+        /// </summary>
+        private void DrainDidNotGiveUp(string because) =>
+            _log.Entries.Should().NotContain(e => e.Level == LogLevel.Warning && e.Message.Contains(DrainGaveUp), because);
+
         [Fact]
         public async Task Dispose_OnASingleThreadedContext_CancelAcknowledgedOnSessionThread_DoesNotStarveTheDrain()
         {
             _factory.Behaviour = FakeBehaviour.CancelAcknowledgedOnSessionThread;
-            TimeSpan disposeTook = default;
             Task<SshCommandResult>? execution = null;
 
             await SingleThreadSynchronizationContext.RunAsync(async () =>
             {
                 execution = _sut.ExecuteCommandAsync("sleep 30", TimeSpan.FromMinutes(10));
                 await _factory.Started.Task;
-                var sw = Stopwatch.StartNew();
                 _sut.Dispose();
-                disposeTook = sw.Elapsed;
             });
 
-            disposeTook.Should().BeLessThan(TimeSpan.FromSeconds(2), "the drain must not wait for continuations queued behind the blocked context");
+            DrainDidNotGiveUp("the drain must not wait for continuations queued behind the blocked context");
             _journal.Should().Equal("cancel: sleep 30", "handle disposed: sleep 30", "clients disposed");
             execution!.IsCompleted.Should().BeTrue();
         }
@@ -132,19 +141,16 @@ namespace ModelingEvolution.AutoUpdater.Tests.Services
             // thread and the waits for the session thread's acknowledgement run from there.
             _factory.Behaviour = FakeBehaviour.CancelAcknowledgedOnSessionThread;
             _factory.ExecuteDelay = TimeSpan.FromMilliseconds(100);
-            TimeSpan disposeTook = default;
             Task<SshCommandResult>? execution = null;
 
             await SingleThreadSynchronizationContext.RunAsync(async () =>
             {
                 execution = _sut.ExecuteCommandAsync("sleep 30", TimeSpan.FromMilliseconds(1));
                 await _factory.Started.Task;
-                var sw = Stopwatch.StartNew();
                 _sut.Dispose();
-                disposeTook = sw.Elapsed;
             });
 
-            disposeTook.Should().BeLessThan(TimeSpan.FromSeconds(2), "the drain must not wait for continuations queued behind the blocked context");
+            DrainDidNotGiveUp("the drain must not wait for continuations queued behind the blocked context");
             _journal.Should().Equal("cancel: sleep 30", "handle disposed: sleep 30", "clients disposed");
             execution!.Result.Error.Should().Be("Command timed out after 0.001 seconds");
         }
@@ -153,7 +159,6 @@ namespace ModelingEvolution.AutoUpdater.Tests.Services
         public async Task Dispose_OnASingleThreadedContext_CommandCompletedOnSessionThreadJustBefore_DoesNotStarveTheDrain()
         {
             _factory.Behaviour = FakeBehaviour.CompletedByTest;
-            TimeSpan disposeTook = default;
             Task<SshCommandResult>? execution = null;
 
             await SingleThreadSynchronizationContext.RunAsync(async () =>
@@ -166,12 +171,10 @@ namespace ModelingEvolution.AutoUpdater.Tests.Services
                 Task.Run(() => _factory.CompleteLast()).Wait();
                 Thread.Sleep(200);
 
-                var sw = Stopwatch.StartNew();
                 _sut.Dispose();
-                disposeTook = sw.Elapsed;
             });
 
-            disposeTook.Should().BeLessThan(TimeSpan.FromSeconds(2), "the drain must not wait for continuations queued behind the blocked context");
+            DrainDidNotGiveUp("the drain must not wait for continuations queued behind the blocked context");
             _journal.Should().Equal("handle disposed: echo hello", "clients disposed");
             execution!.Result.IsSuccess.Should().BeTrue();
         }
@@ -184,19 +187,16 @@ namespace ModelingEvolution.AutoUpdater.Tests.Services
             _factory.Behaviour = FakeBehaviour.CompletesButOutputStaysOpen;
             _factory.OutputBeforeHang = "pulling layer 1\n";
             var lines = new ConcurrentQueue<string>();
-            TimeSpan disposeTook = default;
             Task<SshCommandResult>? execution = null;
 
             await SingleThreadSynchronizationContext.RunAsync(async () =>
             {
                 execution = _sut.ExecuteCommandAsync("docker compose pull", TimeSpan.FromMinutes(10), null, lines.Enqueue);
                 await _factory.Started.Task;
-                var sw = Stopwatch.StartNew();
                 _sut.Dispose();
-                disposeTook = sw.Elapsed;
             });
 
-            disposeTook.Should().BeLessThan(TimeSpan.FromSeconds(2), "the drain and the output pump must not be queued behind the blocked context");
+            DrainDidNotGiveUp("the drain and the output pump must not be queued behind the blocked context");
             _journal.Should().Equal("handle disposed: docker compose pull", "clients disposed");
             execution!.Result.Output.Should().Contain("pulling layer 1");
             lines.Should().Equal("pulling layer 1");
@@ -246,19 +246,16 @@ namespace ModelingEvolution.AutoUpdater.Tests.Services
             _factory.OutputBeforeHang = "pulling layer 1\n";
             _sut.OutputDrainTimeout = TimeSpan.Zero;
             var lines = new ConcurrentQueue<string>();
-            TimeSpan disposeTook = default;
             Task<SshCommandResult>? execution = null;
 
             await SingleThreadSynchronizationContext.RunAsync(async () =>
             {
                 execution = _sut.ExecuteCommandAsync("docker compose pull", TimeSpan.FromMinutes(10), null, lines.Enqueue);
                 await _factory.Started.Task;
-                var sw = Stopwatch.StartNew();
                 _sut.Dispose();
-                disposeTook = sw.Elapsed;
             });
 
-            disposeTook.Should().BeLessThan(TimeSpan.FromSeconds(2), "the final pump wait must not be queued behind the blocked context");
+            DrainDidNotGiveUp("the final pump wait must not be queued behind the blocked context");
             _journal.Should().Equal("handle disposed: docker compose pull", "clients disposed");
             execution!.Result.IsSuccess.Should().BeTrue();
         }
